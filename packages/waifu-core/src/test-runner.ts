@@ -1,7 +1,7 @@
 import assert from "assert";
-import { builtInWaifus } from "./index";
+import { builtInWaifus } from "./index.js";
 
-if (!Array.isArray(builtInWaifus) || builtInWaifus.length === 0) {
+if (!Array.isArray(builtInWaifus) || (builtInWaifus as any).length === 0) {
   console.error("No built-in waifus found");
   process.exit(1);
 }

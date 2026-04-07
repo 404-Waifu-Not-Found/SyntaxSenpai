@@ -1,16 +1,23 @@
 {
-  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "src",
-    "declaration": true,
-    "declarationMap": true,
-    "paths": {
-      "@syntax-senpai/ai-core": ["packages/ai-core/dist"],
-      "@syntax-senpai/ai-core/*": ["packages/ai-core/dist/*"]
-    },
-    "noEmit": false,
-    "allowImportingTsExtensions": false
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "strictNullChecks": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noEmit": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": false,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true
   },
-  "include": ["src/**/*"]
+  "exclude": [
+    "**/dist/**",
+    "node_modules"
+  ]
 }

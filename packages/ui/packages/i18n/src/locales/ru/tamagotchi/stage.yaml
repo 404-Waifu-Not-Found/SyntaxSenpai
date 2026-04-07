@@ -1,0 +1,46 @@
+operations:
+  load-models: Загрузить модели
+  load-models-status:
+    loading: Загрузка
+    ready: Готово
+docs:
+  theme:
+    navbar:
+      appearance:
+        title: Внешний вид
+'controls-island':
+  'fade-on-hover':
+    enable: Скрывать при наведении
+    disable: Всегда показывать
+  'open-settings': Открыть настройки
+  'open-chat': Открыть чат
+  'refresh': Обновить результаты
+  'open-hearing-controls': Управление слухом
+  'drag-to-move-window': Перетащите окно
+  'switch-to-light-mode': Переключить на светлую тему
+  'switch-to-dark-mode': Переключить на темную тему
+  'pin-on-top': Прикрепить на верх
+  'unpin-from-top': Открепить сверху
+  'switch-profile': Переключить профиль
+  'close': Закрыть
+  'expand': Развернуть
+  'collapse': Свернуть
+  'login': Sign in
+  'logging-in': Signing in...
+  'account': Account
+  'logout': Sign out
+notice:
+  'fade-on-hover':
+    title: Исчезать при наведении
+    intro: Автоматически делает персонажа прозрачнее, когда курсор рядом. Меньше отвлекает, но остаётся видимым.
+    opacity: После включения непрозрачность падает до {value} для {targets}, когда курсор рядом.
+    toggle: Можно выключить, наведя на {controls} и снова нажав на {icon}.
+    controls-label: Остров управления
+    icon-label: значок перечёркнутого глаза
+    value: '0'
+    targets: Персонажа и интерфейса
+    confirm: Понятно
+    dont-show-again: Больше не показывать
+    preparing: Подготавливаем…
+    read-more: Подробнее
+    preview-title: Что это?

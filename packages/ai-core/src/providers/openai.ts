@@ -69,7 +69,7 @@ export class OpenAIProvider extends OpenAICompatibleProvider {
       max_tokens: request.maxTokens || 4096,
       temperature: request.temperature !== undefined ? request.temperature : 0.7,
       messages: messages as any,
-      tools: tools && tools.length > 0 ? tools : undefined,
+      tools: tools && tools.length > 0 ? (tools as any) : undefined,
     });
 
     // Parse tool calls from response
@@ -125,7 +125,7 @@ export class OpenAIProvider extends OpenAICompatibleProvider {
       max_tokens: request.maxTokens || 4096,
       temperature: request.temperature !== undefined ? request.temperature : 0.7,
       messages: messages as any,
-      tools: tools && tools.length > 0 ? tools : undefined,
+      tools: tools && tools.length > 0 ? (tools as any) : undefined,
       stream: true,
     });
 

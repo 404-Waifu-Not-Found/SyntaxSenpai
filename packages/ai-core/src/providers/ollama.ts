@@ -36,8 +36,6 @@ export class OllamaProvider extends BaseAIProvider {
     },
   ];
 
-  private baseUrl: string;
-
   constructor(options: { baseUrl?: string } = {}) {
     super(options);
     // Ollama defaults to localhost:11434 but can be pointed to remote instance

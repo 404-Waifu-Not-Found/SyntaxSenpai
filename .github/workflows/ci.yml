@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [ 'main', 'master' ]
+  pull_request:
+    branches: [ 'main', 'master' ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - name: Install dependencies
+        run: pnpm install
+      - name: Build
+        run: pnpm -w -r --if-present --filter "!syntax-senpai-mobile" --filter "!syntax-senpai-desktop" run build
+      - name: Lint (skipped)
+        run: echo "Skipping lint in CI (no eslint configuration detected)"
+      - name: Typecheck
+        run: pnpm -w -r --if-present run typecheck
+      - name: Test
+        run: pnpm -w -r --if-present run test

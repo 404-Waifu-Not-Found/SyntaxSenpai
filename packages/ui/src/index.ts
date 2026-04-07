@@ -6,3 +6,8 @@
  */
 
 export type { Waifu } from "@syntax-senpai/waifu-core";
+export { default as WaifuCard } from "./components/WaifuCard";
+export { default as WaifuList } from "./components/WaifuList";
+export { default as WaifuExplorer } from "./components/WaifuExplorer";
+export { useWaifus } from "./hooks/useWaifus";
+export { default as useFavorites } from "./hooks/useFavorites";

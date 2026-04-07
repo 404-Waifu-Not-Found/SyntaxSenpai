@@ -8,7 +8,10 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --ext .ts,.tsx"
+    "lint": "eslint src --ext .ts,.tsx",
+    "pretest": "pnpm run build",
+    "test": "node dist/test-runner.js",
+    "test:unit": "vitest run --environment node"
   },
   "dependencies": {
     "@syntax-senpai/ai-core": "workspace:*",

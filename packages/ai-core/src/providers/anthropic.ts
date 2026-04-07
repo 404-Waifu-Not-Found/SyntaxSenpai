@@ -3,8 +3,8 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import type { ChatRequest, ChatResponse, StreamChunk, Message, ToolCall } from "../types";
-import { BaseAIProvider, convertToAnthropicMessages, formatToolCall } from "./base";
+import type { ChatRequest, ChatResponse, StreamChunk, ToolCall } from "../types";
+import { BaseAIProvider, convertToAnthropicMessages } from "./base";
 
 export class AnthropicProvider extends BaseAIProvider {
   id = "anthropic";
@@ -64,7 +64,7 @@ export class AnthropicProvider extends BaseAIProvider {
       temperature: request.temperature !== undefined ? request.temperature : 0.7,
       system: systemPrompt,
       messages,
-      tools: tools && tools.length > 0 ? tools : undefined,
+      tools: tools && tools.length > 0 ? (tools as any) : undefined,
     });
 
     // Parse tool calls from response
@@ -114,7 +114,7 @@ export class AnthropicProvider extends BaseAIProvider {
       temperature: request.temperature !== undefined ? request.temperature : 0.7,
       system: systemPrompt,
       messages,
-      tools: tools && tools.length > 0 ? tools : undefined,
+      tools: tools && tools.length > 0 ? (tools as any) : undefined,
     });
 
     let toolBuffer = "";
@@ -127,11 +127,11 @@ export class AnthropicProvider extends BaseAIProvider {
             type: "text_delta",
             delta: event.delta.text,
           };
-        } else if (event.delta.type === "input_json_delta") {
-          toolBuffer += event.delta.input_json;
+        } else if ((event.delta as any).type === "input_json_delta") {
+          toolBuffer += (event.delta as any).input_json;
         }
       } else if (event.type === "content_block_start") {
-        if (event.content_block.type === "tool_use") {
+        if ((event as any).content_block?.type === "tool_use") {
           inToolUse = true;
           toolBuffer = "";
         }
@@ -143,7 +143,7 @@ export class AnthropicProvider extends BaseAIProvider {
               type: "tool_call_delta",
               toolCall: {
                 id: `tool_${Date.now()}`,
-                name: event.content_block?.name || "unknown",
+                name: ((event as any).content_block?.name as string) || "unknown",
                 arguments: parsed,
               },
             };

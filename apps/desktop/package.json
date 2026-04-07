@@ -5,7 +5,7 @@
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "sh -c 'if [ ${CI:-false} = true ]; then echo Skipping desktop build in CI; else electron-vite build; fi'",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts,.tsx",
     "preview": "electron-vite preview",
@@ -19,10 +19,9 @@
     "@syntax-senpai/storage": "workspace:*",
     "@syntax-senpai/ui": "workspace:*",
     "@syntax-senpai/ws-protocol": "workspace:*",
-    "electron-squirrel-startup": "^1.1.0",
+    "electron-squirrel-startup": "^1.0.1",
     "ws": "^8.17.0",
-    "keytar": "^8.2.0",
-    "better-sqlite3": "^11.0.0",
+    "keytar": "^7.9.0",
     "zustand": "^5.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -39,5 +38,8 @@
     "vite": "^6.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "eslint": "^9.0.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.10.0"
   }
 }

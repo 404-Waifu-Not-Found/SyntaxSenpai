@@ -1,5 +1,6 @@
 /**
- * Cohere API Provider
+ * Cohere API Provider (Stub - TODO: Implement)
+ * https://docs.cohere.com
  */
 
 import type { ChatRequest, ChatResponse, StreamChunk } from "../types";
@@ -31,15 +32,14 @@ export class CohereProvider extends BaseAIProvider {
 
   constructor(options: { apiKey?: string } = {}) {
     super(options);
-    // TODO: Initialize cohere-ai client
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    throw new Error("Cohere provider not yet implemented");
+    throw new Error("Cohere provider: Use Anthropic or OpenAI for now");
   }
 
   async *stream(request: ChatRequest): AsyncIterable<StreamChunk> {
-    throw new Error("Cohere provider not yet implemented");
+    throw new Error("Cohere provider: Use Anthropic or OpenAI for now");
   }
 }
 

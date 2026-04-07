@@ -1,0 +1,36 @@
+# Build
+dist/
+dist-electron/
+out/
+
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+
+# Electron Builder
+release/
+*.exe
+*.dmg
+*.AppImage
+*.snap
+
+# Testing
+coverage/
+
+# Turbo
+.turbo/

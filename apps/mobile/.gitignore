@@ -1,0 +1,30 @@
+# Expo
+.expo/
+.expo-shared/
+dist/
+npm-debug.*
+*.ipa
+*.apk
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+coverage/
+
+# Build
+build/
+.turbo/

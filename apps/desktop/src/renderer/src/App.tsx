@@ -38,6 +38,10 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
+  const [showAgent, setShowAgent] = useState(false)
+  const [agentCommand, setAgentCommand] = useState('')
+  const [agentOutput, setAgentOutput] = useState('')
+  const [isAgentRunning, setIsAgentRunning] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const selectedWaifu = builtInWaifus.find((w) => w.id === selectedWaifuId) || builtInWaifus[0]
@@ -156,6 +160,27 @@ export default function App() {
     }
   }
 
+  const runAgent = async () => {
+    if (!agentCommand.trim() || isAgentRunning) return
+    const confirmed = confirm('Execute this command on your machine? This will run shell commands with your user permissions. Continue?')
+    if (!confirmed) return
+
+    setIsAgentRunning(true)
+    setAgentOutput('')
+    try {
+      const res = await (window as any).electron?.ipcRenderer?.invoke('agent:exec', { command: agentCommand })
+      if (res && res.success) {
+        setAgentOutput(`Exit: ${res.code}\n\nSTDOUT:\n${res.stdout || ''}\n\nSTDERR:\n${res.stderr || ''}`)
+      } else {
+        setAgentOutput('Error: ' + (res?.error || 'Unknown error'))
+      }
+    } catch (err) {
+      setAgentOutput('Error: ' + (err instanceof Error ? err.message : String(err)))
+    } finally {
+      setIsAgentRunning(false)
+    }
+  }
+
   // Settings Modal
   if (showSettings) {
     return (
@@ -221,6 +246,29 @@ export default function App() {
     )
   }
 
+  // Agent Modal
+  if (showAgent) {
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="bg-neutral-900 border border-neutral-800 rounded-lg p-6 max-w-3xl w-full">
+          <h2 className="text-xl font-bold text-white mb-4">Agent</h2>
+          <p className="text-sm text-neutral-400 mb-4">Run commands on this machine. Use with caution.</p>
+          <div className="mb-4 flex gap-2">
+            <input value={agentCommand} onChange={(e) => setAgentCommand(e.target.value)} placeholder="ls -la" className="flex-1 bg-neutral-800 border border-neutral-700 rounded px-3 py-2 text-white" />
+            <button onClick={runAgent} disabled={!agentCommand.trim() || isAgentRunning} className="bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded">
+              {isAgentRunning ? 'Running...' : 'Run'}
+            </button>
+            <button onClick={() => { setAgentOutput(''); setAgentCommand('') }} className="bg-neutral-700 hover:bg-neutral-600 text-white py-2 px-4 rounded">Clear</button>
+            <button onClick={() => setShowAgent(false)} className="bg-neutral-700 hover:bg-neutral-600 text-white py-2 px-4 rounded">Close</button>
+          </div>
+          <div className="bg-neutral-800 rounded p-3 max-h-80 overflow-auto">
+            <pre className="whitespace-pre-wrap text-sm text-neutral-200">{agentOutput || 'No output yet'}</pre>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // Setup Screen
   if (!isSetup) {
     return (
@@ -255,6 +303,9 @@ export default function App() {
             <p className="text-xs text-neutral-400">Messages</p>
             <p className="text-sm font-semibold">{messages.length}</p>
           </div>
+          <button onClick={() => setShowAgent(true)} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-lg text-sm font-semibold transition mb-3">
+            🤖 Agent
+          </button>
           <button
             onClick={() => setShowSettings(true)}
             className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg text-sm font-semibold transition mb-3"

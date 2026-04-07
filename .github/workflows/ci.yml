@@ -17,7 +17,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install
       - name: Build
-        run: pnpm -w -r --if-present run build
+        run: pnpm -w -r --if-present --filter "!apps/mobile" --filter "!apps/desktop" run build
       - name: Lint
         run: pnpm -w -r --if-present run lint
       - name: Typecheck

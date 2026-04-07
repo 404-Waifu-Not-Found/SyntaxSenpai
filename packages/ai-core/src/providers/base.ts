@@ -17,11 +17,11 @@ import type {
  */
 export abstract class BaseAIProvider implements AIProvider {
   abstract id: string;
-  abstract displayName: string;
-  abstract requiresApiKey: boolean;
-  abstract supportsStreaming: boolean;
-  abstract supportsToolCalling: boolean;
-  abstract supportedModels: { id: string; displayName: string; contextWindow: number; supportsTools: boolean; supportsVision: boolean }[];
+  displayName = "";
+  requiresApiKey = false;
+  supportsStreaming = false;
+  supportsToolCalling = false;
+  supportedModels: { id: string; displayName: string; contextWindow: number; supportsTools: boolean; supportsVision: boolean }[] = [];
 
   protected apiKey?: string;
   protected baseUrl?: string;
@@ -72,14 +72,14 @@ export abstract class BaseAIProvider implements AIProvider {
    * Helper: Validate API key format (basic check)
    */
   protected validateApiKey(key: string): boolean {
-    return key && key.trim().length > 0;
+    return !!key && key.trim().length > 0;
   }
 }
 
 /**
  * Base class for OpenAI-compatible providers (Together, Groq, Perplexity, etc.)
  */
-export class OpenAICompatibleProvider extends BaseAIProvider {
+export abstract class OpenAICompatibleProvider extends BaseAIProvider {
   displayName = "OpenAI Compatible";
   requiresApiKey = true;
   supportsStreaming = true;

@@ -8,14 +8,26 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --ext .ts,.tsx"
+    "lint": "eslint src --ext .ts,.tsx",
+    "pretest": "pnpm run build",
+    "test": "node dist/test-runner.js",
+    "test:unit": "vitest run --environment jsdom",
+    "avatars:generate": "node scripts/fetch-avatars.js",
+    "avatars:verify": "node scripts/verify-avatars.js",
+    "storybook": "storybook dev -p 6006 --config-dir ./.storybook",
+    "build:storybook": "storybook build --config-dir ./.storybook"
   },
   "dependencies": {
     "@syntax-senpai/waifu-core": "workspace:*",
-    "react": "^19.0.0"
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
-    "@types/react": "^19.0.0"
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@storybook/react-vite": "^7.0.0",
+    "@storybook/addon-essentials": "^7.0.0",
+    "storybook": "^7.0.0"
   }
 }

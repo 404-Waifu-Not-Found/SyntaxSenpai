@@ -8,7 +8,7 @@ export * from "./types.js";
 export * from "./personality.js";
 
 // Built-in waifu roster - demo entry for early testing
-export const builtInWaifus = [
+export const builtInWaifus: import("./types").Waifu[] = [
   {
     id: "demo-waifu-001",
     name: "ayame",
@@ -59,5 +59,5 @@ export const builtInWaifus = [
     isBuiltIn: true,
     tags: ["cheerful", "hobbyist", "support"],
     catchphrases: ["Leave it to me!", "Hehe~ I'll try my best!"],
-  },
-] as const;
+  }
+];

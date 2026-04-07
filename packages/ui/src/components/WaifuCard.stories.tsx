@@ -15,4 +15,4 @@ export default {
   component: WaifuCard
 };
 
-export const Default = () => <WaifuCard waifu={demoWaifu} />;
+export const Default = () => <WaifuCard waifu={demoWaifu as any} />;

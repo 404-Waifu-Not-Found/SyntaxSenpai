@@ -195,4 +195,5 @@ const WaifuCard: React.FC<Props> = ({ waifu, onClick, showAvatar = true, enterDe
   );
 };
 
+export { WaifuCard };
 export default WaifuCard;

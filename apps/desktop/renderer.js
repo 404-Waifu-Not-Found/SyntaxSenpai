@@ -104,7 +104,12 @@ function renderApp(allWaifus) {
           <textarea id="ss-input" placeholder="Say something..."></textarea>
           <div style="display:flex;flex-direction:column;gap:8px">
             <label style="display:flex;flex-direction:column;align-items:flex-end"><input id="ss-exec-cmd" type="checkbox"/> Execute as command</label>
-            <div class="ss-actions"><button id="ss-send">Send</button></div>
+            <div class="ss-actions">
+              <div style="display:flex;flex-direction:row;gap:8px">
+                <button id="ss-translate">Translate</button>
+                <button id="ss-send">Send</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -132,6 +137,7 @@ function renderApp(allWaifus) {
   const inputEl = container.querySelector('#ss-input');
   const execCheckbox = container.querySelector('#ss-exec-cmd');
   const sendBtn = container.querySelector('#ss-send');
+  const translateBtn = container.querySelector('#ss-translate');
   const apiSelect = container.querySelector('#ss-api-select');
   const settingsBtn = container.querySelector('#ss-settings-btn');
   const settingsModal = container.querySelector('#ss-settings-modal');
@@ -201,8 +207,9 @@ function renderApp(allWaifus) {
   async function doAgentResponse(userText) {
     const waifu = allWaifus.find(w=>w.id===selectedId);
     if (!waifu) return;
-    const messages = loadMessages(selectedId);
+    let messages = loadMessages(selectedId);
 
+    // direct execution if requested
     if (execCheckbox.checked || userText.trim().startsWith('/cmd ')) {
       const cmd = userText.trim().startsWith('/cmd ') ? userText.trim().slice(5) : userText.trim();
       messages.push({ role: 'assistant', content: 'Executing command: ' + cmd }); saveMessages(selectedId, messages); renderMessages(messages);
@@ -217,13 +224,78 @@ function renderApp(allWaifus) {
       return;
     }
 
+    // If OpenAI selected, call backend
+    if (apiSelect && apiSelect.value === 'openai') {
+      messages = loadMessages(selectedId);
+      messages.push({ role: 'assistant', content: 'Thinking...' }); saveMessages(selectedId, messages); renderMessages(messages);
+      try {
+        const resp = await ipcRenderer.invoke('agent:ai', { prompt: userText, waifu, recentMessages: messages });
+        if (resp && resp.reply) {
+          messages = loadMessages(selectedId);
+          let idx = messages.length - 1;
+          if (idx >= 0 && messages[idx].role === 'assistant' && messages[idx].content === 'Thinking...') {
+            messages[idx].content = resp.reply;
+          } else {
+            messages.push({ role: 'assistant', content: resp.reply });
+          }
+          saveMessages(selectedId, messages); renderMessages(messages);
+        } else if (resp && resp.error) {
+          messages.push({ role: 'assistant', content: 'AI error: ' + resp.error }); saveMessages(selectedId, messages); renderMessages(messages);
+        } else {
+          messages.push({ role: 'assistant', content: '(no reply)' }); saveMessages(selectedId, messages); renderMessages(messages);
+        }
+      } catch (e) {
+        messages.push({ role: 'assistant', content: 'AI call failed: ' + String(e) }); saveMessages(selectedId, messages); renderMessages(messages);
+      }
+      return;
+    }
+
+    // local fallback
     const reply = `${waifu.displayName || waifu.name || 'Agent'}: I heard you — "${userText}". I can run commands if you toggle 'Execute as command' or enable system control in Settings.`;
     messages.push({ role: 'assistant', content: reply }); saveMessages(selectedId, messages); renderMessages(messages);
   }
 
   sendBtn.addEventListener('click', async ()=>{
-    const txt = inputEl.value.trim(); if (!txt) return; const messages = loadMessages(selectedId); messages.push({ role: 'user', content: txt }); saveMessages(selectedId, messages); renderMessages(messages); inputEl.value = ''; await doAgentResponse(txt);
+    const txt = inputEl.value.trim(); if (!txt) return; let messages = loadMessages(selectedId); messages.push({ role: 'user', content: txt }); saveMessages(selectedId, messages); renderMessages(messages); inputEl.value = ''; await doAgentResponse(txt);
   });
+
+  // Translate to command flow
+  translateBtn && translateBtn.addEventListener('click', async ()=>{
+    const txt = inputEl.value.trim(); if (!txt) return; let messages = loadMessages(selectedId); messages.push({ role: 'user', content: txt }); saveMessages(selectedId, messages); renderMessages(messages); inputEl.value = '';
+    messages = loadMessages(selectedId); messages.push({ role: 'assistant', content: 'Translating to command...' }); saveMessages(selectedId, messages); renderMessages(messages);
+    try {
+      const res = await ipcRenderer.invoke('agent:translate', { text: txt, shellType: 'bash' });
+      if (res && res.error) { messages.push({ role: 'assistant', content: 'Translation failed: ' + res.error }); saveMessages(selectedId, messages); renderMessages(messages); return; }
+      const cmd = (res && res.command) ? res.command : (res.raw || '(no command)');
+      const explanation = res && res.explanation ? res.explanation : '';
+      messages = loadMessages(selectedId); messages.push({ role: 'assistant', content: `Proposed command: ${cmd}\n\n${explanation}` }); saveMessages(selectedId, messages); renderMessages(messages);
+      // add small controls to the last message
+      addCommandControlsToLastMessage(cmd, explanation);
+    } catch (e) {
+      messages.push({ role: 'assistant', content: 'Translation error: ' + String(e) }); saveMessages(selectedId, messages); renderMessages(messages);
+    }
+  });
+
+  function addCommandControlsToLastMessage(cmd, explanation) {
+    const lastEl = messagesEl.lastElementChild;
+    if (!lastEl) return;
+    const ctrl = document.createElement('div'); ctrl.style.marginTop = '6px';
+    const execBtn = document.createElement('button'); execBtn.textContent = 'Execute';
+    execBtn.addEventListener('click', async ()=>{
+      if (!cmd) return;
+      let messages = loadMessages(selectedId); messages.push({ role: 'assistant', content: 'Executing: ' + cmd }); saveMessages(selectedId, messages); renderMessages(messages);
+      try {
+        const result = await ipcRenderer.invoke('agent:exec', { command: cmd });
+        if (result.action === 'open-settings') { settingsModal.style.display='block'; return; }
+        const out = (result.stdout || '') + (result.stderr ? '\nERR: ' + result.stderr : '');
+        messages = loadMessages(selectedId); messages.push({ role: 'assistant', content: out || '(no output)' }); saveMessages(selectedId, messages); renderMessages(messages);
+      } catch (e) {
+        messages = loadMessages(selectedId); messages.push({ role: 'assistant', content: 'Execution failed: ' + String(e) }); saveMessages(selectedId, messages); renderMessages(messages);
+      }
+    });
+    const copyBtn = document.createElement('button'); copyBtn.textContent = 'Copy'; copyBtn.addEventListener('click', ()=> navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(cmd).catch(()=>{}) : null);
+    ctrl.appendChild(execBtn); ctrl.appendChild(copyBtn); lastEl.appendChild(ctrl);
+  }
 
   settingsBtn.addEventListener('click', ()=>{ settingsModal.style.display = settingsModal.style.display === 'none' ? 'block' : 'none'; loadSettings(); });
   saveSettingsBtn.addEventListener('click', saveSettings);

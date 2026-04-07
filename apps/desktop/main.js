@@ -125,3 +125,85 @@ ipcMain.handle('agent:openPath', async (event, { path: pth }) => {
     return { result };
   } catch (e) { return { error: String(e) }; }
 });
+
+// Translate natural language to shell command using OpenAI (safe, JSON-only output preferred)
+ipcMain.handle('agent:translate', async (event, { text, shellType = 'bash' } = {}) => {
+  const settings = loadSettings();
+  const provider = settings.apiProvider || 'local';
+  const apiKey = settings.apiKey || '';
+  const trimmed = (text || '').trim();
+  if (provider !== 'openai' || !apiKey) {
+    // simple heuristics fallback
+    if (/^open\s+(https?:\/\/|\/|file:\/)/i.test(trimmed)) {
+      const arg = trimmed.replace(/^open\s+/i, '');
+      return { command: `open "${arg}"`, explanation: 'Open URL or path' };
+    }
+    if (/\b(list|ls|show)\b.*\b(files|dir|directory)\b/i.test(trimmed)) {
+      return { command: 'ls -la', explanation: 'List files in the current directory' };
+    }
+    return { command: `echo "${trimmed.replace(/"/g, '\\"')}"`, explanation: 'Fallback echo (no API key or provider)' };
+  }
+
+  try {
+    const systemPrompt = `You are an assistant that must translate user instructions into a single safe shell command for macOS (bash/zsh). Respond ONLY with a JSON object like {"command":"...","explanation":"..."} and nothing else. Use full paths when reasonable. Do NOT include destructive commands (rm -rf, sudo that modifies system, dd, etc.). If the instruction could be destructive, return {"command":"echo \"(refused)\"","explanation":"Refused for safety"}.`;
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `Translate to a ${shellType} command: ${trimmed}` }
+    ];
+
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ model: 'gpt-4o-mini', messages, temperature: 0.0, max_tokens: 200 })
+    });
+
+    const data = await resp.json();
+    const content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content ? data.choices[0].message.content : '';
+    // extract JSON blob
+    const m = content.match(/{[\s\S]*}/);
+    if (m) {
+      try {
+        const parsed = JSON.parse(m[0]);
+        return { command: parsed.command || '', explanation: parsed.explanation || '', raw: content };
+      } catch (e) {
+        // fall through
+      }
+    }
+    // fallback: return whole content as command
+    return { command: content.trim(), explanation: '', raw: content };
+  } catch (e) {
+    return { error: String(e) };
+  }
+});
+
+// Agent AI: run a chat completion using configured provider (OpenAI)
+ipcMain.handle('agent:ai', async (event, { prompt, waifu = null, recentMessages = [] } = {}) => {
+  const settings = loadSettings();
+  const provider = settings.apiProvider || 'local';
+  const apiKey = settings.apiKey || '';
+  if (provider !== 'openai' || !apiKey) {
+    // simple fallback
+    const name = waifu && (waifu.displayName || waifu.name) ? (waifu.displayName || waifu.name) : 'Agent';
+    return { reply: `${name}: ${prompt}` };
+  }
+
+  try {
+    const systemPrompt = waifu && waifu.systemPromptTemplate ? waifu.systemPromptTemplate.replace('{{displayName}}', waifu.displayName || waifu.name || 'Assistant') : 'You are a helpful assistant.';
+    const messages = [ { role: 'system', content: systemPrompt } ];
+    for (const m of recentMessages || []) messages.push({ role: m.role, content: m.content });
+    messages.push({ role: 'user', content: prompt });
+
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'gpt-4o-mini', messages, temperature: 0.2, max_tokens: 800 })
+    });
+    const data = await resp.json();
+    const content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content ? data.choices[0].message.content : '';
+    return { reply: content, raw: data };
+  } catch (e) {
+    return { error: String(e) };
+  }
+});

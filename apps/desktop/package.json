@@ -5,6 +5,8 @@
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:quick": "electron main.js",
+    "start": "electron main.js",
     "build": "sh -c 'if [ ${CI:-false} = true ]; then echo Skipping desktop build in CI; else electron-vite build; fi'",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts,.tsx",

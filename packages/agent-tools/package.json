@@ -1,0 +1,19 @@
+{
+  "name": "@syntax-senpai/agent-tools",
+  "version": "0.0.1",
+  "description": "Tool registry and implementations for the waifu agent",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts,.tsx"
+  },
+  "dependencies": {
+    "@syntax-senpai/ai-core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

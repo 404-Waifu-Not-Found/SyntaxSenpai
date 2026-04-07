@@ -1,0 +1,43 @@
+{
+  "name": "syntax-senpai-desktop",
+  "version": "0.0.1",
+  "description": "SyntaxSenpai desktop app (Electron)",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts,.tsx",
+    "preview": "electron-vite preview",
+    "pack": "electron-builder --dir --publish never",
+    "dist": "electron-builder --publish never"
+  },
+  "dependencies": {
+    "@syntax-senpai/ai-core": "workspace:*",
+    "@syntax-senpai/waifu-core": "workspace:*",
+    "@syntax-senpai/agent-tools": "workspace:*",
+    "@syntax-senpai/storage": "workspace:*",
+    "@syntax-senpai/ui": "workspace:*",
+    "@syntax-senpai/ws-protocol": "workspace:*",
+    "electron-squirrel-startup": "^1.1.0",
+    "ws": "^8.17.0",
+    "keytar": "^8.2.0",
+    "better-sqlite3": "^11.0.0",
+    "zustand": "^5.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-vite": "^2.0.0",
+    "electron-builder": "^24.6.4",
+    "typescript": "^5.7.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.0",
+    "vite": "^6.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "eslint": "^9.0.0"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "syntax-senpai-mobile",
+  "version": "0.0.1",
+  "description": "SyntaxSenpai mobile app (iOS/Android)",
+  "main": "index.js",
+  "scripts": {
+    "dev": "expo start",
+    "ios": "expo run:ios",
+    "android": "expo run:android",
+    "web": "expo start --web",
+    "build": "eas build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts,.tsx"
+  },
+  "dependencies": {
+    "@syntax-senpai/ai-core": "workspace:*",
+    "@syntax-senpai/waifu-core": "workspace:*",
+    "@syntax-senpai/storage": "workspace:*",
+    "@syntax-senpai/ui": "workspace:*",
+    "@syntax-senpai/ws-protocol": "workspace:*",
+    "expo": "^52.0.0",
+    "expo-router": "^4.0.0",
+    "expo-sqlite": "^14.0.0",
+    "expo-secure-store": "^14.0.0",
+    "react": "^19.0.0",
+    "react-native": "^0.76.0",
+    "nativewind": "^4.0.0",
+    "tailwindcss": "^4.0.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "@types/react": "^19.0.0",
+    "@react-native-community/eslint-config": "^3.2.0",
+    "eslint": "^9.0.0"
+  }
+}

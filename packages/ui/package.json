@@ -1,0 +1,21 @@
+{
+  "name": "@syntax-senpai/ui",
+  "version": "0.0.1",
+  "description": "Shared UI components for mobile and desktop",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts,.tsx"
+  },
+  "dependencies": {
+    "@syntax-senpai/waifu-core": "workspace:*",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "@types/react": "^19.0.0"
+  }
+}

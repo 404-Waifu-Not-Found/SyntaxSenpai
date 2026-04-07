@@ -1,0 +1,19 @@
+{
+  "name": "@syntax-senpai/storage",
+  "version": "0.0.1",
+  "description": "Encrypted local storage and chat persistence",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts,.tsx"
+  },
+  "dependencies": {
+    "@syntax-senpai/waifu-core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

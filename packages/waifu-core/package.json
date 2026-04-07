@@ -1,0 +1,20 @@
+{
+  "name": "@syntax-senpai/waifu-core",
+  "version": "0.0.1",
+  "description": "Waifu model, personality engine, and built-in roster",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts,.tsx"
+  },
+  "dependencies": {
+    "@syntax-senpai/ai-core": "workspace:*",
+    "handlebars": "^4.7.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

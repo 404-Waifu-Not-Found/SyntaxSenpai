@@ -25,4 +25,4 @@ export default {
   component: WaifuList
 };
 
-export const Grid = () => <WaifuList waifus={waifus} />;
+export const Grid = () => <WaifuList waifus={waifus as any} />;

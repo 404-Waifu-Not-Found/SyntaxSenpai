@@ -42,6 +42,7 @@ export default function App() {
   const [agentCommand, setAgentCommand] = useState('')
   const [agentOutput, setAgentOutput] = useState('')
   const [isAgentRunning, setIsAgentRunning] = useState(false)
+  const [conversationId, setConversationId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const selectedWaifu = builtInWaifus.find((w) => w.id === selectedWaifuId) || builtInWaifus[0]
@@ -63,6 +64,25 @@ export default function App() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Create conversation helper
+  async function createConversation(): Promise<string | null> {
+    try {
+      const res = await (window as any).electron?.ipcRenderer?.invoke(
+        'store:createConversation',
+        selectedWaifuId,
+        `${selectedWaifu?.displayName || 'Conversation'} - ${new Date().toLocaleString()}`
+      )
+      if (res && res.success && res.conversation && res.conversation.id) {
+        setConversationId(res.conversation.id)
+        localStorage.setItem(`syntax-senpai-conv:${selectedWaifuId}`, res.conversation.id)
+        return res.conversation.id
+      }
+    } catch (err) {
+      console.warn('createConversation failed:', err)
+    }
+    return null
+  }
 
   // Handle setup
   const handleSetup = async (apiKeyValue: string) => {
@@ -88,6 +108,12 @@ export default function App() {
       )
 
       setIsSetup(true)
+      // create a conversation for this waifu
+      try {
+        await createConversation()
+      } catch (e) {
+        // non-fatal
+      }
       setShowSettings(false)
     } catch (err) {
       console.error('Setup failed:', err)
@@ -111,6 +137,20 @@ export default function App() {
     setIsLoading(true)
 
     try {
+      // Ensure a conversation exists and persist the user message
+      let convId = conversationId
+      if (!convId) {
+        convId = await createConversation()
+        if (convId) setConversationId(convId)
+      }
+      if (convId) {
+        try {
+          await (window as any).electron?.ipcRenderer?.invoke('store:addMessage', convId, userMsg)
+        } catch (err) {
+          console.warn('Failed to persist user message', err)
+        }
+      }
+
       const keyManager = new SimpleKeyManager()
       const key = await keyManager.getKey(selectedProvider)
 
@@ -166,6 +206,24 @@ export default function App() {
               return prev
             })
           }
+        }
+      }
+
+      // Persist assistant's final message
+      if (assistantContent) {
+        const assistantMsg: Message = {
+          id: assistantId,
+          role: 'assistant',
+          content: assistantContent,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        }
+        try {
+          if (!convId) convId = await createConversation()
+          if (convId) {
+            await (window as any).electron?.ipcRenderer?.invoke('store:addMessage', convId, assistantMsg)
+          }
+        } catch (err) {
+          console.warn('Failed to persist assistant message', err)
         }
       }
     } catch (err) {

@@ -4,8 +4,8 @@
  * Phase 1: Export types, skeleton for personality engine
  */
 
-export * from "./types";
-export * from "./personality";
+export * from "./types.js";
+export * from "./personality.js";
 
 // Built-in waifu roster - demo entry for early testing
 export const builtInWaifus = [

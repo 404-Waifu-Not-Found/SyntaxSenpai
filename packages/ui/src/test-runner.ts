@@ -1,4 +1,4 @@
-import { useWaifus } from "./hooks/useWaifus";
+import { useWaifus } from "./hooks/useWaifus.js";
 
 const { waifus } = useWaifus();
 if (!Array.isArray(waifus) || waifus.length === 0) {

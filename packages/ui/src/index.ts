@@ -7,3 +7,5 @@
 
 export type { Waifu } from "@syntax-senpai/waifu-core";
 export { default as WaifuCard } from "./components/WaifuCard";
+export { default as WaifuList } from "./components/WaifuList";
+export { useWaifus } from "./hooks/useWaifus";

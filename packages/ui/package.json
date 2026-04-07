@@ -8,7 +8,9 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --ext .ts,.tsx"
+    "lint": "eslint src --ext .ts,.tsx",
+    "pretest": "pnpm run build",
+    "test": "node dist/test-runner.js"
   },
   "dependencies": {
     "@syntax-senpai/waifu-core": "workspace:*",

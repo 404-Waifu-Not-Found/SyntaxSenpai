@@ -24,13 +24,13 @@ export default function WaifuList({
 
   return (
     <div style={containerStyle} className={className}>
-      {waifus.map((w) => (
+      {waifus.map((w, i) => (
         <div
           key={w.id}
           onClick={() => onSelect?.(w)}
-          style={{ cursor: onSelect ? "pointer" : "default" }}
+          style={{ cursor: onSelect ? "pointer" : "default", transition: "transform 220ms ease" }}
         >
-          <WaifuCard waifu={w} onClick={() => onSelect?.(w)} showAvatar={showAvatar} />
+          <WaifuCard waifu={w} onClick={() => onSelect?.(w)} showAvatar={showAvatar} enterDelayMs={i * 80} />
         </div>
       ))}
     </div>

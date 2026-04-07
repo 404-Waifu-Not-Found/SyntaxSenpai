@@ -48,6 +48,7 @@ export default function useFavorites() {
   function toggle(id: string) {
     const res = toggleFavoriteSync(id);
     setFavoritesState(res);
+    return res;
   }
 
   function addFavorite(id: string) {

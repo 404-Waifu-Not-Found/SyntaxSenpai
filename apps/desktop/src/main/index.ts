@@ -47,3 +47,5 @@ app.on('activate', () => {
 
 // Load agent IPC handlers
 require('./ipc/agent')
+// Load chat store IPC handlers
+require('./ipc/chat')

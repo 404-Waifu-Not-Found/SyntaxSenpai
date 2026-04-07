@@ -127,9 +127,13 @@ case "$APP_TYPE" in
   desktop)
     echo "🚀 Launching desktop app (Electron)..."
     echo "   App will open in a new window"
-    echo "   🌐 Web: http://localhost:5173"
     echo ""
-    env -u ELECTRON_RUN_AS_NODE pnpm -w --filter syntax-senpai-desktop run dev
+    if [[ $SKIP_BUILD -eq 0 ]]; then
+      echo "🔧 Building desktop app..."
+      pnpm -w --filter syntax-senpai-desktop run build || true
+    fi
+    echo "🚪 Starting app in production mode"
+    env -u ELECTRON_RUN_AS_NODE pnpm --filter syntax-senpai-desktop run start
     ;;
   mobile)
     echo "🚀 Launching mobile app (Expo)..."

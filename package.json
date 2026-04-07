@@ -10,6 +10,7 @@
     "packages/*"
   ],
   "scripts": {
+    "desktop:quick": "pnpm --filter syntax-senpai-desktop run dev:quick",
     "dev:mobile": "turbo run dev --filter=mobile",
     "dev:desktop": "turbo run dev --filter=desktop",
     "build": "turbo run build",

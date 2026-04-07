@@ -2,19 +2,21 @@
 // Works standalone (no build) and merges built waifus if available.
 const appEl = document.getElementById('app');
 
-function tryLoadBuiltWaifus() {
+async function tryLoadBuiltWaifus() {
+  // Use dynamic import to support ESM-built packages
   try {
-    // prefer package if available in workspace
-    const pkg = require('@syntax-senpai/waifu-core');
+    const pkg = await import('@syntax-senpai/waifu-core');
     if (pkg && Array.isArray(pkg.builtInWaifus)) return pkg.builtInWaifus;
   } catch (e) {
     // ignore
+    console.debug('import @syntax-senpai/waifu-core failed:', e && e.message ? e.message : e);
   }
   try {
-    const pkg = require('../../packages/waifu-core/dist/index.js');
+    // relative import from renderer to packages
+    const pkg = await import('../../packages/waifu-core/dist/index.js');
     if (pkg && Array.isArray(pkg.builtInWaifus)) return pkg.builtInWaifus;
   } catch (e) {
-    // ignore
+    console.debug('import local dist waifu-core failed:', e && e.message ? e.message : e);
   }
   return [];
 }
@@ -178,8 +180,8 @@ function renderApp(allWaifus) {
   renderList();
 }
 
-(function boot() {
-  const built = tryLoadBuiltWaifus();
+(async function boot() {
+  const built = await tryLoadBuiltWaifus();
   const all = mergeWaifus(built, demoWaifus);
   renderApp(all);
 })();

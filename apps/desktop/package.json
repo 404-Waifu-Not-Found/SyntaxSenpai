@@ -4,6 +4,7 @@
   "description": "SyntaxSenpai desktop app (Electron)",
   "main": "dist/main/index.js",
   "scripts": {
+    "predev:quick": "pnpm -w -r --filter @syntax-senpai/waifu-core --filter @syntax-senpai/ui run build || true",
     "dev": "electron-vite dev",
     "dev:quick": "electron main.js",
     "start": "electron main.js",

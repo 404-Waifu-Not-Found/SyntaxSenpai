@@ -12,7 +12,8 @@
     "pretest": "pnpm run build",
     "test": "node dist/test-runner.js",
     "test:unit": "vitest run --environment jsdom",
-    "avatars:generate": "node scripts/fetch-avatars.js"
+    "avatars:generate": "node scripts/fetch-avatars.js",
+    "avatars:verify": "node scripts/verify-avatars.js"
   },
   "dependencies": {
     "@syntax-senpai/waifu-core": "workspace:*",

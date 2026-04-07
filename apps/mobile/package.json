@@ -9,7 +9,7 @@
     "android": "expo run:android",
     "web": "expo start --web",
     "build": "sh -c 'if [ ${CI:-false} = true ]; then echo Skipping mobile build in CI; else eas build; fi'",
-}    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts,.tsx"
   },
   "dependencies": {

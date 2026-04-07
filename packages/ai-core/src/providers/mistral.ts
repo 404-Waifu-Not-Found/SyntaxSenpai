@@ -1,16 +1,16 @@
 /**
  * Mistral AI API Provider
+ * OpenAI-compatible API
+ * https://docs.mistral.ai
  */
 
 import type { ChatRequest, ChatResponse, StreamChunk } from "../types";
-import { BaseAIProvider } from "./base";
+import { OpenAICompatibleProvider } from "./base";
 
-export class MistralProvider extends BaseAIProvider {
+export class MistralProvider extends OpenAICompatibleProvider {
   id = "mistral";
   displayName = "Mistral AI";
-  requiresApiKey = true;
-  supportsStreaming = true;
-  supportsToolCalling = true;
+  baseURL = "https://api.mistral.ai/v1";
 
   supportedModels = [
     {
@@ -38,15 +38,16 @@ export class MistralProvider extends BaseAIProvider {
 
   constructor(options: { apiKey?: string } = {}) {
     super(options);
-    // TODO: Initialize @mistralai/mistralai client
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    throw new Error("Mistral provider not yet implemented");
+    const model = request.model || "mistral-small-latest";
+    return super.chat(request);
   }
 
   async *stream(request: ChatRequest): AsyncIterable<StreamChunk> {
-    throw new Error("Mistral provider not yet implemented");
+    const model = request.model || "mistral-small-latest";
+    yield* super.stream(request);
   }
 }
 

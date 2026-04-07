@@ -22,8 +22,11 @@
     "expo-router": "^4.0.0",
     "expo-sqlite": "^14.0.0",
     "expo-secure-store": "^14.0.0",
+    "expo-splash-screen": "^0.27.0",
     "react": "^19.0.0",
     "react-native": "^0.76.0",
+    "react-native-gesture-handler": "^2.16.0",
+    "@react-native-async-storage/async-storage": "^1.23.0",
     "nativewind": "^4.0.0",
     "tailwindcss": "^4.0.0",
     "zustand": "^5.0.0"

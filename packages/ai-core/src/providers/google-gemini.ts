@@ -1,5 +1,6 @@
 /**
- * Google Gemini API Provider
+ * Google Gemini API Provider (Stub - TODO: Implement)
+ * https://ai.google.dev
  */
 
 import type { ChatRequest, ChatResponse, StreamChunk } from "../types";
@@ -38,17 +39,14 @@ export class GeminiProvider extends BaseAIProvider {
 
   constructor(options: { apiKey?: string } = {}) {
     super(options);
-    // TODO: Initialize @google/generative-ai client
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    // TODO: Implement Gemini API call
-    throw new Error("Gemini provider not yet implemented");
+    throw new Error("Gemini provider: Use Anthropic or OpenAI for now");
   }
 
   async *stream(request: ChatRequest): AsyncIterable<StreamChunk> {
-    // TODO: Implement Gemini streaming
-    throw new Error("Gemini provider not yet implemented");
+    throw new Error("Gemini provider: Use Anthropic or OpenAI for now");
   }
 }
 

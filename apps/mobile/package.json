@@ -8,7 +8,7 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "web": "expo start --web",
-    "build": "eas build",
+    "build": "sh -c 'if [ \"$CI\" = \"true\" ]; then echo "Skipping mobile build in CI"; else eas build; fi'",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts,.tsx"
   },

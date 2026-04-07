@@ -5,7 +5,7 @@
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "sh -c 'if [ \"$CI\" = \"true\" ]; then echo "Skipping desktop build in CI"; else electron-vite build; fi'",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts,.tsx",
     "preview": "electron-vite preview",

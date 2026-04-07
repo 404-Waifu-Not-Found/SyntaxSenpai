@@ -15,7 +15,7 @@ jobs:
         with:
           version: 8
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --no-audit --no-fund
+        run: pnpm install --frozen-lockfile
       - name: Build
         run: pnpm -w -r run build --if-present
       - name: Lint

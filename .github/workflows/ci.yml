@@ -17,10 +17,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install
       - name: Build
-        run: pnpm -w -r run build --if-present
+        run: pnpm -w -r --if-present run build
       - name: Lint
-        run: pnpm -w -r run lint --if-present
+        run: pnpm -w -r --if-present run lint
       - name: Typecheck
-        run: pnpm -w -r run typecheck --if-present
+        run: pnpm -w -r --if-present run typecheck
       - name: Test
-        run: pnpm -w -r run test --if-present
+        run: pnpm -w -r --if-present run test

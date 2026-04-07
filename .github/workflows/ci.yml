@@ -18,8 +18,9 @@ jobs:
         run: pnpm install
       - name: Build
         run: pnpm -w -r --if-present --filter "!syntax-senpai-mobile" --filter "!syntax-senpai-desktop" run build
-      - name: Lint (skipped)
-        run: echo "Skipping lint in CI (no eslint configuration detected)"
+      - name: Lint
+        run: pnpm -w -r --if-present run lint
+        continue-on-error: true
       - name: Typecheck
         run: pnpm -w -r --if-present run typecheck
       - name: Test

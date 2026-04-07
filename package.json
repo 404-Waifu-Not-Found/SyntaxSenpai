@@ -1,6 +1,7 @@
 {
   "name": "syntax-senpai",
   "version": "0.0.1",
+  "packageManager": "pnpm@8.13.0",
   "description": "AI-powered waifu companion for developers",
   "private": true,
   "license": "MIT",
@@ -14,10 +15,11 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",
-    "typecheck": "turbo run typecheck",
+    "typecheck": "tsc -p tsconfig.base.json --noEmit",
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {
+    "@types/node": "20.3.1",
     "turbo": "^2.9.4",
     "typescript": "^5.7.2"
   },

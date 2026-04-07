@@ -1,5 +1,5 @@
 const electronModule = require('electron')
-const { app, BrowserWindow } = electronModule
+const { app, BrowserWindow, ipcMain, shell } = electronModule
 const { join } = require('path')
 
 const isDev = process.env.NODE_ENV === 'development'
@@ -42,5 +42,57 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (mainWindow === null) {
     createWindow()
+  }
+})
+
+// IPC handlers for agent actions
+const { spawn } = require('child_process')
+const fs = require('fs').promises
+const pathModule = require('path')
+
+ipcMain.handle('agent:exec', async (event, { command, args = [], cwd = undefined } = {}) => {
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(command, args, { shell: true, cwd, env: process.env })
+      let stdout = ''
+      let stderr = ''
+      child.stdout && child.stdout.on('data', (chunk) => { stdout += chunk.toString() })
+      child.stderr && child.stderr.on('data', (chunk) => { stderr += chunk.toString() })
+      child.on('close', (code) => {
+        resolve({ success: true, code, stdout, stderr })
+      })
+      child.on('error', (err) => {
+        resolve({ success: false, error: err.message })
+      })
+    } catch (err) {
+      resolve({ success: false, error: err instanceof Error ? err.message : String(err) })
+    }
+  })
+})
+
+ipcMain.handle('agent:readFile', async (event, filePath) => {
+  try {
+    const content = await fs.readFile(pathModule.resolve(filePath), 'utf-8')
+    return { success: true, content }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+ipcMain.handle('agent:writeFile', async (event, filePath, content) => {
+  try {
+    await fs.writeFile(pathModule.resolve(filePath), content, 'utf-8')
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
+})
+
+ipcMain.handle('agent:openExternal', async (event, url) => {
+  try {
+    await shell.openExternal(url)
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
   }
 })

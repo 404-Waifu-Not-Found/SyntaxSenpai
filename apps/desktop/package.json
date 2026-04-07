@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "sh -c 'if [ ${CI:-false} = true ]; then echo Skipping desktop build in CI; else electron-vite build; fi'",
-}{    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts,.tsx",
     "preview": "electron-vite preview",
     "pack": "electron-builder --dir --publish never",

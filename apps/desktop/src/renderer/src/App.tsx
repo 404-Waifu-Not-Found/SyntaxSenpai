@@ -68,7 +68,14 @@ export default function App() {
   const handleSetup = async (apiKeyValue: string) => {
     try {
       const keyManager = new SimpleKeyManager()
-      await keyManager.setKey(selectedProvider, apiKeyValue)
+      if (apiKeyValue && apiKeyValue.length > 0) {
+        await keyManager.setKey(selectedProvider, apiKeyValue)
+        setApiKeyState(apiKeyValue)
+      } else {
+        // Allow demo mode by clearing stored key for this provider
+        await keyManager.setKey(selectedProvider, '')
+        setApiKeyState('')
+      }
 
       localStorage.setItem(
         'syntax-senpai-setup',
@@ -76,10 +83,10 @@ export default function App() {
           waifuId: selectedWaifuId,
           provider: selectedProvider,
           hasSetup: true,
+          demo: !apiKeyValue
         })
       )
 
-      setApiKeyState(apiKeyValue)
       setIsSetup(true)
       setShowSettings(false)
     } catch (err) {
@@ -107,13 +114,26 @@ export default function App() {
       const keyManager = new SimpleKeyManager()
       const key = await keyManager.getKey(selectedProvider)
 
-      if (!key) throw new Error(`No API key for ${selectedProvider}`)
-
-      const runtime = new AIChatRuntime({
-        provider: { type: selectedProvider as any, apiKey: key } as any,
-        model: selectedProvider === 'openai' ? 'gpt-4o' : 'claude-3-5-sonnet-20241022',
-        systemPrompt: `You are ${selectedWaifu.displayName}. ${selectedWaifu.backstory}`,
-      })
+      // If no API key, use a lightweight mock stream so the app is usable in demo mode
+      let runtime: any
+      if (!key || key === '') {
+        runtime = {
+          async *streamMessage({ text: userText, history }: any) {
+            const persona = selectedWaifu?.displayName || 'Assistant'
+            const reply = `${persona}: ${userText.split('').reverse().join('')}`
+            for (let i = 0; i < reply.length; i += 16) {
+              await new Promise((r) => setTimeout(r, 30))
+              yield { type: 'text_delta', delta: reply.slice(i, i + 16) }
+            }
+          }
+        }
+      } else {
+        runtime = new AIChatRuntime({
+          provider: { type: selectedProvider as any, apiKey: key } as any,
+          model: selectedProvider === 'openai' ? 'gpt-4o' : 'claude-3-5-sonnet-20241022',
+          systemPrompt: `You are ${selectedWaifu.displayName}. ${selectedWaifu.backstory}`,
+        })
+      }
 
       const aiMessages = messages.map((m) => ({
         id: m.id,
@@ -235,10 +255,21 @@ export default function App() {
               Cancel
             </button>
             <button
-              onClick={() => handleSetup(apiKey)}
+              onClick={() => { handleSetup(apiKey) }}
               className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded font-semibold"
             >
               Save
+            </button>
+            <button
+              onClick={() => { 
+                // demo mode: no API key required
+                localStorage.setItem('syntax-senpai-setup', JSON.stringify({ waifuId: selectedWaifuId, provider: selectedProvider, hasSetup: true, demo: true }))
+                setIsSetup(true)
+                setShowSettings(false)
+              }}
+              className="flex-1 bg-neutral-600 hover:bg-neutral-500 text-white py-2 rounded font-semibold"
+            >
+              Continue without API
             </button>
           </div>
         </div>
@@ -277,12 +308,20 @@ export default function App() {
           <div className="text-6xl mb-6">✨</div>
           <h1 className="text-4xl font-bold text-white mb-3">SyntaxSenpai</h1>
           <p className="text-neutral-400 mb-8">Your AI companion that codes with you</p>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg"
-          >
-            Get Started
-          </button>
+          <div className="space-y-3">
+            <button
+              onClick={() => setShowSettings(true)}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg"
+            >
+              Get Started
+            </button>
+            <button
+              onClick={() => { localStorage.setItem('syntax-senpai-setup', JSON.stringify({ waifuId: selectedWaifuId, provider: selectedProvider, hasSetup: true, demo: true })); setIsSetup(true) }}
+              className="w-full bg-neutral-700 hover:bg-neutral-600 text-white font-bold py-3 rounded-lg"
+            >
+              Try Demo Mode (no API)
+            </button>
+          </div>
         </div>
       </div>
     )

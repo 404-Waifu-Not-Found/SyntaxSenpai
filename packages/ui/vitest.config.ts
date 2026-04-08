@@ -1,21 +1,25 @@
 import { defineConfig } from 'vitest/config'
+import path from 'path'
+import { fileURLToPath } from 'url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
   test: {
     projects: [
-      'apps/server',
-      'apps/ui-server-auth',
-      'apps/stage-tamagotchi',
-      'packages/audio-pipelines-transcribe',
-      'packages/cap-vite',
-      'packages/vishot-runner-browser',
-      'packages/plugin-sdk',
-      'packages/server-runtime',
-      'packages/server-sdk',
-      'packages/stage-shared',
-      'packages/stage-ui',
-      'packages/vishot-runtime',
-      'packages/vite-plugin-warpdrive',
+      path.resolve(__dirname, 'apps/server'),
+      path.resolve(__dirname, 'apps/ui-server-auth'),
+      path.resolve(__dirname, 'apps/stage-tamagotchi'),
+      path.resolve(__dirname, 'packages/audio-pipelines-transcribe'),
+      path.resolve(__dirname, 'packages/cap-vite'),
+      path.resolve(__dirname, 'packages/vishot-runner-browser'),
+      path.resolve(__dirname, 'packages/plugin-sdk'),
+      path.resolve(__dirname, 'packages/server-runtime'),
+      path.resolve(__dirname, 'packages/server-sdk'),
+      path.resolve(__dirname, 'packages/stage-shared'),
+      path.resolve(__dirname, 'packages/stage-ui'),
+      path.resolve(__dirname, 'packages/vishot-runtime'),
+      path.resolve(__dirname, 'packages/vite-plugin-warpdrive'),
     ],
   },
 })

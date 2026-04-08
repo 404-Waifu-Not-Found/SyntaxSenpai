@@ -1,21 +1,28 @@
 const electronModule = require('electron')
 
-// If require('electron') returned a path string, this process is the npm wrapper
-// running under plain Node. Spawn the real Electron binary and pass along args.
+// When started via the npm `electron` shim, Electron may run this entry in
+// `ELECTRON_RUN_AS_NODE` mode first. Relaunch the real app binary without that
+// env var so the actual browser process gets Electron APIs.
 if (typeof electronModule === 'string') {
   const cp = require('child_process')
-  const bin = electronModule
-  const args = process.argv.slice(1) // include the script path and any args
-  console.log('DEBUG: detected electron wrapper; spawning real binary:', bin, args)
-  const child = cp.spawn(bin, args, { stdio: 'inherit', detached: true })
-  // Allow the child to continue if the parent exits
+  const env = { ...process.env }
+  delete env.ELECTRON_RUN_AS_NODE
+  env.SYNTAX_SENPAI_ELECTRON_LAUNCHED = '1'
+  const child = cp.spawn(electronModule, [process.cwd()], {
+    stdio: 'inherit',
+    detached: true,
+    env
+  })
+
   try { child.unref && child.unref() } catch (e) {}
-  // Exit current wrapper process; the spawned Electron will run the app
   process.exit(0)
 }
 
 const { app, BrowserWindow, ipcMain, shell } = electronModule
 const { join } = require('path')
+import { registerChatIpc } from './ipc/chat'
+import { registerAgentIpc } from './ipc/agent'
+import { registerKeystoreIpc } from './ipc/keystore'
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -57,10 +64,10 @@ app.whenReady().then(() => {
     process.env.CHAT_DB_PATH = 'syntax-senpai.sqlite'
   }
 
-  // Load IPC handlers after app is ready so they can access app.getPath
-  require('./ipc/chat')
-  require('./ipc/agent')
-  require('./ipc/keystore')
+  // Register IPC handlers after app is ready so they can access app.getPath.
+  registerChatIpc()
+  registerAgentIpc()
+  registerKeystoreIpc()
 })
 
 app.on('window-all-closed', () => {

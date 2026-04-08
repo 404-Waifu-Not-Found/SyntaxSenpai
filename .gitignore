@@ -14,18 +14,45 @@ yarn.lock
 
 # Build outputs
 dist/
+**/dist/
 build/
+**/build/
 out/
+**/out/
 coverage/
+**/coverage/
 .cache/
+**/.cache/
 .turbo/
+**/.turbo/
 .parcel-cache/
+**/.parcel-cache/
 .vite/
+**/.vite/
 .esbuild/
+**/.esbuild/
+.next/
+**/.next/
+.nuxt/
+**/.nuxt/
+.expo/
+**/.expo/
+.expo-shared/
+**/.expo-shared/
+.nyc_output/
+**/.nyc_output/
+tmp/
+**/tmp/
+temp/
+**/temp/
+release/
+**/release/
 
 # Electron / desktop build artifacts
 apps/desktop/dist_electron/
 apps/desktop/dist_electron/**
+**/dist_electron/
+**/dist-electron/
 
 # OS generated files
 .DS_Store

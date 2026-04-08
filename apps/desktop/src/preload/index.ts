@@ -1,4 +1,4 @@
-const electronModule = require('node:electron')
+const electronModule = require('electron')
 const { contextBridge, ipcRenderer } = electronModule
 
 contextBridge.exposeInMainWorld('electron', {

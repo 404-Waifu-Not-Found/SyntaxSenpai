@@ -5,7 +5,7 @@
   "private": true,
   "description": "manifest.json description",
   "bin": {
-    "tsdown": "./dist/run.js"
+    "tsdown": "./dist/run.mjs"
   },
   "scripts": {
     "build": "tsdown",
@@ -13,12 +13,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@guiiai/logg": "catalog:",
+    "@guiiai/logg": "^1.2.11",
     "@proj-airi/server-sdk": "workspace:*",
     "cac": "^7.0.0",
     "debug": "^4.4.3",
     "destr": "^2.0.5",
-    "vue": "catalog:"
+    "vue": "^3.5.32"
   },
   "devDependencies": {
     "@anthropic-ai/claude-code": "^2.1.81",

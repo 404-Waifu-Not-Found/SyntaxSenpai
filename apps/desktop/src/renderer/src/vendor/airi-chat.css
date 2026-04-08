@@ -1,0 +1,64 @@
+/* Vendorized AIRI chat bubble styles (excerpt)
+   Source: packages/ui/services/minecraft/src/debug/web/styles.css
+   Purpose: keep a local, framework-agnostic copy of chat bubble styles and typing animations
+*/
+
+.airi-root {
+  --airi-bg-primary: #0d1117;
+  --airi-bg-secondary: #161b22;
+  --airi-border: #30363d;
+  --airi-text-primary: #c9d1d9;
+  --airi-text-muted: #6e7681;
+}
+
+/* Scoped chat styles to avoid colliding with existing .msg-bubble classes */
+.airi-chat .chat-message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 86%;
+}
+
+.airi-chat .chat-bubble {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--airi-border);
+  background: var(--airi-bg-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.airi-chat .chat-message-user { align-self: flex-end; }
+.airi-chat .chat-bubble-user { border-color: rgba(63,185,80,0.45); background: rgba(63,185,80,0.10); }
+
+.airi-chat .chat-message-assistant { align-self: flex-start; }
+.airi-chat .chat-bubble-assistant { border-color: rgba(88,166,255,0.45); background: rgba(88,166,255,0.08); }
+
+.airi-chat .chat-typing-indicator {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 10px;
+  width: fit-content;
+  border-radius: 999px;
+  border: 1px solid var(--airi-border);
+  background: var(--airi-bg-primary);
+}
+
+.airi-chat .chat-typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--airi-text-muted);
+  animation: airiChatTyping 1.2s infinite ease-in-out;
+}
+.airi-chat .chat-typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.airi-chat .chat-typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes airiChatTyping {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-3px); opacity: 0.9; }
+}

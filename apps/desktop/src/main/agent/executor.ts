@@ -2,7 +2,7 @@ const { spawn } = require('child_process')
 const fs = require('fs').promises
 const fssync = require('fs')
 const path = require('path')
-const { shell } = require('node:electron')
+const { shell } = require('electron')
 
 // Persistent allowlist & auditing for agent commands
 const DEFAULT_ALLOWLIST = ['ls','pwd','cat','echo','open','whoami','uptime','date','id']
@@ -30,11 +30,11 @@ function loadAllowlistSync(): Set<string> {
   return allowlistCache
 }
 
-async function getAllowlist(): Promise<string[]> {
+export async function getAllowlist(): Promise<string[]> {
   return Array.from(loadAllowlistSync())
 }
 
-async function saveAllowlist(list: string[]) {
+export async function saveAllowlist(list: string[]) {
   try {
     const allowPath = path.join(getLogDir(), 'agent-allowlist.json')
     await fs.writeFile(allowPath, JSON.stringify(list, null, 2), 'utf-8')
@@ -51,7 +51,7 @@ async function saveAllowlist(list: string[]) {
   }
 }
 
-async function addAllowed(cmd: string) {
+export async function addAllowed(cmd: string) {
   if (!cmd || typeof cmd !== 'string') return { success: false, error: 'Invalid command' }
   try {
     const set = loadAllowlistSync()
@@ -72,7 +72,7 @@ async function addAllowed(cmd: string) {
   }
 }
 
-async function removeAllowed(cmd: string) {
+export async function removeAllowed(cmd: string) {
   if (!cmd || typeof cmd !== 'string') return { success: false, error: 'Invalid command' }
   try {
     const set = loadAllowlistSync()
@@ -102,7 +102,7 @@ function isCommandAllowed(cmd: string): boolean {
   return allowSet.has(first) || allowSet.has(path.basename(first))
 }
 
-function runCommand(opts: any = {}) {
+export function runCommand(opts: any = {}) {
   const { command, args = [], cwd = undefined, env = process.env } = opts
   return new Promise((resolve) => {
     try {
@@ -188,7 +188,7 @@ function runCommand(opts: any = {}) {
   })
 }
 
-async function readFile(filePath: string) {
+export async function readFile(filePath: string) {
   try {
     const content = await fs.readFile(path.resolve(filePath), 'utf-8')
     return { success: true, content }
@@ -197,7 +197,7 @@ async function readFile(filePath: string) {
   }
 }
 
-async function writeFile(filePath: string, content: string) {
+export async function writeFile(filePath: string, content: string) {
   try {
     await fs.writeFile(path.resolve(filePath), content, 'utf-8')
     return { success: true }
@@ -206,7 +206,7 @@ async function writeFile(filePath: string, content: string) {
   }
 }
 
-async function openExternal(url: string) {
+export async function openExternal(url: string) {
   try {
     await shell.openExternal(url)
     return { success: true }

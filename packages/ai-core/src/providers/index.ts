@@ -18,6 +18,12 @@ export { GroqProvider, createGroqProvider } from "./groq";
 export { PerplexityProvider, createPerplexityProvider } from "./perplexity";
 export { ReplicateProvider, createReplicateProvider } from "./replicate";
 export { HuggingFaceProvider, createHuggingFaceProvider } from "./huggingface";
+export { DeepSeekProvider, createDeepSeekProvider } from "./deepseek";
+export { MiniMaxGlobalProvider, createMiniMaxGlobalProvider } from "./minimax-global";
+export { MiniMaxCNProvider, createMiniMaxCNProvider } from "./minimax-cn";
+export { XAIProvider, createXAIProvider } from "./xai";
+export { OpenAICodexProvider, createOpenAICodexProvider } from "./openai-codex";
+export { GitHubModelsProvider, createGitHubModelsProvider } from "./github-models";
 export { XAIGrokProvider, createXAIGrokProvider } from "./xai-grok";
 export { AzureOpenAIProvider, createAzureOpenAIProvider } from "./azure-openai";
 export { AWSBedrockProvider, createAWSBedrockProvider } from "./aws-bedrock";
@@ -34,6 +40,12 @@ import { GroqProvider } from "./groq";
 import { PerplexityProvider } from "./perplexity";
 import { ReplicateProvider } from "./replicate";
 import { HuggingFaceProvider } from "./huggingface";
+import { DeepSeekProvider } from "./deepseek";
+import { MiniMaxGlobalProvider } from "./minimax-global";
+import { MiniMaxCNProvider } from "./minimax-cn";
+import { XAIProvider } from "./xai";
+import { OpenAICodexProvider } from "./openai-codex";
+import { GitHubModelsProvider } from "./github-models";
 import { OllamaProvider } from "./ollama";
 import { XAIGrokProvider } from "./xai-grok";
 import { AzureOpenAIProvider } from "./azure-openai";
@@ -54,8 +66,14 @@ export type ProviderConfig =
   | { type: "perplexity"; apiKey: string }
   | { type: "replicate"; apiKey: string }
   | { type: "huggingface"; apiKey: string }
+  | { type: "deepseek"; apiKey: string }
+  | { type: "minimax-global"; apiKey: string }
+  | { type: "minimax-cn"; apiKey: string }
   | { type: "ollama"; baseUrl?: string }
+  | { type: "xai"; apiKey: string }
   | { type: "xai-grok"; apiKey: string }
+  | { type: "openai-codex"; apiKey: string }
+  | { type: "github-models"; apiKey: string }
   | { type: "azure-openai"; apiKey: string; resourceName: string }
   | { type: "aws-bedrock"; apiKey: string }
   | { type: "fireworks"; apiKey: string };
@@ -82,10 +100,22 @@ export function createProvider(config: ProviderConfig): AIProvider {
       return new ReplicateProvider({ apiKey: config.apiKey });
     case "huggingface":
       return new HuggingFaceProvider({ apiKey: config.apiKey });
+    case "deepseek":
+      return new DeepSeekProvider({ apiKey: config.apiKey });
+    case "minimax-global":
+      return new MiniMaxGlobalProvider({ apiKey: config.apiKey });
+    case "minimax-cn":
+      return new MiniMaxCNProvider({ apiKey: config.apiKey });
     case "ollama":
       return new OllamaProvider({ baseUrl: config.baseUrl });
+    case "xai":
+      return new XAIProvider({ apiKey: config.apiKey });
     case "xai-grok":
       return new XAIGrokProvider({ apiKey: config.apiKey });
+    case "openai-codex":
+      return new OpenAICodexProvider({ apiKey: config.apiKey });
+    case "github-models":
+      return new GitHubModelsProvider({ apiKey: config.apiKey });
     case "azure-openai":
       return new AzureOpenAIProvider({
         apiKey: config.apiKey,
@@ -115,8 +145,14 @@ export function getAllProviderMetadata() {
     new PerplexityProvider({ apiKey: "dummy" }),
     new ReplicateProvider({ apiKey: "dummy" }),
     new HuggingFaceProvider({ apiKey: "dummy" }),
+    new DeepSeekProvider({ apiKey: "dummy" }),
+    new MiniMaxGlobalProvider({ apiKey: "dummy" }),
+    new MiniMaxCNProvider({ apiKey: "dummy" }),
     new OllamaProvider(),
+    new XAIProvider({ apiKey: "dummy" }),
     new XAIGrokProvider({ apiKey: "dummy" }),
+    new OpenAICodexProvider({ apiKey: "dummy" }),
+    new GitHubModelsProvider({ apiKey: "dummy" }),
     new AzureOpenAIProvider({ apiKey: "dummy", baseUrl: "https://dummy.openai.azure.com" }),
     new AWSBedrockProvider({ apiKey: "dummy" }),
     new FireworksProvider({ apiKey: "dummy" }),

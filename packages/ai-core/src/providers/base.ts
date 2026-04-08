@@ -118,28 +118,86 @@ export abstract class OpenAICompatibleProvider extends BaseAIProvider {
 }
 
 /**
- * Helper to convert messages to OpenAI format
+ * Helper to convert messages to OpenAI format.
+ * Handles tool_calls on assistant messages and tool_call_id on tool results.
  */
-export function convertToOpenAIMessages(messages: Message[]): Array<{ role: string; content: string }> {
-  return messages.map((msg) => ({
-    role: msg.role,
-    content: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content),
-  }));
+export function convertToOpenAIMessages(messages: Message[]): Array<Record<string, unknown>> {
+  return messages.map((msg) => {
+    const content =
+      typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+
+    // Assistant message that invoked tools
+    if (msg.role === "assistant" && msg.toolCalls && msg.toolCalls.length > 0) {
+      return {
+        role: "assistant",
+        content: content || null,
+        tool_calls: msg.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: "function",
+          function: {
+            name: tc.name,
+            arguments:
+              typeof tc.arguments === "string"
+                ? tc.arguments
+                : JSON.stringify(tc.arguments),
+          },
+        })),
+      };
+    }
+
+    // Tool result message
+    if (msg.role === "tool" && msg.toolCallId) {
+      return {
+        role: "tool",
+        content,
+        tool_call_id: msg.toolCallId,
+      };
+    }
+
+    // Regular message (system / user / assistant without tools)
+    return { role: msg.role, content };
+  });
 }
 
 /**
- * Helper to convert messages to Anthropic format
+ * Helper to convert messages to Anthropic format.
+ * Handles tool_use blocks on assistant messages and tool_result blocks for tool responses.
  */
 export function convertToAnthropicMessages(
   messages: Message[]
-): Array<{ role: "user" | "assistant"; content: string }> {
+): Array<Record<string, unknown>> {
   // Filter out system messages (handled separately in Anthropic)
   return messages
     .filter((msg) => msg.role !== "system")
-    .map((msg) => ({
-      role: msg.role as "user" | "assistant",
-      content: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content),
-    }));
+    .map((msg) => {
+      const content =
+        typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+
+      // Assistant message that invoked tools
+      if (msg.role === "assistant" && msg.toolCalls && msg.toolCalls.length > 0) {
+        const blocks: Array<Record<string, unknown>> = [];
+        if (content) blocks.push({ type: "text", text: content });
+        for (const tc of msg.toolCalls) {
+          blocks.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.arguments });
+        }
+        return { role: "assistant", content: blocks };
+      }
+
+      // Tool result message
+      if (msg.role === "tool" && msg.toolCallId) {
+        return {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: msg.toolCallId, content },
+          ],
+        };
+      }
+
+      return {
+        role: msg.role as "user" | "assistant",
+        content,
+      };
+    });
 }
 
 /**

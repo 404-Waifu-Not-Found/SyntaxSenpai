@@ -1,45 +1,32 @@
-/**
- * Hugging Face Inference API Provider
- */
+import type { ModelInfo } from "../types";
+import { OpenAIProvider } from "./openai";
 
-import type { ChatRequest, ChatResponse, StreamChunk } from "../types";
-import { BaseAIProvider } from "./base";
+const MODELS: ModelInfo[] = [
+  {
+    id: "meta-llama/Llama-3.3-70B-Instruct",
+    displayName: "Llama 3.3 70B Instruct",
+    contextWindow: 128000,
+    supportsTools: true,
+    supportsVision: false,
+  },
+  {
+    id: "Qwen/Qwen2.5-Coder-32B-Instruct",
+    displayName: "Qwen 2.5 Coder 32B",
+    contextWindow: 32768,
+    supportsTools: true,
+    supportsVision: false,
+  },
+];
 
-export class HuggingFaceProvider extends BaseAIProvider {
-  id = "huggingface";
-  displayName = "Hugging Face Inference API";
-  requiresApiKey = true;
-  supportsStreaming = true;
-  supportsToolCalling = false;
-
-  supportedModels = [
-    {
-      id: "meta-llama/Llama-2-70b-chat-hf",
-      displayName: "Llama 2 70B Chat",
-      contextWindow: 4096,
-      supportsTools: false,
-      supportsVision: false,
-    },
-    {
-      id: "NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO",
-      displayName: "Nous Hermes 2 Mixtral",
-      contextWindow: 32000,
-      supportsTools: false,
-      supportsVision: false,
-    },
-  ];
-
+export class HuggingFaceProvider extends OpenAIProvider {
   constructor(options: { apiKey?: string } = {}) {
-    super(options);
-    // TODO: Initialize @huggingface/inference client
-  }
-
-  async chat(request: ChatRequest): Promise<ChatResponse> {
-    throw new Error("HuggingFace provider not yet implemented");
-  }
-
-  async *stream(request: ChatRequest): AsyncIterable<StreamChunk> {
-    throw new Error("HuggingFace provider not yet implemented");
+    super({
+      ...options,
+      id: "huggingface",
+      displayName: "Hugging Face",
+      baseUrl: "https://router.huggingface.co/v1",
+      supportedModels: MODELS,
+    });
   }
 }
 

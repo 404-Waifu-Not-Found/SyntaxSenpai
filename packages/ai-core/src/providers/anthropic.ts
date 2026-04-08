@@ -43,6 +43,7 @@ export class AnthropicProvider extends BaseAIProvider {
     super(options);
     this.client = new Anthropic({
       apiKey: this.apiKey,
+      dangerouslyAllowBrowser: true,
     });
   }
 
@@ -63,7 +64,7 @@ export class AnthropicProvider extends BaseAIProvider {
       max_tokens: request.maxTokens || 4096,
       temperature: request.temperature !== undefined ? request.temperature : 0.7,
       system: systemPrompt,
-      messages,
+      messages: messages as any,
       tools: tools && tools.length > 0 ? (tools as any) : undefined,
     });
 
@@ -113,7 +114,7 @@ export class AnthropicProvider extends BaseAIProvider {
       max_tokens: request.maxTokens || 4096,
       temperature: request.temperature !== undefined ? request.temperature : 0.7,
       system: systemPrompt,
-      messages,
+      messages: messages as any,
       tools: tools && tools.length > 0 ? (tools as any) : undefined,
     });
 

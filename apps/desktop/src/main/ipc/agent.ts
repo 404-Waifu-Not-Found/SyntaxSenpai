@@ -21,6 +21,10 @@ export function registerAgentIpc() {
     return await executor.writeFile(filePath, content)
   })
 
+  ipcMain.handle('agent:listDirectory', async (event: any, dirPath: string) => {
+    return await executor.listDirectory(dirPath)
+  })
+
   ipcMain.handle('agent:openExternal', async (event: any, url: string) => {
     return await executor.openExternal(url)
   })

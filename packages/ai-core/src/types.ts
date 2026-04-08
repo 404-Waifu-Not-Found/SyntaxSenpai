@@ -115,4 +115,5 @@ export interface ModelInfo {
 export interface CreateProviderOptions {
   apiKey?: string;
   baseUrl?: string; // for self-hosted or compatible endpoints
+  defaultHeaders?: Record<string, string>;
 }

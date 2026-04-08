@@ -14,6 +14,7 @@ export function buildSystemPrompt(
   context: SystemPromptContext
 ): string {
   const basePrompt = `You are ${waifu.displayName}, a waifu assistant with a distinct personality.`;
+  const templateBlock = renderTemplatePrompt(waifu, relationship, context);
 
   // Layer 1: Core identity
   const identityBlock = formatIdentity(waifu);
@@ -51,6 +52,7 @@ export function buildSystemPrompt(
 
   const parts = [
     basePrompt,
+    templateBlock,
     identityBlock,
     personalityBlock,
     communicationBlock,
@@ -61,6 +63,29 @@ export function buildSystemPrompt(
   ].filter(Boolean);
 
   return parts.join("\n\n");
+}
+
+function renderTemplatePrompt(
+  waifu: Waifu,
+  relationship: WaifuRelationship,
+  context: SystemPromptContext
+): string {
+  if (!waifu.systemPromptTemplate) {
+    return "";
+  }
+
+  const template = Handlebars.compile(waifu.systemPromptTemplate);
+  return `## Character Brief\n${template({
+    ...waifu,
+    ...waifu.personalityTraits,
+    ...waifu.communicationStyle,
+    userId: context.userId,
+    waifuNickname: context.waifuNickname,
+    affectionLevel: context.affectionLevel ?? relationship.affectionLevel,
+    memorySummary: context.memorySummary ?? relationship.memorySummary,
+    availableTools: context.availableTools || [],
+    platform: context.platform,
+  })}`;
 }
 
 function formatIdentity(waifu: Waifu): string {

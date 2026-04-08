@@ -37,5 +37,7 @@ export function createDrizzle(env: DrizzleEnv) {
 }
 
 export function migrateDatabase(db: Database) {
-  return migrate(db, migrations)
+  // migrations come from generated package exports; relax types here to avoid
+  // coupling the server build to the exact shape of migration entries.
+  return migrate(db as any, migrations as any)
 }

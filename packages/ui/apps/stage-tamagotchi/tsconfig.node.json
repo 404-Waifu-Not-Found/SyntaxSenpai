@@ -24,6 +24,8 @@
     "uno.config.ts",
     "electron.vite.config.ts",
 
+    "src/**/*.d.ts",
+
     "src/main/**/*.ts",
     "src/main/**/*.d.ts",
     "src/main/**/*.tsx",

@@ -8,11 +8,11 @@
     "test:run": "vitest run"
   },
   "dependencies": {
-    "@moeru/std": "catalog:",
-    "uncrypto": "catalog:"
+    "@moeru/std": "^0.1.0-beta.17",
+    "uncrypto": "^0.1.3"
   },
   "devDependencies": {
-    "@vitest/browser-playwright": "catalog:vitest",
-    "vitest": "catalog:vitest"
+    "@vitest/browser-playwright": "^4.1.3",
+    "vitest": "^4.1.3"
   }
 }

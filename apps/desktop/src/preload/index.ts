@@ -1,4 +1,4 @@
-const electronModule = require('electron')
+const electronModule = require('node:electron')
 const { contextBridge, ipcRenderer } = electronModule
 
 contextBridge.exposeInMainWorld('electron', {
@@ -6,10 +6,12 @@ contextBridge.exposeInMainWorld('electron', {
     send: (channel: string, data: any) => ipcRenderer.send(channel, data),
     invoke: (channel: string, data: any) => ipcRenderer.invoke(channel, data),
     on: (channel: string, func: (...args: any[]) => void) =>
-      ipcRenderer.on(channel, (event, ...args) => func(...args)),
+      ipcRenderer.on(channel, (event: any, ...args: any[]) => func(...args)),
     once: (channel: string, func: (...args: any[]) => void) =>
-      ipcRenderer.once(channel, (event, ...args) => func(...args)),
+      ipcRenderer.once(channel, (event: any, ...args: any[]) => func(...args)),
     removeListener: (channel: string, func: (...args: any[]) => void) =>
       ipcRenderer.removeListener(channel, func)
   }
 })
+
+export {}

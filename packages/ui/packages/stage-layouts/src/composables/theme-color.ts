@@ -1,6 +1,5 @@
 import type { Ref } from 'vue'
 
-import type { BackgroundProvider } from '../components/Backgrounds'
 import type { BackgroundItem } from '../stores/background'
 
 import Color from 'colorjs.io'
@@ -62,7 +61,7 @@ export function useBackgroundThemeColor({
   selectedOption,
   sampledColor,
 }: {
-  backgroundSurface: Ref<InstanceType<typeof BackgroundProvider> | undefined | null>
+  backgroundSurface: Ref<any>
   selectedOption: Ref<BackgroundItem | undefined>
   sampledColor: Ref<string>
 }) {
@@ -102,7 +101,7 @@ export function useBackgroundThemeColor({
 
   async function waitForBackgroundReady() {
     await nextTick()
-    const image = backgroundSurface.value?.surfaceEl?.querySelector('img')
+    const image = backgroundSurface.value?.surfaceEl?.value?.querySelector('img')
     if (image && !image.complete) {
       await new Promise<void>((resolve, reject) => {
         image.addEventListener('load', () => resolve(), { once: true })
@@ -120,7 +119,8 @@ export function useBackgroundThemeColor({
       return
     }
 
-    const el = backgroundSurface.value?.surfaceEl
+    const elRef = backgroundSurface.value?.surfaceEl
+    const el = elRef?.value
     if (!el)
       return
 
@@ -176,7 +176,7 @@ export function useBackgroundThemeColor({
     syncBackgroundTheme()
   })
 
-  watch(() => backgroundSurface.value?.surfaceEl, (el) => {
+  watch(() => backgroundSurface.value?.surfaceEl?.value, (el) => {
     if (el)
       syncBackgroundTheme()
   })

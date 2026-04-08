@@ -51,7 +51,7 @@ function stopAutoplay() {
 function startAutoplay() {
   stopAutoplay()
   autoplayTimer = setInterval(() => {
-    emblaApi.value?.goToNext()
+    (emblaApi.value as any)?.goToNext()
   }, 5000)
 }
 
@@ -61,7 +61,7 @@ watch(emblaApi, (api, _, onCleanup) => {
   }
 
   const syncIndex = () => {
-    currentIndex.value = api.selectedSnap()
+    currentIndex.value = (api as any).selectedSnap()
   }
 
   syncIndex()
@@ -83,7 +83,7 @@ watch(emblaApi, (api, _, onCleanup) => {
 
 function scrollTo(index: number) {
   if (emblaApi.value) {
-    emblaApi.value.goTo(index)
+    (emblaApi.value as any).goTo(index)
     startAutoplay()
   }
 }

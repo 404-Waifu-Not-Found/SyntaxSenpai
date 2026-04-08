@@ -4,7 +4,7 @@ import module from 'node:module'
 import { runCLI } from './cli'
 
 try {
-  module.enableCompileCache?.()
+  ;(module as any).enableCompileCache?.()
 }
 catch {}
 runCLI()

@@ -32,8 +32,8 @@ export async function hashFile(filePath: string): Promise<{ sha512: string, sha2
     const stream = createReadStream(filePath)
 
     stream.on('data', (chunk) => {
-      sha512.update(chunk)
-      sha256.update(chunk)
+      sha512.update(chunk as any)
+      sha256.update(chunk as any)
     })
     stream.on('error', reject)
     stream.on('end', () => {

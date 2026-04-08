@@ -22,17 +22,17 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@moeru/std": "catalog:",
+    "@moeru/std": "^0.1.0-beta.17",
     "@napi-rs/image": "^1.12.0",
-    "@proj-airi/vishot-runner-browser": "workspace:^",
-    "@proj-airi/vishot-runtime": "workspace:^",
-    "date-fns": "catalog:",
-    "vue": "catalog:"
+    "@proj-airi/vishot-runner-browser": "workspace:*",
+    "@proj-airi/vishot-runtime": "workspace:*",
+    "date-fns": "^4.1.0",
+    "vue": "^3.5.32"
   },
   "devDependencies": {
-    "@iconify-json/line-md": "catalog:",
-    "@iconify-json/material-symbols": "catalog:",
-    "@iconify-json/mdi": "catalog:",
+    "@iconify-json/line-md": "^1.2.16",
+    "@iconify-json/material-symbols": "^1.2.65",
+    "@iconify-json/mdi": "^1.2.3",
     "@unocss/reset": "^66.6.7",
     "@vitejs/plugin-vue": "^6.0.5",
     "vue-tsc": "^3.2.6"

@@ -6,6 +6,7 @@ import process from 'node:process'
 
 import { execSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import VueI18n from '@intlify/unplugin-vue-i18n/vite'
 import templateCompilerOptions from '@tresjs/core/template-compiler-options'
@@ -32,8 +33,9 @@ function isEnvTruthy(value: string | undefined | null): boolean {
   return /^(?:1|true|t|yes|y|on)$/i.test(value.trim())
 }
 
-const stageUIAssetsRoot = resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-ui', 'src', 'assets'))
-const sharedCacheDir = resolve(join(import.meta.dirname, '..', '..', '.cache'))
+const __dirname = fileURLToPath(new URL('.', import.meta.url))
+const stageUIAssetsRoot = resolve(join(__dirname, '..', '..', 'packages', 'stage-ui', 'src', 'assets'))
+const sharedCacheDir = resolve(join(__dirname, '..', '..', '.cache'))
 
 export default defineConfig({
   optimizeDeps: {
@@ -65,12 +67,12 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@proj-airi/server-sdk': resolve(join(import.meta.dirname, '..', '..', 'packages', 'server-sdk', 'src')),
-      '@proj-airi/i18n': resolve(join(import.meta.dirname, '..', '..', 'packages', 'i18n', 'src')),
-      '@proj-airi/stage-ui': resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-ui', 'src')),
-      '@proj-airi/stage-layouts': resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-layouts', 'src')),
-      '@proj-airi/stage-pages': resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-pages', 'src')),
-      '@proj-airi/stage-shared': resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-shared', 'src')),
+      '@proj-airi/server-sdk': resolve(join(__dirname, '..', '..', 'packages', 'server-sdk', 'src')),
+      '@proj-airi/i18n': resolve(join(__dirname, '..', '..', 'packages', 'i18n', 'src')),
+      '@proj-airi/stage-ui': resolve(join(__dirname, '..', '..', 'packages', 'stage-ui', 'src')),
+      '@proj-airi/stage-layouts': resolve(join(__dirname, '..', '..', 'packages', 'stage-layouts', 'src')),
+      '@proj-airi/stage-pages': resolve(join(__dirname, '..', '..', 'packages', 'stage-pages', 'src')),
+      '@proj-airi/stage-shared': resolve(join(__dirname, '..', '..', 'packages', 'stage-shared', 'src')),
     },
   },
   server: {
@@ -85,9 +87,9 @@ export default defineConfig({
     },
     warmup: {
       clientFiles: [
-        `${resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-ui', 'src'))}/*.vue`,
-        `${resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-pages', 'src'))}/*.vue`,
-        `${resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-layouts', 'src'))}/*.vue`,
+        `${resolve(join(__dirname, '..', '..', 'packages', 'stage-ui', 'src'))}/*.vue`,
+        `${resolve(join(__dirname, '..', '..', 'packages', 'stage-pages', 'src'))}/*.vue`,
+        `${resolve(join(__dirname, '..', '..', 'packages', 'stage-layouts', 'src'))}/*.vue`,
       ],
     },
   },
@@ -132,12 +134,12 @@ export default defineConfig({
     // https://github.com/posva/unplugin-vue-router
     VueRouter({
       extensions: ['.vue', '.md'],
-      dts: resolve(import.meta.dirname, 'src/typed-router.d.ts'),
+      dts: resolve(__dirname, 'src', 'typed-router.d.ts'),
       importMode: 'async',
       routesFolder: [
-        resolve(import.meta.dirname, 'src', 'pages'),
+        resolve(__dirname, 'src', 'pages'),
         {
-          src: resolve(import.meta.dirname, '..', '..', 'packages', 'stage-pages', 'src', 'pages'),
+          src: resolve(__dirname, '..', '..', 'packages', 'stage-pages', 'src', 'pages'),
           exclude: base => [
             ...base,
             '**/settings/connection/index.vue',
@@ -150,8 +152,8 @@ export default defineConfig({
     // https://github.com/JohnCampionJr/vite-plugin-vue-layouts
     Layouts({
       layoutsDirs: [
-        resolve(import.meta.dirname, 'src', 'layouts'),
-        resolve(import.meta.dirname, '..', '..', 'packages', 'stage-layouts', 'src', 'layouts'),
+        resolve(__dirname, 'src', 'layouts'),
+        resolve(__dirname, '..', '..', 'packages', 'stage-layouts', 'src', 'layouts'),
       ],
     }),
 

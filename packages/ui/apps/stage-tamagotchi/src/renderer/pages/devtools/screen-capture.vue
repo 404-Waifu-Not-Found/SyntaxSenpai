@@ -116,7 +116,7 @@ async function refetchSources() {
     isRefetching.value = true
 
     const nextSources = (await getSources())
-      .sort((a, b) => {
+      .sort((a: ScreenCaptureSource, b: ScreenCaptureSource) => {
         const aIsScreen = a.id.startsWith('screen:')
         const bIsScreen = b.id.startsWith('screen:')
         if (aIsScreen !== bIsScreen)
@@ -132,7 +132,7 @@ async function refetchSources() {
         URL.revokeObjectURL(oldSource.thumbnailURL)
     })
 
-    sources.value = nextSources.map(source => ({
+    sources.value = nextSources.map((source: ScreenCaptureSource) => ({
       ...source,
       // NOTICE(@nekomeowww): In probability of 9/10, the window thumbnail is purely empty or black, sources printed and
       // nothing is returned from the desktopCapturer API.

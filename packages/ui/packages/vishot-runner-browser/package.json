@@ -22,8 +22,8 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@moeru/std": "catalog:",
-    "meow": "catalog:",
+    "@moeru/std": "^0.1.0-beta.17",
+    "meow": "^14.1.0",
     "playwright": "^1.56.1"
   }
 }

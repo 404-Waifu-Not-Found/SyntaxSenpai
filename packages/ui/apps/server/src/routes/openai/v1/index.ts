@@ -42,7 +42,7 @@ const SAFE_RESPONSE_HEADERS = new Set([
 
 function buildSafeResponseHeaders(response: Response): Headers {
   const headers = new Headers()
-  response.headers.forEach((value, key) => {
+  response.headers.forEach((value: string, key: string) => {
     if (SAFE_RESPONSE_HEADERS.has(key.toLowerCase()))
       headers.set(key, value)
   })

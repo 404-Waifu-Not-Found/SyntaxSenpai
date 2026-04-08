@@ -52,14 +52,14 @@ function timingSafeCompare(a: string, b: string): boolean {
   const bufB = Buffer.from(b)
   if (bufA.length !== bufB.length) {
     // Compare against itself to keep constant time, then return false
-    timingSafeEqual(bufA, bufA)
+    timingSafeEqual(bufA as any, bufA as any)
     // To prevent leaking length information, we perform a dummy comparison on the
     // expected value, making the execution time dependent on its length.
-    timingSafeEqual(bufB, bufB)
+    timingSafeEqual(bufB as any, bufB as any)
     return false
   }
 
-  return timingSafeEqual(bufA, bufB)
+  return timingSafeEqual(bufA as any, bufB as any) as boolean
 }
 
 function createServerEventMetadata(serverInstanceId: string, parentId?: string): { source: MetadataEventSource, event: { id: string, parentId?: string } } {

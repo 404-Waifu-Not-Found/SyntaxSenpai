@@ -12,7 +12,7 @@ async function main() {
     name: 'memory-pgvector',
   })
 
-  client.onEvent('module:configure', (_event) => {
+  ;(client as any).onEvent('module:configure', (_event: any) => {
   })
 
   runUntilSignal()

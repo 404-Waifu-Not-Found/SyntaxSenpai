@@ -1,6 +1,8 @@
 // vad-worklet-processor.ts
 // This file needs to be registered as an AudioWorklet
 
+export {}
+
 /**
  * Minimum chunk size for processing audio
  */

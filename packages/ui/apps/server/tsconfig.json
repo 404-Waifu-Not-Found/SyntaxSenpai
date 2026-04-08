@@ -11,6 +11,10 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@proj-airi/server-sdk-shared": ["src/shims-server-sdk-shared.d.ts"]
+    },
     "types": [
       "vitest",
       "node"
@@ -19,6 +23,7 @@
     "strict": true,
     "skipLibCheck": true
   },
+
   "include": [
     "src/**/*.ts",
     "src/**/*.d.ts"

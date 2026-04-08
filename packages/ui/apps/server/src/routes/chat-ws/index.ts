@@ -115,20 +115,21 @@ export function createChatWsHandlers(
 
         // RPC: send messages
         defineInvokeHandler(ctx, sendMessages, async (req) => {
-          log.withFields({ userId, chatId: req!.chatId, count: req!.messages.length }).log('sendMessages')
-          const result = await chatService.pushMessages(userId, req!.chatId, req!.messages)
+          const r = req as any
+          log.withFields({ userId, chatId: r.chatId, count: r.messages.length }).log('sendMessages')
+          const result = await chatService.pushMessages(userId, r.chatId, r.messages)
 
           // Fetch the wire messages for broadcast
-          const wireMessages = await chatService.pullMessages(userId, req!.chatId, result.fromSeq - 1, result.toSeq - result.fromSeq + 1)
+          const wireMessages = await chatService.pullMessages(userId, r.chatId, result.fromSeq - 1, result.toSeq - result.fromSeq + 1)
           const broadcastPayload = {
-            chatId: req!.chatId,
+            chatId: r.chatId,
             messages: wireMessages.messages,
             fromSeq: result.fromSeq,
             toSeq: result.toSeq,
           }
 
           // Broadcast to all chat members (not just the sender)
-          const members = await chatService.getMembers(req!.chatId)
+          const members = await chatService.getMembers(r.chatId)
           const memberUserIds = members
             .filter(m => m.memberType === 'user' && m.userId != null)
             .map(m => m.userId!)
@@ -147,8 +148,9 @@ export function createChatWsHandlers(
 
         // RPC: pull messages
         defineInvokeHandler(ctx, pullMessages, async (req) => {
-          log.withFields({ userId, chatId: req!.chatId, afterSeq: req!.afterSeq }).log('pullMessages')
-          return chatService.pullMessages(userId, req!.chatId, req!.afterSeq, req!.limit)
+          const r = req as any
+          log.withFields({ userId, chatId: r.chatId, afterSeq: r.afterSeq }).log('pullMessages')
+          return chatService.pullMessages(userId, r.chatId, r.afterSeq, r.limit)
         })
       },
     })

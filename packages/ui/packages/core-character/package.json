@@ -33,8 +33,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@moeru/std": "catalog:",
-    "@proj-airi/stream-kit": "workspace:^",
+    "@moeru/std": "^0.1.0-beta.17",
+    "@proj-airi/stream-kit": "workspace:*",
     "clustr": "^1.0.2"
   },
   "devDependencies": {}

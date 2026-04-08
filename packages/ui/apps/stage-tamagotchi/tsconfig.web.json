@@ -47,6 +47,8 @@
     ]
   },
   "include": [
+    "src/**/*.d.ts",
+
     "src/renderer/**/*.ts",
     "src/renderer/**/*.d.ts",
     "src/renderer/**/*.tsx",

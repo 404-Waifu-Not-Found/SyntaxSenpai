@@ -69,9 +69,10 @@ function createAvifTransformer(): ArtifactTransformer {
   return async (artifact) => {
     // eslint-disable-next-line e18e/prefer-static-regex
     const derivedFilePath = artifact.filePath.replace(/\.png$/i, '.avif')
-    const avifBuffer = await new Transformer(await readFile(artifact.filePath)).avif()
+    const input = await readFile(artifact.filePath)
+    const avifBuffer = await new Transformer(new Uint8Array(input) as any).avif()
 
-    await writeFile(derivedFilePath, avifBuffer)
+    await writeFile(derivedFilePath, avifBuffer as any)
     await rm(artifact.filePath, { force: true })
 
     return {

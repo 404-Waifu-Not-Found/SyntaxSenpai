@@ -389,9 +389,9 @@ export class DesktopSQLiteChatStore implements IChatStore {
 /**
  * Create chat store for the platform
  */
-export function createChatStore(platform: "mobile" | "desktop" | "test" = "desktop"): IChatStore {
+export function createChatStore(platform: "mobile" | "desktop" | "test" = "desktop", dbPath?: string): IChatStore {
   if (platform === "test" || platform === "mobile") {
     return new InMemoryChatStore();
   }
-  return new DesktopSQLiteChatStore();
+  return new DesktopSQLiteChatStore(dbPath);
 }

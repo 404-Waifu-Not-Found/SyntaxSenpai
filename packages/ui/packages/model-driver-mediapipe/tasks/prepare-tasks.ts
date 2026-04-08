@@ -53,7 +53,7 @@ async function downloadAsset(key: string, url: string, outputPath: string) {
       if (fetchError || !response)
         throw fetchError ?? new Error(`Missing response while downloading MediaPipe vision task asset for ${key}`)
 
-      await fs.writeFile(tempPath, Buffer.from(response))
+      await fs.writeFile(tempPath, Buffer.from(response as any) as any)
       await fs.rename(tempPath, outputPath)
       console.log(`MediaPipe vision task asset for ${key} saved to ${outputPath}`)
     }

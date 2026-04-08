@@ -67,7 +67,7 @@ export function useVisionScreenCapture(sourcesOptions: MaybeRefOrGetter<SourcesO
     try {
       isRefetching.value = true
       const nextSources = (await getSources())
-        .sort((a, b) => {
+        .sort((a: ScreenCaptureSource, b: ScreenCaptureSource) => {
           const aIsScreen = a.id.startsWith('screen:')
           const bIsScreen = b.id.startsWith('screen:')
           if (aIsScreen !== bIsScreen)
@@ -82,7 +82,7 @@ export function useVisionScreenCapture(sourcesOptions: MaybeRefOrGetter<SourcesO
           URL.revokeObjectURL(oldSource.thumbnailURL)
       })
 
-      sources.value = nextSources.map(source => ({
+      sources.value = nextSources.map((source: ScreenCaptureSource) => ({
         ...source,
         appIconURL: source.appIcon && source.appIcon.length > 0 ? toObjectUrl(source.appIcon, 'image/png') : undefined,
         thumbnailURL: source.thumbnail && source.thumbnail.length > 0 ? toObjectUrl(source.thumbnail, 'image/jpeg') : undefined,

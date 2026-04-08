@@ -12,8 +12,8 @@
     "dev": "electron-vite dev",
     "start": "electron dist/main/index.js",
     "build": "electron-vite build",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint . --ext .ts,.tsx",
+    "typecheck": "vue-tsc --noEmit",
+    "lint": "eslint . --ext .ts,.vue",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
@@ -21,31 +21,30 @@
     "@syntax-senpai/ai-core": "workspace:*",
     "@syntax-senpai/storage": "workspace:*",
     "@syntax-senpai/ui": "workspace:*",
+    "@syntax-senpai/ui-loading-screens": "workspace:*",
+    "@syntax-senpai/ui-transitions": "workspace:*",
     "@syntax-senpai/waifu-core": "workspace:*",
     "@syntax-senpai/ws-protocol": "workspace:*",
+    "@vueuse/core": "^14.2.1",
     "electron-squirrel-startup": "^1.0.1",
-    "framer-motion": "^12.38.0",
     "keytar": "^7.9.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "ws": "^8.17.0",
-    "zustand": "^5.0.0"
+    "pinia": "^3.0.2",
+    "vue": "^3.5.13",
+    "ws": "^8.17.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
     "@types/ws": "^8.5.0",
-    "@vitejs/plugin-react": "^4.3.0",
-    "autoprefixer": "^10.4.0",
+    "@unocss/reset": "^66.6.7",
+    "@vitejs/plugin-vue": "^6.0.5",
     "electron": "^31.0.0",
     "electron-builder": "^24.6.4",
     "electron-vite": "^2.0.0",
     "eslint": "^9.0.0",
-    "postcss": "^8.4.0",
-    "tailwindcss": "^3.4.0",
     "typescript": "^5.7.2",
+    "unocss": "^66.6.7",
     "vite": "^6.0.0",
+    "vue-tsc": "^3.2.6",
     "electron-rebuild": "^3.2.0"
   },
   "build": {
@@ -61,7 +60,7 @@
       "package.json"
     ],
     "mac": {
-      "target": ["dmg","zip"],
+      "target": ["dmg", "zip"],
       "category": "public.app-category.developer-tools"
     },
     "asar": false,

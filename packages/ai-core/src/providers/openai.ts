@@ -3,12 +3,20 @@
  */
 
 import OpenAI from "openai";
-import type { ChatRequest, ChatResponse, StreamChunk, ToolCall } from "../types";
+import type {
+  ChatRequest,
+  ChatResponse,
+  CreateProviderOptions,
+  ModelInfo,
+  StreamChunk,
+  ToolCall,
+} from "../types";
 import { OpenAICompatibleProvider, convertToOpenAIMessages } from "./base";
 
 export class OpenAIProvider extends OpenAICompatibleProvider {
   id = "openai";
   displayName = "OpenAI (GPT-4o)";
+  baseUrl = "https://api.openai.com/v1";
 
   supportedModels = [
     {
@@ -43,10 +51,32 @@ export class OpenAIProvider extends OpenAICompatibleProvider {
 
   private client: OpenAI;
 
-  constructor(options: { apiKey?: string } = {}) {
+  constructor(
+    options: CreateProviderOptions & {
+      id?: string;
+      displayName?: string;
+      supportedModels?: ModelInfo[];
+    } = {}
+  ) {
     super(options);
+    if (options.id) {
+      this.id = options.id;
+    }
+    if (options.displayName) {
+      this.displayName = options.displayName;
+    }
+    if (options.supportedModels) {
+      this.supportedModels = options.supportedModels;
+    }
+    if (options.baseUrl) {
+      this.baseUrl = options.baseUrl;
+    }
+
     this.client = new OpenAI({
       apiKey: this.apiKey,
+      baseURL: this.baseUrl,
+      defaultHeaders: options.defaultHeaders,
+      dangerouslyAllowBrowser: true,
     });
   }
 

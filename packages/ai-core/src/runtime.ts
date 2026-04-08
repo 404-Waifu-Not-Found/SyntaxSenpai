@@ -233,6 +233,12 @@ export function createProviderConfigFromEnv(
       return { type: "cohere", apiKey: getRequired(env, "COHERE_API_KEY") };
     case "together":
       return { type: "together", apiKey: getRequired(env, "TOGETHER_API_KEY") };
+    case "deepseek":
+      return { type: "deepseek", apiKey: getRequired(env, "DEEPSEEK_API_KEY") };
+    case "minimax-global":
+      return { type: "minimax-global", apiKey: getRequired(env, "MINIMAX_GLOBAL_API_KEY") };
+    case "minimax-cn":
+      return { type: "minimax-cn", apiKey: getRequired(env, "MINIMAX_CN_API_KEY") };
     case "groq":
       return { type: "groq", apiKey: getRequired(env, "GROQ_API_KEY") };
     case "perplexity":
@@ -246,8 +252,20 @@ export function createProviderConfigFromEnv(
         type: "ollama",
         baseUrl: env.OLLAMA_BASE_URL || "http://localhost:11434",
       };
+    case "xai":
+      return { type: "xai", apiKey: getRequired(env, "XAI_API_KEY") };
     case "xai-grok":
       return { type: "xai-grok", apiKey: getRequired(env, "XAI_API_KEY") };
+    case "openai-codex":
+      return {
+        type: "openai-codex",
+        apiKey: getRequired(env, "OPENAI_CODEX_AUTH_TOKEN"),
+      };
+    case "github-models":
+      return {
+        type: "github-models",
+        apiKey: getRequired(env, "GITHUB_MODELS_TOKEN"),
+      };
     case "azure-openai":
       return {
         type: "azure-openai",

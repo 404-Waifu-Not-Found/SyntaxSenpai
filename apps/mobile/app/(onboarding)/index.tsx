@@ -18,8 +18,17 @@ type OnboardingStep = "welcome" | "select-waifu" | "setup-api" | "done";
 const PROVIDERS = [
   { id: "anthropic", name: "Anthropic", displayName: "Claude 3.5" },
   { id: "openai", name: "OpenAI", displayName: "GPT-4o" },
+  { id: "openai-codex", name: "OpenAI (Codex / Web Auth)", displayName: "OpenAI bearer token" },
+  { id: "deepseek", name: "DeepSeek", displayName: "DeepSeek Chat" },
+  { id: "gemini", name: "Gemini", displayName: "Gemini 2.0 Flash" },
+  { id: "mistral", name: "Mistral", displayName: "Mistral Large" },
   { id: "groq", name: "Groq", displayName: "Groq (Free)" },
-  { id: "together-ai", name: "Together AI", displayName: "Together AI" },
+  { id: "minimax-global", name: "MiniMax Global", displayName: "MiniMax Text 01" },
+  { id: "minimax-cn", name: "MiniMax CN", displayName: "MiniMax Text 01" },
+  { id: "xai", name: "xAI", displayName: "Grok 2" },
+  { id: "huggingface", name: "Hugging Face", displayName: "HF Router" },
+  { id: "github-models", name: "GitHub Models", displayName: "Device code token" },
+  { id: "together", name: "Together AI", displayName: "Together AI" },
 ];
 
 export default function OnboardingScreen() {

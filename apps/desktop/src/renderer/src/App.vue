@@ -8,13 +8,145 @@ import TypingDots from './components/TypingDots.vue'
 import MessageSkeleton from './components/MessageSkeleton.vue'
 
 const store = useChatStore()
+const providerOrder = [
+  'anthropic',
+  'openai',
+  'openai-codex',
+  'deepseek',
+  'gemini',
+  'mistral',
+  'groq',
+  'minimax-global',
+  'minimax-cn',
+  'xai',
+  'huggingface',
+  'github-models',
+]
+const providerMetadata = [
+  {
+    id: 'anthropic',
+    displayName: 'Anthropic',
+    models: [
+      { id: 'claude-opus-4-1', displayName: 'Claude Opus 4.1' },
+      { id: 'claude-sonnet-4-20250514', displayName: 'Claude Sonnet 4' },
+      { id: 'claude-haiku-4-5-20251001', displayName: 'Claude Haiku 4.5' },
+    ],
+  },
+  {
+    id: 'openai',
+    displayName: 'OpenAI',
+    models: [
+      { id: 'gpt-4o', displayName: 'GPT-4o' },
+      { id: 'gpt-4-turbo', displayName: 'GPT-4 Turbo' },
+      { id: 'gpt-4', displayName: 'GPT-4' },
+    ],
+  },
+  {
+    id: 'openai-codex',
+    displayName: 'OpenAI (Codex / Web Auth)',
+    models: [
+      { id: 'gpt-4o', displayName: 'GPT-4o' },
+      { id: 'gpt-4-turbo', displayName: 'GPT-4 Turbo' },
+    ],
+  },
+  {
+    id: 'deepseek',
+    displayName: 'DeepSeek',
+    models: [
+      { id: 'deepseek-chat', displayName: 'DeepSeek Chat' },
+      { id: 'deepseek-reasoner', displayName: 'DeepSeek Reasoner' },
+    ],
+  },
+  {
+    id: 'gemini',
+    displayName: 'Gemini',
+    models: [
+      { id: 'gemini-2.0-flash', displayName: 'Gemini 2.0 Flash' },
+      { id: 'gemini-1.5-pro', displayName: 'Gemini 1.5 Pro' },
+      { id: 'gemini-1.5-flash', displayName: 'Gemini 1.5 Flash' },
+    ],
+  },
+  {
+    id: 'mistral',
+    displayName: 'Mistral',
+    models: [
+      { id: 'mistral-large-latest', displayName: 'Mistral Large' },
+      { id: 'mistral-medium-latest', displayName: 'Mistral Medium' },
+      { id: 'mistral-small-latest', displayName: 'Mistral Small' },
+    ],
+  },
+  {
+    id: 'groq',
+    displayName: 'Groq',
+    models: [
+      { id: 'llama-3.1-70b-versatile', displayName: 'Llama 3.1 70B' },
+      { id: 'mixtral-8x7b-32768', displayName: 'Mixtral 8x7B' },
+      { id: 'llama-3.1-8b-instant', displayName: 'Llama 3.1 8B' },
+    ],
+  },
+  {
+    id: 'minimax-global',
+    displayName: 'MiniMax Global',
+    models: [
+      { id: 'MiniMax-Text-01', displayName: 'MiniMax Text 01' },
+      { id: 'MiniMax-M1', displayName: 'MiniMax M1' },
+    ],
+  },
+  {
+    id: 'minimax-cn',
+    displayName: 'MiniMax CN',
+    models: [
+      { id: 'MiniMax-Text-01', displayName: 'MiniMax Text 01 (CN)' },
+      { id: 'MiniMax-M1', displayName: 'MiniMax M1 (CN)' },
+    ],
+  },
+  {
+    id: 'xai',
+    displayName: 'xAI',
+    models: [
+      { id: 'grok-2-latest', displayName: 'Grok 2' },
+      { id: 'grok-vision-beta', displayName: 'Grok Vision' },
+    ],
+  },
+  {
+    id: 'huggingface',
+    displayName: 'Hugging Face',
+    models: [
+      { id: 'meta-llama/Llama-3.3-70B-Instruct', displayName: 'Llama 3.3 70B Instruct' },
+      { id: 'Qwen/Qwen2.5-Coder-32B-Instruct', displayName: 'Qwen 2.5 Coder 32B' },
+    ],
+  },
+  {
+    id: 'github-models',
+    displayName: 'GitHub Models',
+    models: [
+      { id: 'openai/gpt-4o-mini', displayName: 'GPT-4o Mini' },
+      { id: 'meta/Llama-3.3-70B-Instruct', displayName: 'Llama 3.3 70B' },
+    ],
+  },
+]
+const providers = providerOrder
+  .map((id) => providerMetadata.find((provider) => provider.id === id))
+  .filter(Boolean)
+  .map((provider) => ({ value: provider!.id, label: provider!.displayName }))
 
 const sidebarOpen = ref(true)
 const showSettings = ref(false)
 const showAgent = ref(false)
+const showModelPicker = ref(false)
+const providerModels = ref<Record<string, Array<{ id: string; displayName: string }>>>({})
 type AgentMode = 'ask' | 'auto' | 'full'
-const agentMode = ref<AgentMode>((localStorage.getItem('syntax-senpai-agent-mode') as AgentMode) || 'ask')
+const agentMode = computed({
+  get: () => store.agentMode as AgentMode,
+  set: (v: AgentMode) => store.setAgentMode(v),
+})
 const convSearch = ref('')
+const toast = ref<{ message: string; type: 'success' | 'error'; visible: boolean }>({ message: '', type: 'success', visible: false })
+
+function showToast(message: string, type: 'success' | 'error') {
+  toast.value = { message, type, visible: true }
+  setTimeout(() => { toast.value.visible = false }, 4000)
+}
 
 const messagesEndRef = ref<HTMLDivElement>()
 const inputRef = ref<HTMLTextAreaElement>()
@@ -25,9 +157,23 @@ const filteredConversations = computed(() => {
   return store.conversations.filter((c: any) => (c.title || '').toLowerCase().includes(q))
 })
 
+const currentProviderMeta = computed(() =>
+  providerMetadata.find((provider) => provider.id === store.selectedProvider),
+)
+
+const currentProviderModels = computed(() =>
+  providerModels.value[store.selectedProvider] ||
+  currentProviderMeta.value?.models ||
+  [],
+)
+
 onMounted(() => {
-  store.loadSetup()
-  if (store.isSetup) store.loadConversations()
+  ;(async () => {
+    store.loadSetup()
+    await store.hydrateProviderConfig()
+    await loadProviderModels(store.selectedProvider, store.apiKey)
+    if (store.isSetup) store.loadConversations()
+  })()
 })
 
 watch(() => store.messages.length, () => {
@@ -35,6 +181,22 @@ watch(() => store.messages.length, () => {
     messagesEndRef.value?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   })
 })
+
+watch(() => store.selectedProvider, async (provider, previousProvider) => {
+  if (!provider || provider === previousProvider) return
+  await store.hydrateProviderConfig(provider)
+  await loadProviderModels(provider, store.apiKey)
+})
+
+async function loadProviderModels(provider: string, apiKeyValue: string) {
+  const res = await (window as any).electron?.ipcRenderer?.invoke('provider:listModels', provider, apiKeyValue || '')
+  if (res?.success && Array.isArray(res.models) && res.models.length > 0) {
+    providerModels.value = {
+      ...providerModels.value,
+      [provider]: res.models,
+    }
+  }
+}
 
 function adjustInputHeight() {
   const el = inputRef.value
@@ -51,8 +213,42 @@ function handleKeyDown(e: KeyboardEvent) {
 }
 
 async function handleSetup(apiKeyValue: string) {
+  const trimmedKey = apiKeyValue.trim()
+
+  if (trimmedKey) {
+    // Validate the API key first
+    const validation = await (window as any).electron?.ipcRenderer?.invoke(
+      'provider:validateKey',
+      store.selectedProvider,
+      trimmedKey,
+    )
+
+    if (validation && !validation.success) {
+      showToast(validation.error || 'Invalid API key', 'error')
+      return
+    }
+
+    if (validation?.success) {
+      showToast(validation.message || 'API key is valid', 'success')
+    }
+
+    await store.saveApiKey(apiKeyValue)
+    await loadProviderModels(store.selectedProvider, trimmedKey)
+    const hasSelectedModel = currentProviderModels.value.some((model) => model.id === store.selectedModel)
+    if (!hasSelectedModel) {
+      store.selectedModel = currentProviderModels.value[0]?.id || store.selectedModel
+    }
+    showModelPicker.value = true
+    return
+  }
+
+  await finalizeSetup(apiKeyValue)
+}
+
+async function finalizeSetup(apiKeyValue: string) {
   try {
-    await store.setup(apiKeyValue)
+    await store.setup(apiKeyValue, store.selectedModel)
+    showModelPicker.value = false
     showSettings.value = false
   } catch (err: any) {
     alert('Setup failed: ' + (err?.message || 'Unknown error'))
@@ -71,12 +267,34 @@ function startDemoMode() {
 }
 
 function saveAgentMode(mode: AgentMode) {
-  agentMode.value = mode
-  localStorage.setItem('syntax-senpai-agent-mode', mode)
+  store.setAgentMode(mode)
 }
 </script>
 
 <template>
+  <!-- Toast Notification -->
+  <Teleport to="body">
+    <Transition
+      enter-active-class="transition-all duration-300 ease-out"
+      leave-active-class="transition-all duration-300 ease-in"
+      enter-from-class="-translate-y-4 opacity-0"
+      leave-to-class="-translate-y-4 opacity-0"
+    >
+      <div
+        v-if="toast.visible"
+        :class="[
+          'fixed top-4 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-xl shadow-lg',
+          'text-sm font-semibold backdrop-blur-md',
+          toast.type === 'success'
+            ? 'bg-emerald-500/90 text-white'
+            : 'bg-red-500/90 text-white',
+        ]"
+      >
+        {{ toast.type === 'success' ? '200 ' : '' }}{{ toast.message }}
+      </div>
+    </Transition>
+  </Teleport>
+
   <!-- Setup Screen -->
   <div
     v-if="!store.isSetup && !showSettings"
@@ -145,20 +363,8 @@ function saveAgentMode(mode: AgentMode) {
           <div class="mb-4">
             <label class="block text-sm font-semibold text-neutral-200 mb-2">Provider</label>
             <select v-model="store.selectedProvider" class="input-field">
-              <option value="anthropic">
-                Anthropic
-              </option>
-              <option value="openai">
-                OpenAI
-              </option>
-              <option value="gemini">
-                Gemini
-              </option>
-              <option value="mistral">
-                Mistral
-              </option>
-              <option value="groq">
-                Groq
+              <option v-for="provider in providers" :key="provider.value" :value="provider.value">
+                {{ provider.label }}
               </option>
             </select>
           </div>
@@ -185,6 +391,48 @@ function saveAgentMode(mode: AgentMode) {
             </button>
             <button class="btn-ghost flex-1" @click="startDemoMode">
               Skip (Demo)
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+
+  <Teleport to="body">
+    <Transition
+      enter-active-class="transition-opacity duration-200"
+      leave-active-class="transition-opacity duration-200"
+      enter-from-class="opacity-0"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="showModelPicker"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50"
+        @click.self="showModelPicker = false"
+      >
+        <div class="glass-surface rounded-2xl p-6 max-w-md w-full mx-4 animate-content-show">
+          <h2 class="text-xl font-bold text-white mb-2">
+            Choose Model
+          </h2>
+          <p class="text-sm text-neutral-400 mb-5">
+            Pick which model {{ providers.find((provider) => provider.value === store.selectedProvider)?.label || store.selectedProvider }} should use with this saved API key.
+          </p>
+
+          <div class="mb-6">
+            <label class="block text-sm font-semibold text-neutral-200 mb-2">Model</label>
+            <select v-model="store.selectedModel" class="input-field">
+              <option v-for="model in currentProviderModels" :key="model.id" :value="model.id">
+                {{ model.displayName }}
+              </option>
+            </select>
+          </div>
+
+          <div class="flex gap-2">
+            <button class="btn-secondary flex-1" @click="showModelPicker = false">
+              Cancel
+            </button>
+            <button class="btn-primary flex-1" @click="finalizeSetup(store.apiKey)">
+              Save
             </button>
           </div>
         </div>
@@ -325,7 +573,7 @@ function saveAgentMode(mode: AgentMode) {
           'glass-surface border-r border-neutral-800/40',
         ]"
       >
-        <h1 class="text-xl font-bold text-primary-400 mb-4 font-display">
+        <h1 class="text-xl font-bold text-primary-400 mb-4">
           SyntaxSenpai
         </h1>
 
@@ -417,7 +665,7 @@ function saveAgentMode(mode: AgentMode) {
             {{ sidebarOpen ? '←' : '☰' }}
           </button>
           <div>
-            <div class="text-lg font-bold font-display">
+            <div class="text-lg font-semibold">
               {{ store.selectedWaifu?.displayName }}
             </div>
             <div class="text-xs text-neutral-400">
@@ -482,6 +730,7 @@ function saveAgentMode(mode: AgentMode) {
               :content="msg.content"
               :timestamp="msg.timestamp"
               :recent="msg.id === store.recentMessageId"
+              :show-copy="msg.role === 'assistant'"
             />
 
             <div v-if="msg.role === 'user'" class="ml-3 shrink-0">

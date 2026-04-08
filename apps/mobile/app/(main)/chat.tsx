@@ -15,13 +15,66 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { AIChatRuntime } from "@syntax-senpai/ai-core";
 import { APIKeyManager } from "@syntax-senpai/storage";
-import { builtInWaifus } from "@syntax-senpai/waifu-core";
+import { buildSystemPrompt, builtInWaifus } from "@syntax-senpai/waifu-core";
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: string;
+}
+
+const PROVIDERS = [
+  { id: "anthropic", label: "Anthropic" },
+  { id: "openai", label: "OpenAI" },
+  { id: "openai-codex", label: "OpenAI (Codex / Web Auth)" },
+  { id: "deepseek", label: "DeepSeek" },
+  { id: "gemini", label: "Gemini" },
+  { id: "mistral", label: "Mistral" },
+  { id: "groq", label: "Groq" },
+  { id: "minimax-global", label: "MiniMax Global" },
+  { id: "minimax-cn", label: "MiniMax CN" },
+  { id: "xai", label: "xAI" },
+  { id: "huggingface", label: "Hugging Face" },
+  { id: "github-models", label: "GitHub Models" },
+];
+
+const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
+  anthropic: "claude-3-5-sonnet-20241022",
+  openai: "gpt-4o",
+  "openai-codex": "gpt-4o",
+  deepseek: "deepseek-chat",
+  gemini: "gemini-2.0-flash",
+  mistral: "mistral-large-latest",
+  groq: "llama-3.1-70b-versatile",
+  "minimax-global": "MiniMax-Text-01",
+  "minimax-cn": "MiniMax-Text-01",
+  xai: "grok-2-latest",
+  huggingface: "meta-llama/Llama-3.3-70B-Instruct",
+  "github-models": "openai/gpt-4o-mini",
+};
+
+function createWaifuSystemPrompt(waifu: any, provider: string, model: string) {
+  return buildSystemPrompt(
+    waifu,
+    {
+      waifuId: waifu.id,
+      userId: "mobile-user",
+      affectionLevel: 40,
+      selectedAIProvider: provider,
+      selectedModel: model,
+      createdAt: new Date().toISOString(),
+      lastInteractedAt: new Date().toISOString(),
+    },
+    {
+      userId: "mobile-user",
+      affectionLevel: 40,
+      platform: "mobile",
+      availableTools: Object.entries(waifu.capabilities || {})
+        .filter(([, enabled]) => !!enabled)
+        .map(([name]) => name),
+    }
+  );
 }
 
 export default function ChatScreen() {
@@ -122,13 +175,14 @@ export default function ChatScreen() {
         throw new Error(`No API key configured for ${selectedProvider}`);
       }
 
+      const model = DEFAULT_MODEL_BY_PROVIDER[selectedProvider] || "gpt-4o";
       const runtime = new AIChatRuntime({
         provider: {
           type: selectedProvider as any,
           apiKey,
         } as any,
-        model: selectedProvider === "openai" ? "gpt-4o" : "claude-3-5-sonnet-20241022",
-        systemPrompt: `You are ${selectedWaifu.displayName}. ${selectedWaifu.backstory}`,
+        model,
+        systemPrompt: createWaifuSystemPrompt(selectedWaifu, selectedProvider, model),
       });
 
       const aiMessages = messages.map((msg) => ({
@@ -231,21 +285,21 @@ export default function ChatScreen() {
 
           <View style={{ width: "100%", marginBottom: 20 }}>
             <Text style={{ color: "#d0d0d0", fontSize: 14, marginBottom: 8 }}>Provider</Text>
-            {["anthropic", "openai", "gemini", "groq"].map((p) => (
+            {PROVIDERS.map((p) => (
               <TouchableOpacity
-                key={p}
-                onPress={() => setSelectedProvider(p)}
+                key={p.id}
+                onPress={() => setSelectedProvider(p.id)}
                 style={{
                   padding: 12,
                   marginBottom: 8,
                   borderRadius: 8,
-                  backgroundColor: selectedProvider === p ? "#6366f1" : "#1a1a1a",
+                  backgroundColor: selectedProvider === p.id ? "#6366f1" : "#1a1a1a",
                   borderWidth: 1,
                   borderColor: "#333333",
                 }}
               >
-                <Text style={{ color: "white", fontWeight: selectedProvider === p ? "bold" : "normal" }}>
-                  {p.charAt(0).toUpperCase() + p.slice(1)}
+                <Text style={{ color: "white", fontWeight: selectedProvider === p.id ? "bold" : "normal" }}>
+                  {p.label}
                 </Text>
               </TouchableOpacity>
             ))}

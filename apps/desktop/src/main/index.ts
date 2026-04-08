@@ -23,6 +23,8 @@ const { join } = require('path')
 import { registerChatIpc } from './ipc/chat'
 import { registerAgentIpc } from './ipc/agent'
 import { registerKeystoreIpc } from './ipc/keystore'
+import { registerProviderIpc } from './ipc/provider'
+import { registerTerminalIpc } from './ipc/terminal'
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -36,6 +38,7 @@ function createWindow(): void {
     minHeight: 600,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
       nodeIntegration: false,
       contextIsolation: true
     }
@@ -68,6 +71,8 @@ app.whenReady().then(() => {
   registerChatIpc()
   registerAgentIpc()
   registerKeystoreIpc()
+  registerProviderIpc()
+  registerTerminalIpc()
 })
 
 app.on('window-all-closed', () => {

@@ -206,6 +206,20 @@ export async function writeFile(filePath: string, content: string) {
   }
 }
 
+export async function listDirectory(dirPath: string) {
+  try {
+    const resolved = path.resolve(dirPath)
+    const entries = await fs.readdir(resolved, { withFileTypes: true })
+    const lines = entries.map((e: any) => {
+      const type = e.isDirectory() ? 'DIR ' : e.isSymbolicLink() ? 'LINK' : 'FILE'
+      return `${type}  ${e.name}`
+    })
+    return { success: true, listing: lines.join('\n') || '(empty directory)' }
+  } catch (err: any) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 export async function openExternal(url: string) {
   try {
     await shell.openExternal(url)
@@ -215,6 +229,6 @@ export async function openExternal(url: string) {
   }
 }
 
-module.exports = { runCommand, readFile, writeFile, openExternal, getAllowlist, saveAllowlist, addAllowed, removeAllowed }
+module.exports = { runCommand, readFile, writeFile, listDirectory, openExternal, getAllowlist, saveAllowlist, addAllowed, removeAllowed }
 
 export {}

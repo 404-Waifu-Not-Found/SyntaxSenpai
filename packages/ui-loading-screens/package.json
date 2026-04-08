@@ -1,0 +1,29 @@
+{
+  "name": "@syntax-senpai/ui-loading-screens",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Loading screen components for SyntaxSenpai",
+  "author": "unoxyrich",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./components": "./src/components/index.ts",
+    "./*": "./*"
+  },
+  "scripts": {
+    "build": "echo \"No build step required\"",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@rive-app/canvas-lite": "^2.35.4",
+    "@vueuse/core": "^14.2.1",
+    "@vueuse/motion": "^3.0.3",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@syntax-senpai/ui": "workspace:^",
+    "@vitejs/plugin-vue": "^6.0.5",
+    "vue-tsc": "^3.2.6"
+  }
+}

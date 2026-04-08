@@ -16,8 +16,14 @@
     "directory": "packages/electron-vueuse"
   },
   "exports": {
-    ".": "./dist/index.mjs",
-    "./main": "./dist/main/index.mjs",
+    ".": {
+      "import": "./dist/index.mjs",
+      "default": "./dist/index.mjs"
+    },
+    "./main": {
+      "import": "./dist/main/index.mjs",
+      "default": "./dist/main/index.mjs"
+    },
     "./package.json": "./package.json"
   },
   "types": "./dist/index.d.mts",

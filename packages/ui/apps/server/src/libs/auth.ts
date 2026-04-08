@@ -294,7 +294,7 @@ export async function seedTrustedClients(db: Database, env: Env): Promise<void> 
   }
 }
 
-export function createAuth(db: Database, env: Env, metrics?: AuthMetrics | null) {
+export function createAuth(db: Database, env: Env, metrics?: AuthMetrics | null): any {
   return betterAuth({
     database: drizzleAdapter(db, {
       provider: 'pg',

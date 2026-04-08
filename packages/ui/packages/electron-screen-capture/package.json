@@ -39,24 +39,24 @@
     "vue": ">=3"
   },
   "dependencies": {
-    "std-env": "catalog:"
+    "std-env": "^4.0.0"
   },
   "devDependencies": {
-    "@electron-toolkit/preload": "catalog:",
-    "@moeru/eventa": "catalog:",
-    "@moeru/std": "catalog:",
-    "async-mutex": "catalog:",
-    "nanoid": "catalog:",
-    "vite": "catalog:"
+    "@electron-toolkit/preload": "^3.0.2",
+    "@moeru/eventa": "^1.0.0-beta.3",
+    "@moeru/std": "^0.1.0-beta.17",
+    "async-mutex": "^0.5.0",
+    "nanoid": "^3.3.11",
+    "vite": "^8.0.6"
   },
   "inlinedDependencies": {
     "@electron-toolkit/preload": "3.0.2",
     "@moeru/eventa": "1.0.0-beta.3",
     "async-mutex": "0.5.0",
     "nanoid": [
-      "5.1.6",
+      "3.3.11",
       "5.1.7"
     ],
-    "picomatch": "4.0.3"
+    "picomatch": "4.0.4"
   }
 }

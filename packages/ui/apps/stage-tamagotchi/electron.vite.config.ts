@@ -1,4 +1,5 @@
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import VueI18n from '@intlify/unplugin-vue-i18n/vite'
 import templateCompilerOptions from '@tresjs/core/template-compiler-options'
@@ -16,8 +17,9 @@ import { Download } from '@proj-airi/unplugin-fetch'
 import { DownloadLive2DSDK } from '@proj-airi/unplugin-live2d-sdk'
 import { defineConfig } from 'electron-vite'
 
-const stageUIAssetsRoot = resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-ui', 'src', 'assets'))
-const sharedCacheDir = resolve(join(import.meta.dirname, '..', '..', '.cache'))
+const __dirname = fileURLToPath(new URL('.', import.meta.url))
+const stageUIAssetsRoot = resolve(join(__dirname, '..', '..', 'packages', 'stage-ui', 'src', 'assets'))
+const sharedCacheDir = resolve(join(__dirname, '..', '..', '.cache'))
 
 export default defineConfig({
   main: {
@@ -77,8 +79,8 @@ export default defineConfig({
     build: {
       lib: {
         entry: {
-          'index': resolve(join(import.meta.dirname, 'src', 'preload', 'index.ts')),
-          'beat-sync': resolve(join(import.meta.dirname, 'src', 'preload', 'beat-sync.ts')),
+          'index': resolve(join(__dirname, 'src', 'preload', 'index.ts')),
+          'beat-sync': resolve(join(__dirname, 'src', 'preload', 'beat-sync.ts')),
         },
       },
     },
@@ -94,8 +96,8 @@ export default defineConfig({
     build: {
       rolldownOptions: {
         input: {
-          'main': resolve(join(import.meta.dirname, 'src', 'renderer', 'index.html')),
-          'beat-sync': resolve(join(import.meta.dirname, 'src', 'renderer', 'beat-sync.html')),
+          'main': resolve(join(__dirname, 'src', 'renderer', 'index.html')),
+          'beat-sync': resolve(join(__dirname, 'src', 'renderer', 'beat-sync.html')),
         },
       },
     },
@@ -131,7 +133,7 @@ export default defineConfig({
 
     resolve: {
       alias: {
-        '@proj-airi/server-sdk': resolve(join(import.meta.dirname, '..', '..', 'packages', 'server-sdk', 'src')),
+        '@proj-airi/server-sdk': resolve(join(__dirname, '..', '..', 'packages', 'server-sdk', 'src')), 
         '@proj-airi/i18n': resolve(join(import.meta.dirname, '..', '..', 'packages', 'i18n', 'src')),
         '@proj-airi/stage-ui': resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-ui', 'src')),
         '@proj-airi/stage-pages': resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-pages', 'src')),
@@ -149,8 +151,8 @@ export default defineConfig({
       },
       warmup: {
         clientFiles: [
-          `${resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-ui', 'src'))}/*.vue`,
-          `${resolve(join(import.meta.dirname, '..', '..', 'packages', 'stage-pages', 'src'))}/*.vue`,
+          `${resolve(join(__dirname, '..', '..', 'packages', 'stage-ui', 'src'))}/*.vue`,
+          `${resolve(join(__dirname, '..', '..', 'packages', 'stage-pages', 'src'))}/*.vue`,
         ],
       },
     },

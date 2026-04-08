@@ -24,7 +24,7 @@ describe('ui-server-auth sign-in flow helpers', () => {
   })
 
   it('posts the selected provider and callback URL to the social sign-in endpoint', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(async () => {
+    const fetchImpl = vi.fn(async () => {
       return new Response(JSON.stringify({ url: 'https://accounts.example.test/oauth/google' }), {
         headers: { 'Content-Type': 'application/json' },
       })
@@ -34,8 +34,8 @@ describe('ui-server-auth sign-in flow helpers', () => {
       apiServerUrl: 'https://api.airi.test',
       provider: 'google',
       callbackURL: 'https://api.airi.test/api/auth/oauth2/authorize?client_id=airi-stage-web',
-      fetchImpl,
-    })).resolves.toBe('https://accounts.example.test/oauth/google')
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })).resolves.toBe('https://accounts.example.test/oauth/google' )
 
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(fetchImpl).toHaveBeenCalledWith(
@@ -47,16 +47,16 @@ describe('ui-server-auth sign-in flow helpers', () => {
       }),
     )
 
-    const init = fetchImpl.mock.calls[0]?.[1]
+    const init = (fetchImpl as any).mock?.calls?.[0]?.[1]
 
-    expect(JSON.parse(String(init?.body))).toEqual({
+    expect(JSON.parse(String((init as any)?.body))).toEqual({
       provider: 'google',
       callbackURL: 'https://api.airi.test/api/auth/oauth2/authorize?client_id=airi-stage-web',
     })
   })
 
   it('surfaces server-provided sign-in errors', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(async () => {
+    const fetchImpl = vi.fn(async () => {
       return new Response(JSON.stringify({
         error: {
           message: 'Provider is temporarily unavailable',
@@ -70,7 +70,7 @@ describe('ui-server-auth sign-in flow helpers', () => {
       apiServerUrl: 'https://api.airi.test',
       provider: 'github',
       callbackURL: '/',
-      fetchImpl,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
     })).rejects.toThrow('Provider is temporarily unavailable')
   })
 })

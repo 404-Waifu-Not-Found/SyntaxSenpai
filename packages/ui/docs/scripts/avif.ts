@@ -21,8 +21,10 @@ async function transform(filePath: string): Promise<any> {
     path.dirname(filePath),
     `${path.basename(filePath, path.extname(filePath))}.avif`,
   )
-  const avifBuffer = await new Transformer(await readFile(filePath)).avif()
-  await writeFile(dist, avifBuffer)
+  const fileBuffer = await readFile(filePath)
+  const u8 = Uint8Array.from(fileBuffer as any)
+  const avifBuffer = await new Transformer(u8).avif()
+  await writeFile(dist, avifBuffer as any)
   await rm(filePath)
   console.info(`√ ${filePath} -> ${dist}`)
 }

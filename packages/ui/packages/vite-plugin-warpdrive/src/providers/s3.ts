@@ -1,5 +1,4 @@
 /* eslint-disable e18e/prefer-static-regex */
-import type { Buffer } from 'node:buffer'
 
 import type { UploadProvider } from './types'
 
@@ -41,8 +40,9 @@ export function createS3Provider(options: S3ProviderOptions): UploadProvider {
   return {
     async upload(localPath: string, key: string, contentType?: string) {
       const data = await readFile(localPath)
-      await client.putObject(normalizeKey(key), data, contentType ?? 'application/octet-stream')
+      await client.putObject(normalizeKey(key), new Uint8Array(data) as any, contentType ?? 'application/octet-stream')
     },
+
     async cleanPrefix(prefix: string) {
       const normalizedPrefix = normalizePrefix(prefix)
       if (!normalizedPrefix)
@@ -60,7 +60,7 @@ export function createS3Provider(options: S3ProviderOptions): UploadProvider {
         return false
 
       const data = await readFile(localPath)
-      return isMd5HashMatched(client, key, data)
+      return isMd5HashMatched(client, key, new Uint8Array(data))
     },
     getPublicUrl(key: string) {
       return joinUrl(publicBaseUrl, key)
@@ -68,7 +68,7 @@ export function createS3Provider(options: S3ProviderOptions): UploadProvider {
   }
 }
 
-async function isMd5HashMatched(client: S3mini, key: string, data: Buffer) {
+async function isMd5HashMatched(client: S3mini, key: string, data: Uint8Array | Buffer) {
   try {
     const etag = await client.getEtag(normalizeKey(key))
     if (!etag)
@@ -78,7 +78,7 @@ async function isMd5HashMatched(client: S3mini, key: string, data: Buffer) {
     if (!normalizedEtag || normalizedEtag.includes('-'))
       return false
 
-    const localHash = createHash('md5').update(data).digest('hex')
+    const localHash = createHash('md5').update(Buffer.from(data as any) as any).digest('hex')
     return normalizedEtag.toLowerCase() === localHash.toLowerCase()
   }
   catch {

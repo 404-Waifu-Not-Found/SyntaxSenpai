@@ -174,7 +174,7 @@ export function capVitePlugin(options: CapVitePluginOptions): Plugin {
         }
       }
 
-      function onWatcherEvent(_event, file) {
+      function onWatcherEvent(_event: string, file: string) {
         if (!shouldRestartForNativeChange(file, resolvedPlatform, cwd)) {
           return
         }

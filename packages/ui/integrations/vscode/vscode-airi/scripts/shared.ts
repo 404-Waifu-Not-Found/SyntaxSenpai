@@ -80,13 +80,15 @@ export function encodeNumericVersion(version: string) {
   }
 }
 
-function parsePrerelease(prerelease?: string) {
+type Stage = 'alpha' | 'beta' | 'rc' | 'stable'
+
+function parsePrerelease(prerelease?: string): { stage: Stage, sequence: number } {
   if (!prerelease) {
-    return { stage: 'stable' as const, sequence: 0 }
+    return { stage: 'stable', sequence: 0 }
   }
 
   const [stageRaw, sequenceRaw] = prerelease.split('.')
-  const stage = stageRaw === 'beta' || stageRaw === 'rc' || stageRaw === 'alpha' ? stageRaw : 'alpha'
+  const stage = stageRaw === 'beta' || stageRaw === 'rc' || stageRaw === 'alpha' ? (stageRaw as Stage) : 'alpha'
   const sequenceParsed = Number.parseInt(sequenceRaw ?? '', 10)
   const sequence = Number.isFinite(sequenceParsed) ? sequenceParsed : 0
 

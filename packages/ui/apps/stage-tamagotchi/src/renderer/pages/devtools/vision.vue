@@ -76,9 +76,9 @@ const workloadOptions = VISION_WORKLOADS.map(workload => ({
   value: workload.id,
 }))
 
-const isDisplaySource = (source: { id: string }) => source.id.startsWith('screen:')
-const isWindowSource = (source: { id: string }) => source.id.startsWith('window:')
-const isDeviceSource = (source: { id: string }) => source.id.startsWith('device:')
+const isDisplaySource = (source: any) => typeof source?.id === 'string' && source.id.startsWith('screen:')
+const isWindowSource = (source: any) => typeof source?.id === 'string' && source.id.startsWith('window:')
+const isDeviceSource = (source: any) => typeof source?.id === 'string' && source.id.startsWith('device:')
 
 const filteredSources = computed(() => {
   if (sourceCategory.value === 'applications')
@@ -94,7 +94,7 @@ const sourceCounts = computed(() => ({
   devices: sources.value.filter(isDeviceSource).length,
 }))
 
-function getShareLabel(source: { id: string }) {
+function getShareLabel(source: any) {
   if (isDisplaySource(source))
     return 'Share Screen'
   if (isDeviceSource(source))

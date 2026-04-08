@@ -80,7 +80,14 @@ export interface CodingContext {
 /**
  * Event types sent to Airi
  */
-export interface Events {
-  type: 'coding:context' | 'coding:save' | 'coding:switch-file'
-  data: CodingContext
+// General-purpose event mapping for the ServerClient generic.
+// Use a broadly-typed record here to avoid tight coupling on event names
+// while still providing structure for coding-related payloads.
+export type Events = Record<string, any>
+
+// (Optional) preserve a shape for coding-related events for documentation.
+export type CodingEvents = {
+  'coding:context': CodingContext
+  'coding:save': CodingContext
+  'coding:switch-file': CodingContext
 }

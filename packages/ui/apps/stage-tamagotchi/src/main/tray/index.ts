@@ -210,7 +210,7 @@ export function setupTray(params: {
         { type: 'separator' },
         ...is.dev || env.MAIN_APP_DEBUG || env.APP_DEBUG
           ? [
-              { type: 'header', label: params.i18n.t('tamagotchi.electron.tray.menu.labels.label.devtools') },
+              { type: 'header', label: params.i18n.t('tamagotchi.electron.tray.menu.labels.label.devtools') } as any,
               { label: params.i18n.t('tamagotchi.electron.tray.menu.labels.label.troubleshoot_beatsync'), click: () => params.beatSyncBgWindow.webContents.openDevTools() },
               { type: 'separator' },
             ] as const

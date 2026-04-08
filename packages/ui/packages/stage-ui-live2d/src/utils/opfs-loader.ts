@@ -5,17 +5,11 @@ interface OPFSContext extends Live2DFactoryContext {
   opfsUrl?: string
 }
 
-declare global {
-  interface FileSystemDirectoryHandle {
-    values: () => FileSystemDirectoryHandleAsyncIterator<FileSystemHandle>
-  }
-}
-
 export class OPFSCache {
   static async clearAll(): Promise<void> {
     try {
       const root = await navigator.storage.getDirectory()
-      for await (const entry of root.values()) {
+      for await (const entry of (root as any).values()) {
         await root.removeEntry(entry.name, { recursive: true })
       }
     }
@@ -26,7 +20,7 @@ export class OPFSCache {
 
   static async readDirectoryRecursive(dir: FileSystemDirectoryHandle, pathPrefix: string): Promise<File[]> {
     const files: File[] = []
-    for await (const entry of dir.values()) {
+    for await (const entry of (dir as any).values()) {
       if (entry.kind === 'file') {
         const fileHandle = entry as FileSystemFileHandle
         const file = await fileHandle.getFile()

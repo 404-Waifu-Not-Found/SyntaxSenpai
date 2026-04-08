@@ -6,6 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
   test: {
+    passWithNoTests: true,
     projects: [
       path.resolve(__dirname, 'apps/server'),
       path.resolve(__dirname, 'apps/ui-server-auth'),

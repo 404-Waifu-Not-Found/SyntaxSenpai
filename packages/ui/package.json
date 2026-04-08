@@ -24,7 +24,7 @@
     "dev:tamagotchi": "pnpm -rF @proj-airi/stage-tamagotchi run dev",
     "dev:apps": "pnpm -rF=\"./apps/*\" run --parallel dev",
     "dev:packages": "pnpm -rF=\"./packages/*\" --parallel run dev",
-    "build": "turbo run build -F=\"./packages/*\" -F=\"./apps/*\"",
+    "build": "pnpm -r -F \"./packages/*\" -F \"./apps/*\" run build",
     "build:web": "turbo run build -F @proj-airi/stage-web",
     "build:tamagotchi": "pnpm -rF @proj-airi/stage-tamagotchi run app:build",
     "build:apps": "turbo run build -F=\"./apps/*\"",
@@ -76,7 +76,8 @@
     "unplugin-unused": "^0.5.7",
     "vite": "^8.0.2",
     "vitest": "^4.1.1",
-    "yaml": "^2.8.3"
+    "yaml": "^2.8.3",
+    "tsdown": "^0.21.4"
   },
   "workspaces": [
     "packages/**",

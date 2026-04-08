@@ -38,9 +38,16 @@
       "@syntax-senpai/ws-protocol": ["packages/ws-protocol/src"],
       "@syntax-senpai/ws-protocol/*": ["packages/ws-protocol/src/*"],
       "@syntax-senpai/storage": ["packages/storage/src"],
-      "@syntax-senpai/storage/*": ["packages/storage/src/*"]
+      "@syntax-senpai/storage/*": ["packages/storage/src/*"],
+
+      "@proj-airi/*": [
+        "packages/ui/packages/*/src",
+        "packages/ui/apps/*/src",
+        "packages/ui/src/*",
+        "packages/*/src"
+      ]
     }
   },
   "include": ["apps/**/*", "packages/**/*"],
-  "exclude": ["node_modules", "dist", ".expo"]
+  "exclude": ["node_modules", "dist", ".expo", "**/dist/**"]
 }

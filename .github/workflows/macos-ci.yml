@@ -28,6 +28,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --prefer-frozen-lockfile
 
+      - name: Rebuild native modules for Electron
+        run: |
+          # Ensure electron-rebuild is available; prefer workspace install but fall back to npx
+          pnpm -w add -D electron-rebuild@3.2.0 || true
+          pnpm -w exec electron-rebuild --force --parallel || pnpx electron-rebuild --force --parallel
+
       - name: Build required packages
         run: |
           pnpm --filter @syntax-senpai/waifu-core run build || true

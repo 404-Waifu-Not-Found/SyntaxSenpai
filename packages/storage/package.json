@@ -9,5 +9,8 @@
   ],
   "scripts": {
     "build": "tsc"
+  },
+  "dependencies": {
+    "@syntax-senpai/waifu-core": "workspace:*"
   }
 }

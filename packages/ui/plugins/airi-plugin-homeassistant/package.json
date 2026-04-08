@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@guiiai/logg": "catalog:",
+    "@guiiai/logg": "^1.2.11",
     "@proj-airi/server-sdk": "workspace:*"
   }
 }

@@ -1,5 +1,6 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
-import react from '@vitejs/plugin-react'
+import vue from '@vitejs/plugin-vue'
+import UnoCSS from 'unocss/vite'
 import path from 'path'
 import { fileURLToPath } from 'url'
 
@@ -30,7 +31,7 @@ export default defineConfig({
         '@': path.resolve(__dirname, './src/renderer/src')
       }
     },
-    plugins: [react()],
+    plugins: [vue(), UnoCSS()],
     optimizeDeps: {
       exclude: ['expo-secure-store', 'expo', 'keytar', 'better-sqlite3']
     },

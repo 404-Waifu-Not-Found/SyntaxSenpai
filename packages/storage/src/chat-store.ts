@@ -1,11 +1,11 @@
 /**
  * Chat Message & Conversation Storage
- * Uses SQLite for persistence across all platforms
+ * Uses JSON files for persistence on desktop
  */
 
 import type { Message } from "@syntax-senpai/ai-core";
 import type { WaifuRelationship } from "@syntax-senpai/waifu-core";
-import type { IChatStore, ConversationRecord } from "./types";
+import type { IChatStore, ConversationRecord, IMemoryStore, MemoryEntry } from "./types";
 
 /**
  * In-memory chat store (for testing)
@@ -28,6 +28,7 @@ export class InMemoryChatStore implements IChatStore {
       createdAt: now,
       updatedAt: now,
       messageCount: 0,
+      favorited: false,
     };
     this.conversations.set(id, conversation);
     this.messages.set(id, []);
@@ -111,64 +112,56 @@ export class InMemoryChatStore implements IChatStore {
 }
 
 /**
- * SQLite-based chat store for desktop
+ * JSON-file-based chat store for desktop.
+ * Replaces the SQLite store to avoid native-module issues with better-sqlite3.
  */
 export class DesktopSQLiteChatStore implements IChatStore {
-  private db: any;
+  private filePath: string;
+  private data: {
+    conversations: Record<string, ConversationRecord>;
+    messages: Record<string, Message[]>;
+    relationships: Record<string, WaifuRelationship>;
+  };
 
   constructor(dbPath?: string) {
-    // Database will be initialized on first use
-    this.initDB(dbPath);
+    const fs = require("fs");
+    const path = require("path");
+
+    // Derive JSON path from the provided path (swap .sqlite → .json, or use default)
+    if (dbPath) {
+      this.filePath = dbPath.replace(/\.sqlite$/, "") + ".json";
+    } else {
+      this.filePath = path.join(
+        process.env.HOME || process.env.USERPROFILE || ".",
+        ".syntax-senpai",
+        "chats.json"
+      );
+    }
+
+    // Ensure parent directory exists
+    const dir = path.dirname(this.filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    // Load existing data or start fresh
+    if (fs.existsSync(this.filePath)) {
+      try {
+        this.data = JSON.parse(fs.readFileSync(this.filePath, "utf-8"));
+      } catch {
+        this.data = { conversations: {}, messages: {}, relationships: {} };
+      }
+    } else {
+      this.data = { conversations: {}, messages: {}, relationships: {} };
+    }
   }
 
-  private initDB(dbPath?: string): void {
+  private flush(): void {
     try {
-      // Lazy load better-sqlite3
-      const Database = require("better-sqlite3");
-      this.db = new Database(dbPath || ":memory:");
-
-      // Create tables
-      this.db.exec(`
-        CREATE TABLE IF NOT EXISTS conversations (
-          id TEXT PRIMARY KEY,
-          waifu_id TEXT NOT NULL,
-          title TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          summary TEXT,
-          message_count INTEGER DEFAULT 0
-        );
-
-        CREATE TABLE IF NOT EXISTS messages (
-          id TEXT PRIMARY KEY,
-          conversation_id TEXT NOT NULL,
-          role TEXT NOT NULL,
-          content TEXT NOT NULL,
-          tool_calls TEXT,
-          tool_call_id TEXT,
-          created_at TEXT NOT NULL,
-          FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS waifu_relationships (
-          waifu_id TEXT NOT NULL,
-          user_id TEXT NOT NULL,
-          affection_level INTEGER DEFAULT 0,
-          memory_summary TEXT,
-          selected_provider TEXT NOT NULL,
-          selected_model TEXT NOT NULL,
-          nickname TEXT,
-          created_at TEXT NOT NULL,
-          last_interacted_at TEXT NOT NULL,
-          PRIMARY KEY (waifu_id, user_id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_conversations_waifu ON conversations(waifu_id);
-        CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
-      `);
-    } catch (error) {
-      console.warn("SQLite not available, using in-memory store");
-      this.db = null;
+      const fs = require("fs");
+      fs.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), "utf-8");
+    } catch (err) {
+      console.error("Failed to write chat data:", err);
     }
   }
 
@@ -176,166 +169,102 @@ export class DesktopSQLiteChatStore implements IChatStore {
     waifuId: string,
     title?: string
   ): Promise<ConversationRecord> {
-    if (!this.db) return new InMemoryChatStore().createConversation(waifuId, title);
-
     const id = `conv_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const now = new Date().toISOString();
-
-    const stmt = this.db.prepare(`
-      INSERT INTO conversations (id, waifu_id, title, created_at, updated_at, message_count)
-      VALUES (?, ?, ?, ?, ?, 0)
-    `);
-    stmt.run(id, waifuId, title || "Untitled Conversation", now, now);
-
-    return {
+    const conversation: ConversationRecord = {
       id,
       waifuId,
       title: title || "Untitled Conversation",
       createdAt: now,
       updatedAt: now,
       messageCount: 0,
+      favorited: false,
     };
+    this.data.conversations[id] = conversation;
+    this.data.messages[id] = [];
+    this.flush();
+    return conversation;
   }
 
   async getConversation(id: string): Promise<ConversationRecord | null> {
-    if (!this.db) return null;
-
-    const stmt = this.db.prepare(`
-      SELECT id, waifu_id, title, created_at, updated_at, message_count, summary
-      FROM conversations WHERE id = ?
-    `);
-    const row = stmt.get(id) as any;
-    return row ? this.rowToConversation(row) : null;
+    return this.data.conversations[id] || null;
   }
 
   async listConversations(waifuId?: string): Promise<ConversationRecord[]> {
-    if (!this.db) return [];
-
-    const query = waifuId
-      ? "SELECT * FROM conversations WHERE waifu_id = ? ORDER BY updated_at DESC"
-      : "SELECT * FROM conversations ORDER BY updated_at DESC";
-
-    const stmt = this.db.prepare(query);
-    const rows = waifuId ? stmt.all(waifuId) : stmt.all();
-    return rows.map((row: any) => this.rowToConversation(row));
+    const all = Object.values(this.data.conversations);
+    const filtered = waifuId ? all.filter((c) => c.waifuId === waifuId) : all;
+    return filtered.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
   }
 
   async updateConversation(
     id: string,
     updates: Partial<ConversationRecord>
   ): Promise<void> {
-    if (!this.db) return;
+    const conv = this.data.conversations[id];
+    if (!conv) return;
 
-    const now = new Date().toISOString();
-    const stmt = this.db.prepare(`
-      UPDATE conversations
-      SET title = ?, summary = ?, message_count = ?, updated_at = ?
-      WHERE id = ?
-    `);
-    stmt.run(
-      updates.title,
-      updates.summary,
-      updates.messageCount,
-      now,
-      id
-    );
+    // Only overwrite fields that are actually provided
+    if (updates.title !== undefined) conv.title = updates.title;
+    if (updates.summary !== undefined) conv.summary = updates.summary;
+    if (updates.messageCount !== undefined) conv.messageCount = updates.messageCount;
+    if (updates.favorited !== undefined) conv.favorited = updates.favorited;
+    conv.updatedAt = new Date().toISOString();
+
+    this.flush();
   }
 
   async deleteConversation(id: string): Promise<void> {
-    if (!this.db) return;
-
-    this.db.prepare("DELETE FROM messages WHERE conversation_id = ?").run(id);
-    this.db.prepare("DELETE FROM conversations WHERE id = ?").run(id);
+    delete this.data.conversations[id];
+    delete this.data.messages[id];
+    this.flush();
   }
 
   async addMessage(conversationId: string, message: Message): Promise<void> {
-    if (!this.db) return;
+    if (!this.data.messages[conversationId]) {
+      this.data.messages[conversationId] = [];
+    }
+    this.data.messages[conversationId].push({
+      id: message.id,
+      role: message.role,
+      content: typeof message.content === "string" ? message.content : JSON.stringify(message.content),
+      createdAt: (message as any).timestamp || message.createdAt || new Date().toISOString(),
+    } as any);
 
-    const stmt = this.db.prepare(`
-      INSERT INTO messages (id, conversation_id, role, content, tool_calls, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      message.id,
-      conversationId,
-      message.role,
-      typeof message.content === "string" ? message.content : JSON.stringify(message.content),
-      message.toolCalls ? JSON.stringify(message.toolCalls) : null,
-      message.createdAt || new Date().toISOString()
-    );
-
-    // Update conversation message count
-    const countStmt = this.db.prepare("SELECT COUNT(*) as count FROM messages WHERE conversation_id = ?");
-    const { count } = countStmt.get(conversationId) as any;
-    const updateStmt = this.db.prepare("UPDATE conversations SET message_count = ?, updated_at = ? WHERE id = ?");
-    updateStmt.run(count, new Date().toISOString(), conversationId);
+    const conv = this.data.conversations[conversationId];
+    if (conv) {
+      conv.messageCount = this.data.messages[conversationId].length;
+      conv.updatedAt = new Date().toISOString();
+    }
+    this.flush();
   }
 
   async getMessages(conversationId: string): Promise<Message[]> {
-    if (!this.db) return [];
-
-    const stmt = this.db.prepare(`
-      SELECT id, role, content, tool_calls, created_at
-      FROM messages
-      WHERE conversation_id = ?
-      ORDER BY created_at ASC
-    `);
-    const rows = stmt.all(conversationId) as any[];
-    return rows.map((row) => ({
-      id: row.id,
-      role: row.role,
-      content: row.content,
-      toolCalls: row.tool_calls ? JSON.parse(row.tool_calls) : undefined,
-      createdAt: row.created_at,
-    }));
+    return this.data.messages[conversationId] || [];
   }
 
   async deleteMessages(conversationId: string, beforeDate?: string): Promise<void> {
-    if (!this.db) return;
-
     if (beforeDate) {
-      this.db.prepare("DELETE FROM messages WHERE conversation_id = ? AND created_at < ?").run(
-        conversationId,
-        beforeDate
+      const msgs = this.data.messages[conversationId] || [];
+      this.data.messages[conversationId] = msgs.filter(
+        (m) => ((m as any).createdAt || "") >= beforeDate
       );
     } else {
-      this.db.prepare("DELETE FROM messages WHERE conversation_id = ?").run(conversationId);
+      this.data.messages[conversationId] = [];
     }
+    this.flush();
   }
 
   async setRelationship(relationship: WaifuRelationship): Promise<void> {
-    if (!this.db) return;
-
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO waifu_relationships
-      (waifu_id, user_id, affection_level, memory_summary, selected_provider, selected_model, nickname, created_at, last_interacted_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      relationship.waifuId,
-      relationship.userId,
-      relationship.affectionLevel || 0,
-      relationship.memorySummary || null,
-      relationship.selectedAIProvider,
-      relationship.selectedModel,
-      relationship.nickname || null,
-      relationship.createdAt,
-      relationship.lastInteractedAt
-    );
+    const key = `${relationship.waifuId}:${relationship.userId}`;
+    this.data.relationships[key] = relationship;
+    this.flush();
   }
 
   async getRelationship(
     waifuId: string,
     userId: string
   ): Promise<WaifuRelationship | null> {
-    if (!this.db) return null;
-
-    const stmt = this.db.prepare(`
-      SELECT * FROM waifu_relationships
-      WHERE waifu_id = ? AND user_id = ?
-    `);
-    const row = stmt.get(waifuId, userId) as any;
-    return row ? this.rowToRelationship(row) : null;
+    return this.data.relationships[`${waifuId}:${userId}`] || null;
   }
 
   async updateRelationship(
@@ -343,46 +272,107 @@ export class DesktopSQLiteChatStore implements IChatStore {
     userId: string,
     updates: Partial<WaifuRelationship>
   ): Promise<void> {
-    if (!this.db) return;
-
-    const stmt = this.db.prepare(`
-      UPDATE waifu_relationships
-      SET affection_level = ?, memory_summary = ?, last_interacted_at = ?
-      WHERE waifu_id = ? AND user_id = ?
-    `);
-    stmt.run(
-      updates.affectionLevel,
-      updates.memorySummary,
-      new Date().toISOString(),
-      waifuId,
-      userId
-    );
+    const key = `${waifuId}:${userId}`;
+    const current = this.data.relationships[key];
+    if (current) {
+      this.data.relationships[key] = { ...current, ...updates };
+      this.flush();
+    }
   }
 
-  private rowToConversation(row: any): ConversationRecord {
-    return {
-      id: row.id,
-      waifuId: row.waifu_id,
-      title: row.title,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      messageCount: row.message_count,
-      summary: row.summary,
-    };
+  async toggleFavorite(id: string): Promise<boolean> {
+    const conv = this.data.conversations[id];
+    if (!conv) return false;
+
+    conv.favorited = !conv.favorited;
+    conv.updatedAt = new Date().toISOString();
+    this.flush();
+    return !!conv.favorited;
+  }
+}
+
+/**
+ * JSON-file-based persistent AI memory store
+ */
+export class DesktopMemoryStore implements IMemoryStore {
+  private filePath: string;
+  private data: Record<string, MemoryEntry>;
+
+  constructor(dbOrPath?: any) {
+    const fs = require("fs");
+    const path = require("path");
+
+    const basePath = typeof dbOrPath === "string" ? dbOrPath : undefined;
+    if (basePath) {
+      this.filePath = basePath.replace(/\.sqlite$/, "") + "-memory.json";
+    } else {
+      this.filePath = path.join(
+        process.env.HOME || process.env.USERPROFILE || ".",
+        ".syntax-senpai",
+        "memory.json"
+      );
+    }
+
+    const dir = path.dirname(this.filePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    if (fs.existsSync(this.filePath)) {
+      try {
+        this.data = JSON.parse(fs.readFileSync(this.filePath, "utf-8"));
+      } catch {
+        this.data = {};
+      }
+    } else {
+      this.data = {};
+    }
   }
 
-  private rowToRelationship(row: any): WaifuRelationship {
-    return {
-      waifuId: row.waifu_id,
-      userId: row.user_id,
-      affectionLevel: row.affection_level,
-      memorySummary: row.memory_summary,
-      selectedAIProvider: row.selected_provider,
-      selectedModel: row.selected_model,
-      nickname: row.nickname,
-      createdAt: row.created_at,
-      lastInteractedAt: row.last_interacted_at,
+  private flush(): void {
+    try {
+      const fs = require("fs");
+      fs.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), "utf-8");
+    } catch (err) {
+      console.error("Failed to write memory data:", err);
+    }
+  }
+
+  async setMemory(key: string, value: string, category = 'general'): Promise<void> {
+    const now = new Date().toISOString();
+    const existing = this.data[key];
+    this.data[key] = {
+      key,
+      value,
+      category,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
     };
+    this.flush();
+  }
+
+  async getMemory(key: string): Promise<MemoryEntry | null> {
+    return this.data[key] || null;
+  }
+
+  async getAllMemories(): Promise<MemoryEntry[]> {
+    return Object.values(this.data).sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  }
+
+  async getMemoriesByCategory(category: string): Promise<MemoryEntry[]> {
+    return Object.values(this.data)
+      .filter((m) => m.category === category)
+      .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  }
+
+  async deleteMemory(key: string): Promise<void> {
+    delete this.data[key];
+    this.flush();
+  }
+
+  async clearAllMemories(): Promise<void> {
+    this.data = {};
+    this.flush();
   }
 }
 
@@ -394,4 +384,11 @@ export function createChatStore(platform: "mobile" | "desktop" | "test" = "deskt
     return new InMemoryChatStore();
   }
   return new DesktopSQLiteChatStore(dbPath);
+}
+
+/**
+ * Create memory store for persistent AI memory
+ */
+export function createMemoryStore(dbPath?: string): IMemoryStore {
+  return new DesktopMemoryStore(dbPath);
 }

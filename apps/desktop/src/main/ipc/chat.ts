@@ -9,7 +9,8 @@ export function registerChatIpc() {
 
   // Create a platform chat store (desktop) using CHAT_DB_PATH if provided.
   const dbPath = process.env.CHAT_DB_PATH || undefined
-  const store = storage.createChatStore('desktop', dbPath)
+  const store = storage.createChatStore('desktop', dbPath) as any
+  const memoryStore = storage.createMemoryStore(dbPath)
 
   ipcMain.handle('store:createConversation', async (event: any, waifuId: string, title: string) => {
     try {
@@ -75,6 +76,74 @@ export function registerChatIpc() {
         return { success: true, conversation: conv }
       }
       return { success: false, error: 'getConversation not supported by store' }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('store:toggleFavorite', async (event: any, id: string) => {
+    try {
+      if (typeof store.toggleFavorite === 'function') {
+        const favorited = await store.toggleFavorite(id)
+        return { success: true, favorited }
+      }
+      return { success: false, error: 'toggleFavorite not supported by store' }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  // ── AI Memory IPC handlers ──
+
+  ipcMain.handle('memory:set', async (event: any, key: string, value: string, category?: string) => {
+    try {
+      await memoryStore.setMemory(key, value, category)
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('memory:get', async (event: any, key: string) => {
+    try {
+      const entry = await memoryStore.getMemory(key)
+      return { success: true, entry }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('memory:getAll', async () => {
+    try {
+      const entries = await memoryStore.getAllMemories()
+      return { success: true, entries }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('memory:getByCategory', async (event: any, category: string) => {
+    try {
+      const entries = await memoryStore.getMemoriesByCategory(category)
+      return { success: true, entries }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('memory:delete', async (event: any, key: string) => {
+    try {
+      await memoryStore.deleteMemory(key)
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('memory:clear', async () => {
+    try {
+      await memoryStore.clearAllMemories()
+      return { success: true }
     } catch (err: any) {
       return { success: false, error: err instanceof Error ? err.message : String(err) }
     }

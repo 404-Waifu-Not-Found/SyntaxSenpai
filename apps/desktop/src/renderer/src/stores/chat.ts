@@ -72,6 +72,8 @@ export const useChatStore = defineStore('chat', () => {
   const agentMode = ref<AgentMode>(
     (localStorage.getItem('syntax-senpai-agent-mode') as AgentMode) || 'ask',
   )
+  const userMemories = ref<Array<{ key: string; value: string; category: string }>>([])
+  const sidebarFilter = ref<'all' | 'favorites'>('all')
 
   function setAgentMode(mode: AgentMode) {
     agentMode.value = mode
@@ -174,6 +176,14 @@ export const useChatStore = defineStore('chat', () => {
     return null
   }
 
+  async function newChat() {
+    messages.value = []
+    conversationId.value = null
+    // Don't eagerly create — sendMessage creates it lazily on first message.
+    // Only refresh sidebar so the user sees all existing conversations.
+    await loadConversations()
+  }
+
   async function loadConversations() {
     try {
       const res = await invoke('store:listConversations', selectedWaifuId.value)
@@ -185,9 +195,16 @@ export const useChatStore = defineStore('chat', () => {
 
   async function selectConversation(id: string) {
     conversationId.value = id
+    messages.value = []
     try {
       const res = await invoke('store:getMessages', id)
-      if (res?.success) messages.value = res.messages || []
+      if (res?.success) {
+        // DB stores `createdAt`; normalize to `timestamp` for the UI
+        messages.value = (res.messages || []).map((m: any) => ({
+          ...m,
+          timestamp: m.timestamp || m.createdAt || '',
+        }))
+      }
     } catch (err) {
       console.warn('Failed to select conversation', err)
     }
@@ -217,6 +234,88 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  async function autoNameConversation(id: string, firstUserMessage: string) {
+    try {
+      const key = await keyManager.getKey(selectedProvider.value)
+      const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
+      const waifu = selectedWaifu.value
+      if (!key) return
+      const runtime = new AIChatRuntime({
+        provider: { type: selectedProvider.value as any, apiKey: key } as any,
+        model,
+        systemPrompt: `You are ${waifu?.displayName || 'an assistant'}. Reply ONLY with a short chat title (3-6 words max, no quotes, no punctuation at end) that captures what the user's first message is about.`,
+      })
+      let title = ''
+      for await (const chunk of runtime.streamMessage({ text: firstUserMessage, history: [] })) {
+        if (chunk.type === 'text_delta' && chunk.delta) title += chunk.delta
+      }
+      title = title.trim().replace(/^["']|["']$/g, '').slice(0, 60)
+      if (title) {
+        await invoke('store:updateConversation', id, { title })
+        await loadConversations()
+      }
+    } catch {
+      // naming is best-effort, never block or surface errors
+    }
+  }
+
+  async function toggleFavorite(id: string) {
+    try {
+      const res = await invoke('store:toggleFavorite', id)
+      if (res?.success) {
+        // Update local state immediately
+        const conv = conversations.value.find((c: any) => c.id === id)
+        if (conv) conv.favorited = res.favorited
+      }
+    } catch (err) {
+      console.warn('Toggle favorite failed:', err)
+    }
+  }
+
+  // ── AI Memory methods ──
+
+  async function loadMemories() {
+    try {
+      const res = await invoke('memory:getAll')
+      if (res?.success) userMemories.value = res.entries || []
+    } catch (err) {
+      console.warn('Failed to load memories:', err)
+    }
+  }
+
+  async function setMemory(key: string, value: string, category = 'general') {
+    try {
+      const res = await invoke('memory:set', key, value, category)
+      if (res?.success) await loadMemories()
+    } catch (err) {
+      console.warn('Failed to set memory:', err)
+    }
+  }
+
+  async function deleteMemory(key: string) {
+    try {
+      const res = await invoke('memory:delete', key)
+      if (res?.success) await loadMemories()
+    } catch (err) {
+      console.warn('Failed to delete memory:', err)
+    }
+  }
+
+  async function clearMemories() {
+    try {
+      const res = await invoke('memory:clear')
+      if (res?.success) userMemories.value = []
+    } catch (err) {
+      console.warn('Failed to clear memories:', err)
+    }
+  }
+
+  function buildMemoryContext(): string {
+    if (userMemories.value.length === 0) return ''
+    const lines = userMemories.value.map((m) => `- [${m.category}] ${m.key}: ${m.value}`)
+    return `\n\n[User Memory - Persistent across chats]\nYou have access to the following remembered information about the user. Use this to personalize your responses:\n${lines.join('\n')}\n\nIMPORTANT: If the user asks you to remember something, respond naturally and confirm you'll remember it. The system will save it automatically. If the user shares personal details (name, preferences, interests, projects), acknowledge them warmly.`
+  }
+
   async function sendMessage(text: string) {
     if (!text.trim() || isLoading.value) return
 
@@ -236,13 +335,16 @@ export const useChatStore = defineStore('chat', () => {
 
     try {
       let convId = conversationId.value
+      const isNewConversation = !convId
       if (!convId) {
         convId = await createConversation()
         if (convId) conversationId.value = convId
       }
       if (convId) {
-        try { await invoke('store:addMessage', convId, userMsg) } catch {}
+        try { await invoke('store:addMessage', convId, userMsg) } catch (e) { console.warn('Failed to save user message:', e) }
       }
+      // Refresh sidebar immediately so the new conversation is visible
+      if (isNewConversation) await loadConversations()
 
       const key = await keyManager.getKey(selectedProvider.value)
       const waifu = selectedWaifu.value
@@ -253,6 +355,9 @@ export const useChatStore = defineStore('chat', () => {
 
       const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
       let systemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model)
+
+      // Inject persistent memory context
+      systemPrompt += buildMemoryContext()
 
       const tools = getToolsForMode(agentMode.value)
       const hasTools = tools.length > 0
@@ -390,8 +495,10 @@ export const useChatStore = defineStore('chat', () => {
                 content: finalContent,
                 timestamp: now(),
               })
-            } catch {}
+            } catch (e) { console.warn('Failed to save assistant message:', e) }
           }
+          // Auto-name after first exchange (runs in background, doesn't block UI)
+          if (isNewConversation && convId) autoNameConversation(convId, text)
         }
       } else {
         // ── No tools: streaming mode ──
@@ -427,9 +534,13 @@ export const useChatStore = defineStore('chat', () => {
               content: assistantContent,
               timestamp: now(),
             })
-          } catch {}
+          } catch (e) { console.warn('Failed to save assistant message:', e) }
+          if (isNewConversation) autoNameConversation(convId, text)
         }
       }
+      // Auto-extract memory from user messages (name, preferences, etc.)
+      extractAndSaveMemory(text)
+
     } catch (err: any) {
       messages.value.push({
         id: `error-${Date.now()}`,
@@ -440,6 +551,44 @@ export const useChatStore = defineStore('chat', () => {
     } finally {
       isLoading.value = false
       setTimeout(() => { recentMessageId.value = null }, 1100)
+    }
+  }
+
+  function extractAndSaveMemory(userText: string) {
+    const lower = userText.toLowerCase()
+
+    // "remember that..." or "remember my..." patterns
+    const rememberMatch = userText.match(/remember\s+(?:that\s+)?(?:my\s+)?(.+)/i)
+    if (rememberMatch) {
+      const memoryContent = rememberMatch[1].replace(/[.!?]+$/, '').trim()
+      if (memoryContent.length > 2) {
+        const key = `user_note_${Date.now()}`
+        setMemory(key, memoryContent, 'user_notes')
+      }
+    }
+
+    // "my name is ..."
+    const nameMatch = userText.match(/(?:my name is|i'm|i am|call me)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i)
+    if (nameMatch) {
+      setMemory('user_name', nameMatch[1].trim(), 'identity')
+    }
+
+    // "i like / i love / my favorite..."
+    const prefMatch = userText.match(/(?:i (?:like|love|prefer|enjoy))\s+(.{3,50}?)(?:\.|!|,|$)/i)
+    if (prefMatch) {
+      const key = `preference_${Date.now()}`
+      setMemory(key, prefMatch[1].trim(), 'preferences')
+    }
+
+    // "forget ..." - delete a memory
+    const forgetMatch = lower.match(/forget\s+(?:about\s+)?(?:my\s+)?(.+)/i)
+    if (forgetMatch) {
+      const target = forgetMatch[1].replace(/[.!?]+$/, '').trim().toLowerCase()
+      // Try to find and delete matching memory
+      const match = userMemories.value.find((m) =>
+        m.value.toLowerCase().includes(target) || m.key.toLowerCase().includes(target),
+      )
+      if (match) deleteMemory(match.key)
     }
   }
 
@@ -457,16 +606,24 @@ export const useChatStore = defineStore('chat', () => {
     recentMessageId,
     agentMode,
     selectedWaifu,
+    userMemories,
+    sidebarFilter,
     loadSetup,
     hydrateProviderConfig,
     saveApiKey,
     setup,
     setAgentMode,
+    newChat,
     createConversation,
     loadConversations,
     selectConversation,
     deleteConversation,
     renameConversation,
+    toggleFavorite,
+    loadMemories,
+    setMemory,
+    deleteMemory,
+    clearMemories,
     sendMessage,
   }
 })

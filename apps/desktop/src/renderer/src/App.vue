@@ -2,12 +2,15 @@
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { builtInWaifus } from '@syntax-senpai/waifu-core'
 import { useChatStore } from './stores/chat'
+import { useTheme } from './composables/use-theme'
 import ChatBubble from './components/ChatBubble.vue'
 import AppAvatar from './components/AppAvatar.vue'
 import TypingDots from './components/TypingDots.vue'
 import MessageSkeleton from './components/MessageSkeleton.vue'
 
 const store = useChatStore()
+const { theme, resetTheme, setColor, setRainbow, DEFAULT_THEME } = useTheme()
+const settingsTab = ref<'general' | 'theme'>('general')
 const providerOrder = [
   'anthropic',
   'openai',
@@ -365,55 +368,295 @@ async function addMemoryEntry() {
         class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50"
         @click.self="showSettings = false"
       >
-        <div class="glass-surface rounded-2xl p-6 max-w-md w-full mx-4 animate-content-show">
+        <div class="glass-surface rounded-2xl p-6 max-w-lg w-full mx-4 animate-content-show max-h-[85vh] overflow-y-auto">
           <h2 class="text-xl font-bold text-white mb-4">
             Settings
           </h2>
 
-          <div class="mb-4">
-            <label class="block text-sm font-semibold text-neutral-200 mb-2">Waifu</label>
-            <select
-              v-model="store.selectedWaifuId"
-              class="input-field"
+          <!-- Tabs -->
+          <div class="flex gap-1 mb-5 p-1 rounded-lg bg-neutral-800/40">
+            <button
+              :class="[
+                'flex-1 text-sm font-semibold py-2 rounded-md transition-all duration-150',
+                settingsTab === 'general'
+                  ? 'bg-neutral-700/60 text-white'
+                  : 'text-neutral-400 hover:text-neutral-200',
+              ]"
+              @click="settingsTab = 'general'"
             >
-              <option v-for="w in builtInWaifus" :key="w.id" :value="w.id">
-                {{ w.displayName }}
-              </option>
-            </select>
-          </div>
-
-          <div class="mb-4">
-            <label class="block text-sm font-semibold text-neutral-200 mb-2">Provider</label>
-            <select v-model="store.selectedProvider" class="input-field">
-              <option v-for="provider in providers" :key="provider.value" :value="provider.value">
-                {{ provider.label }}
-              </option>
-            </select>
-          </div>
-
-          <div class="mb-6">
-            <label class="block text-sm font-semibold text-neutral-200 mb-2">API Key</label>
-            <input
-              v-model="store.apiKey"
-              type="password"
-              placeholder="sk-..."
-              class="input-field"
-            >
-          </div>
-
-          <div class="flex gap-2">
-            <button class="btn-secondary flex-1" @click="showSettings = false">
-              Cancel
+              General
             </button>
             <button
-              class="btn-primary flex-1"
-              @click="handleSetup(store.apiKey)"
+              :class="[
+                'flex-1 text-sm font-semibold py-2 rounded-md transition-all duration-150',
+                settingsTab === 'theme'
+                  ? 'bg-neutral-700/60 text-white'
+                  : 'text-neutral-400 hover:text-neutral-200',
+              ]"
+              @click="settingsTab = 'theme'"
             >
-              Save
+              Theme
             </button>
-            <button class="btn-ghost flex-1" @click="startDemoMode">
-              Skip (Demo)
-            </button>
+          </div>
+
+          <!-- General Tab -->
+          <div v-if="settingsTab === 'general'">
+            <div class="mb-4">
+              <label class="block text-sm font-semibold text-neutral-200 mb-2">Waifu</label>
+              <select
+                v-model="store.selectedWaifuId"
+                class="input-field"
+              >
+                <option v-for="w in builtInWaifus" :key="w.id" :value="w.id">
+                  {{ w.displayName }}
+                </option>
+              </select>
+            </div>
+
+            <div class="mb-4">
+              <label class="block text-sm font-semibold text-neutral-200 mb-2">Provider</label>
+              <select v-model="store.selectedProvider" class="input-field">
+                <option v-for="provider in providers" :key="provider.value" :value="provider.value">
+                  {{ provider.label }}
+                </option>
+              </select>
+            </div>
+
+            <div class="mb-6">
+              <label class="block text-sm font-semibold text-neutral-200 mb-2">API Key</label>
+              <input
+                v-model="store.apiKey"
+                type="password"
+                placeholder="sk-..."
+                class="input-field"
+              >
+            </div>
+
+            <div class="flex gap-2">
+              <button class="btn-secondary flex-1" @click="showSettings = false">
+                Cancel
+              </button>
+              <button
+                class="btn-primary flex-1"
+                @click="handleSetup(store.apiKey)"
+              >
+                Save
+              </button>
+              <button class="btn-ghost flex-1" @click="startDemoMode">
+                Skip (Demo)
+              </button>
+            </div>
+          </div>
+
+          <!-- Theme Tab -->
+          <div v-if="settingsTab === 'theme'">
+            <!-- Rainbow Mode -->
+            <div class="mb-6 p-4 rounded-xl border border-neutral-700/40 bg-neutral-800/30">
+              <div class="flex items-center justify-between mb-3">
+                <div>
+                  <h3 class="text-sm font-bold text-white">Rainbow Mode</h3>
+                  <p class="text-xs text-neutral-400">Cycles through colors automatically</p>
+                </div>
+                <button
+                  :class="[
+                    'relative w-12 h-6 rounded-full transition-all duration-300',
+                    theme.rainbow.enabled
+                      ? 'bg-gradient-to-r from-red-500 via-yellow-500 via-green-500 via-blue-500 to-purple-500'
+                      : 'bg-neutral-700',
+                  ]"
+                  @click="setRainbow({ enabled: !theme.rainbow.enabled })"
+                >
+                  <span
+                    :class="[
+                      'absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-300',
+                      theme.rainbow.enabled ? 'translate-x-6' : 'translate-x-0.5',
+                    ]"
+                  />
+                </button>
+              </div>
+
+              <Transition
+                enter-active-class="transition-all duration-200"
+                leave-active-class="transition-all duration-150"
+                enter-from-class="opacity-0 -translate-y-2"
+                leave-to-class="opacity-0 -translate-y-2"
+              >
+                <div v-if="theme.rainbow.enabled" class="space-y-3 mt-3 pt-3 border-t border-neutral-700/40">
+                  <div>
+                    <div class="flex items-center justify-between mb-1">
+                      <label class="text-xs font-semibold text-neutral-300">Speed</label>
+                      <span class="text-xs text-neutral-500">{{ theme.rainbow.speed }}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="10"
+                      :value="theme.rainbow.speed"
+                      class="w-full accent-purple-500"
+                      @input="setRainbow({ speed: +($event.target as HTMLInputElement).value })"
+                    >
+                  </div>
+                  <div>
+                    <div class="flex items-center justify-between mb-1">
+                      <label class="text-xs font-semibold text-neutral-300">Saturation</label>
+                      <span class="text-xs text-neutral-500">{{ theme.rainbow.saturation }}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="10"
+                      max="100"
+                      :value="theme.rainbow.saturation"
+                      class="w-full accent-purple-500"
+                      @input="setRainbow({ saturation: +($event.target as HTMLInputElement).value })"
+                    >
+                  </div>
+                  <div>
+                    <div class="flex items-center justify-between mb-1">
+                      <label class="text-xs font-semibold text-neutral-300">Lightness</label>
+                      <span class="text-xs text-neutral-500">{{ theme.rainbow.lightness }}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="10"
+                      max="90"
+                      :value="theme.rainbow.lightness"
+                      class="w-full accent-purple-500"
+                      @input="setRainbow({ lightness: +($event.target as HTMLInputElement).value })"
+                    >
+                  </div>
+                </div>
+              </Transition>
+            </div>
+
+            <!-- Color Pickers -->
+            <div class="space-y-3 mb-6">
+              <h3 class="text-sm font-bold text-white">Colors</h3>
+
+              <div class="grid grid-cols-2 gap-3">
+                <div v-for="(colorDef, idx) in [
+                  { key: 'primary', label: 'Primary' },
+                  { key: 'accent', label: 'Accent' },
+                  { key: 'bg', label: 'Background' },
+                  { key: 'surface', label: 'Surface' },
+                  { key: 'fg', label: 'Text' },
+                  { key: 'userBubble', label: 'User Bubble' },
+                  { key: 'assistantBubble', label: 'AI Bubble' },
+                  { key: 'surface2', label: 'Surface Alt' },
+                ]" :key="idx" class="flex items-center gap-2 p-2 rounded-lg bg-neutral-800/30">
+                  <div class="relative shrink-0">
+                    <div
+                      class="w-8 h-8 rounded-lg border-2 border-neutral-600 cursor-pointer overflow-hidden"
+                      :style="{ backgroundColor: theme.colors[colorDef.key as keyof typeof theme.colors] }"
+                    >
+                      <input
+                        type="color"
+                        :value="theme.colors[colorDef.key as keyof typeof theme.colors]"
+                        class="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        @input="setColor(colorDef.key as any, ($event.target as HTMLInputElement).value)"
+                      >
+                    </div>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-xs font-semibold text-neutral-200">{{ colorDef.label }}</p>
+                    <p class="text-[10px] text-neutral-500 font-mono uppercase">{{ theme.colors[colorDef.key as keyof typeof theme.colors] }}</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- RGB Input for primary -->
+              <div class="p-3 rounded-lg bg-neutral-800/30 border border-neutral-700/30">
+                <p class="text-xs font-semibold text-neutral-300 mb-2">Primary RGB</p>
+                <div class="flex gap-2">
+                  <div class="flex-1">
+                    <label class="text-[10px] text-neutral-500 block mb-0.5">R</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="255"
+                      :value="parseInt(theme.colors.primary.slice(1,3), 16)"
+                      class="input-field text-xs text-center py-1"
+                      @input="(() => {
+                        const r = +($event.target as HTMLInputElement).value
+                        const g = parseInt(theme.colors.primary.slice(3,5), 16)
+                        const b = parseInt(theme.colors.primary.slice(5,7), 16)
+                        setColor('primary', '#' + [r,g,b].map(x => Math.max(0,Math.min(255,x)).toString(16).padStart(2,'0')).join(''))
+                      })()"
+                    >
+                  </div>
+                  <div class="flex-1">
+                    <label class="text-[10px] text-neutral-500 block mb-0.5">G</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="255"
+                      :value="parseInt(theme.colors.primary.slice(3,5), 16)"
+                      class="input-field text-xs text-center py-1"
+                      @input="(() => {
+                        const r = parseInt(theme.colors.primary.slice(1,3), 16)
+                        const g = +($event.target as HTMLInputElement).value
+                        const b = parseInt(theme.colors.primary.slice(5,7), 16)
+                        setColor('primary', '#' + [r,g,b].map(x => Math.max(0,Math.min(255,x)).toString(16).padStart(2,'0')).join(''))
+                      })()"
+                    >
+                  </div>
+                  <div class="flex-1">
+                    <label class="text-[10px] text-neutral-500 block mb-0.5">B</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="255"
+                      :value="parseInt(theme.colors.primary.slice(5,7), 16)"
+                      class="input-field text-xs text-center py-1"
+                      @input="(() => {
+                        const r = parseInt(theme.colors.primary.slice(1,3), 16)
+                        const g = parseInt(theme.colors.primary.slice(3,5), 16)
+                        const b = +($event.target as HTMLInputElement).value
+                        setColor('primary', '#' + [r,g,b].map(x => Math.max(0,Math.min(255,x)).toString(16).padStart(2,'0')).join(''))
+                      })()"
+                    >
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Preview -->
+            <div class="mb-5 p-4 rounded-xl border border-neutral-700/30 overflow-hidden"
+                 :style="{ backgroundColor: theme.colors.bg }">
+              <p class="text-xs font-semibold text-neutral-400 mb-2">Preview</p>
+              <div class="space-y-2">
+                <div class="flex justify-end">
+                  <div class="px-3 py-2 rounded-xl text-xs text-white max-w-[70%]"
+                       :style="{ background: `linear-gradient(to right, ${theme.colors.userBubble}, ${theme.colors.primary})` }">
+                    Hey, how's it going?
+                  </div>
+                </div>
+                <div class="flex justify-start">
+                  <div class="px-3 py-2 rounded-xl text-xs max-w-[70%] border border-neutral-700/40"
+                       :style="{ backgroundColor: theme.colors.assistantBubble, color: theme.colors.fg }">
+                    I'm doing great! What can I help with?
+                  </div>
+                </div>
+                <div class="flex gap-2 mt-2">
+                  <div class="h-5 rounded-md text-[10px] px-2 flex items-center text-white font-semibold"
+                       :style="{ backgroundColor: theme.colors.primary }">
+                    Button
+                  </div>
+                  <div class="h-5 rounded-md text-[10px] px-2 flex items-center text-white font-semibold"
+                       :style="{ backgroundColor: theme.colors.accent }">
+                    Accent
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex gap-2">
+              <button class="btn-secondary flex-1" @click="resetTheme">
+                Reset Defaults
+              </button>
+              <button class="btn-primary flex-1" @click="showSettings = false">
+                Done
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -674,7 +917,7 @@ async function addMemoryEntry() {
     <div class="absolute inset-0 pointer-events-none -z-10 opacity-60">
       <div
         class="absolute inset-0"
-        style="background: radial-gradient(circle at 10% 10%, rgba(99,102,241,0.12), transparent 8%), radial-gradient(circle at 90% 90%, rgba(236,72,153,0.08), transparent 18%); filter: blur(40px)"
+        :style="{ background: `radial-gradient(circle at 10% 10%, rgba(var(--primary-rgb),0.12), transparent 8%), radial-gradient(circle at 90% 90%, rgba(var(--accent-rgb),0.08), transparent 18%)`, filter: 'blur(40px)' }"
       />
     </div>
 
@@ -692,13 +935,13 @@ async function addMemoryEntry() {
           'glass-surface border-r border-neutral-800/40',
         ]"
       >
-        <h1 class="text-xl font-bold text-primary-400 mb-3">
+        <h1 class="text-xl font-bold mb-3 themed-primary-text">
           SyntaxSenpai
         </h1>
 
         <!-- New Chat button -->
         <button
-          class="w-full flex items-center justify-center gap-2 px-4 py-2.5 mb-3 rounded-xl bg-gradient-to-r from-primary-600 to-primary-500 text-white font-semibold text-sm shadow-lg hover:shadow-primary-500/25 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+          class="themed-new-chat-btn w-full flex items-center justify-center gap-2 px-4 py-2.5 mb-3 rounded-xl text-white font-semibold text-sm shadow-lg transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
           @click="store.newChat()"
         >
           <span class="text-base">+</span> New Chat
@@ -762,7 +1005,7 @@ async function addMemoryEntry() {
                 'flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer group',
                 'transition-all duration-160',
                 store.conversationId === c.id
-                  ? 'bg-gradient-to-r from-primary-600 to-primary-500 text-white shadow-lg'
+                  ? 'themed-active-item text-white shadow-lg'
                   : 'hover:bg-white/4 text-neutral-300',
               ]"
               @click="store.selectConversation(c.id)"
@@ -805,7 +1048,7 @@ async function addMemoryEntry() {
         </div>
 
         <div class="mt-3 space-y-2">
-          <button class="btn-primary w-full text-sm" @click="showAgent = true">
+          <button class="btn-primary themed-btn-primary w-full text-sm" @click="showAgent = true">
             Agent
           </button>
           <div class="flex gap-2">
@@ -893,10 +1136,7 @@ async function addMemoryEntry() {
           >
             <div v-if="msg.role !== 'user'" class="mr-3 shrink-0">
               <div
-                :class="[
-                  'w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold',
-                  'bg-gradient-to-br from-purple-600 to-pink-500',
-                ]"
+                class="themed-assistant-avatar w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white"
               >
                 {{ store.selectedWaifu?.displayName?.[0] || 'A' }}
               </div>
@@ -911,7 +1151,7 @@ async function addMemoryEntry() {
             />
 
             <div v-if="msg.role === 'user'" class="ml-3 shrink-0">
-              <div class="w-8 h-8 rounded-full bg-primary-700 flex items-center justify-center text-xs font-semibold">
+              <div class="themed-user-avatar w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white">
                 U
               </div>
             </div>
@@ -948,7 +1188,7 @@ async function addMemoryEntry() {
             @keydown="handleKeyDown"
           />
           <button
-            class="btn-primary min-w-fit flex items-center gap-2"
+            class="btn-primary themed-btn-primary min-w-fit flex items-center gap-2"
             :disabled="!store.inputValue.trim() || store.isLoading"
             @click="store.sendMessage(store.inputValue)"
           >

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { builtInWaifus } from '@syntax-senpai/waifu-core'
 import { useChatStore } from './stores/chat'
 import { useTheme } from './composables/use-theme'
@@ -160,6 +160,10 @@ const newMemoryKey = ref('')
 const newMemoryValue = ref('')
 const newMemoryCategory = ref('general')
 const toast = ref<{ message: string; type: 'success' | 'error'; visible: boolean }>({ message: '', type: 'success', visible: false })
+const showStartupSplash = ref(true)
+const appReady = ref(false)
+const startupAnimDone = ref(false)
+let startupSplashTimer: number | null = null
 
 function showToast(message: string, type: 'success' | 'error') {
   toast.value = { message, type, visible: true }
@@ -240,6 +244,24 @@ const emptyStateGlowStyle = computed(() => {
   }
 })
 
+const startupAccentStyle = computed(() => {
+  const h = currentRainbowHue.value
+  const s = theme.value.rainbow.saturation
+  const l = theme.value.rainbow.lightness
+  const accent = theme.value.rainbow.enabled
+    ? hslToHex(h, s, l)
+    : theme.value.colors.accent
+  const primary = theme.value.rainbow.enabled
+    ? hslToHex((h + 60) % 360, s, l)
+    : theme.value.colors.primary
+
+  return {
+    background: `radial-gradient(circle at top, color-mix(in srgb, ${accent} 28%, transparent), transparent 58%), linear-gradient(135deg, color-mix(in srgb, ${primary} 26%, #05070b), #05070b 65%)`,
+    color: accent,
+    boxShadow: `0 0 42px color-mix(in srgb, ${accent} 30%, transparent)`,
+  }
+})
+
 onMounted(() => {
   ;(async () => {
     store.loadSetup()
@@ -250,6 +272,19 @@ onMounted(() => {
       store.loadMemories()
     }
   })()
+
+  startupSplashTimer = window.setTimeout(() => {
+    showStartupSplash.value = false
+    nextTick(() => { appReady.value = true })
+    // Clear startup animation classes after they finish so they don't conflict with toggle transitions
+    window.setTimeout(() => { startupAnimDone.value = true }, 2500)
+  }, 1200)
+})
+
+onUnmounted(() => {
+  if (startupSplashTimer !== null) {
+    window.clearTimeout(startupSplashTimer)
+  }
 })
 
 watch(() => store.messages.length, () => {
@@ -376,6 +411,40 @@ async function addMemoryEntry() {
         ]"
       >
         {{ toast.type === 'success' ? '200 ' : '' }}{{ toast.message }}
+      </div>
+    </Transition>
+  </Teleport>
+
+  <Teleport to="body">
+    <Transition
+      enter-active-class="transition-all duration-500 ease-out"
+      leave-active-class="transition-all duration-700 ease-in"
+      enter-from-class="opacity-0"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="showStartupSplash"
+        class="fixed inset-0 z-[-1] flex items-center justify-center overflow-hidden bg-neutral-950"
+      >
+        <div class="absolute inset-0 opacity-70" :style="startupAccentStyle" />
+        <div class="absolute h-90 w-90 rounded-full border border-white/10 animate-ping opacity-20" />
+        <div class="absolute h-64 w-64 rounded-full border border-white/15 animate-pulse" />
+        <div class="relative flex flex-col items-center gap-4 px-8 text-center">
+          <div
+            class="flex h-24 w-24 items-center justify-center rounded-[2rem] border border-white/15 bg-black/35 text-4xl backdrop-blur-xl animate-[startup-float_1.4s_ease-in-out_infinite]"
+            :style="startupAccentStyle"
+          >
+            ✨
+          </div>
+          <div class="space-y-2">
+            <h1 class="font-display text-4xl font-bold tracking-[0.12em] text-white drop-shadow-[0_0_24px_rgba(255,255,255,0.12)]">
+              SyntaxSenpai
+            </h1>
+            <p class="text-sm uppercase tracking-[0.28em] text-neutral-300">
+              Booting Your Waifu Workspace
+            </p>
+          </div>
+        </div>
       </div>
     </Transition>
   </Teleport>
@@ -976,32 +1045,30 @@ async function addMemoryEntry() {
     </div>
 
     <!-- Sidebar -->
-    <Transition
-      enter-active-class="transition-all duration-200"
-      leave-active-class="transition-all duration-200"
-      enter-from-class="-translate-x-6 opacity-0"
-      leave-to-class="-translate-x-6 opacity-0"
+    <div
+      :class="[
+        'sidebar-wrapper overflow-hidden shrink-0',
+        sidebarOpen ? 'sidebar-open' : 'sidebar-closed',
+        !startupAnimDone && appReady ? 'app-slide-in-left' : '',
+        !appReady ? 'opacity-0' : '',
+      ]"
     >
       <div
-        v-if="sidebarOpen"
-        :class="[
-          'w-72 flex flex-col p-4',
-          'glass-surface border-r border-neutral-800/40',
-        ]"
+        class="w-72 h-full flex flex-col p-4 glass-surface border-r border-neutral-800/40"
       >
-        <h1 class="text-xl font-bold mb-3 themed-primary-text">
+        <h1 :class="['text-xl font-bold mb-3 themed-primary-text', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-1' : '', !appReady ? 'opacity-0' : '']">
           SyntaxSenpai
         </h1>
 
         <!-- New Chat button -->
         <button
-          class="themed-new-chat-btn w-full flex items-center justify-center gap-2 px-4 py-2.5 mb-3 rounded-xl text-white font-semibold text-sm shadow-lg transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+          :class="['themed-new-chat-btn w-full flex items-center justify-center gap-2 px-4 py-2.5 mb-3 rounded-xl text-white font-semibold text-sm shadow-lg transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-2' : '', !appReady ? 'opacity-0' : '']"
           @click="store.newChat()"
         >
           <span class="text-base">+</span> New Chat
         </button>
 
-        <div class="flex items-center gap-2 mb-3">
+        <div :class="['flex items-center gap-2 mb-3', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-3' : '', !appReady ? 'opacity-0' : '']">
           <div class="flex-1">
             <p class="text-xs text-neutral-500">
               Waifu
@@ -1016,7 +1083,7 @@ async function addMemoryEntry() {
         </div>
 
         <!-- Filter tabs: All / Favorites -->
-        <div class="flex gap-1 mb-3 p-1 rounded-lg bg-neutral-800/40">
+        <div :class="['flex gap-1 mb-3 p-1 rounded-lg bg-neutral-800/40', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-4' : '', !appReady ? 'opacity-0' : '']">
           <button
             :class="[
               'flex-1 text-xs font-semibold py-1.5 rounded-md transition-all duration-150',
@@ -1044,10 +1111,10 @@ async function addMemoryEntry() {
         <input
           v-model="convSearch"
           placeholder="Search conversations..."
-          class="input-field text-sm mb-3"
+          :class="['input-field text-sm mb-3', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-5' : '', !appReady ? 'opacity-0' : '']"
         >
 
-        <div class="flex-1 overflow-auto">
+        <div :class="['flex-1 overflow-auto', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-6' : '', !appReady ? 'opacity-0' : '']">
           <p v-if="filteredConversations.length === 0" class="text-xs text-neutral-500 text-center py-4">
             {{ store.sidebarFilter === 'favorites' ? 'No favorite chats yet' : 'No conversations yet' }}
           </p>
@@ -1101,7 +1168,7 @@ async function addMemoryEntry() {
           </ul>
         </div>
 
-        <div class="mt-3 space-y-2">
+        <div :class="['mt-3 space-y-2', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-7' : '', !appReady ? 'opacity-0' : '']">
           <button class="btn-primary themed-btn-primary w-full text-sm" @click="showAgent = true">
             Agent
           </button>
@@ -1122,7 +1189,7 @@ async function addMemoryEntry() {
           </button>
         </div>
       </div>
-    </Transition>
+    </div>
 
     <!-- Main Content -->
     <div class="flex-1 flex flex-col">
@@ -1132,6 +1199,8 @@ async function addMemoryEntry() {
           'sticky top-0 z-20 px-6 py-3',
           'glass-surface border-b border-neutral-800/40',
           'flex items-center justify-between',
+          !startupAnimDone && appReady ? 'app-slide-in-top' : '',
+          !appReady ? 'opacity-0' : '',
         ]"
       >
         <div class="flex items-center gap-3 min-w-0">
@@ -1169,7 +1238,7 @@ async function addMemoryEntry() {
       </div>
 
       <!-- Messages -->
-      <div class="flex-1 overflow-y-auto p-4 space-y-4">
+      <div :class="['flex-1 overflow-y-auto p-4 space-y-4', !startupAnimDone && appReady ? 'app-fade-in-scale' : '', !appReady ? 'opacity-0' : '']">
         <div
           v-if="store.messages.length === 0"
           class="flex flex-col items-center justify-center h-full text-center text-neutral-400"
@@ -1236,7 +1305,7 @@ async function addMemoryEntry() {
       </div>
 
       <!-- Input -->
-      <div class="glass-surface border-t border-neutral-800/40 p-4">
+      <div :class="['glass-surface border-t border-neutral-800/40 p-4', !startupAnimDone && appReady ? 'app-slide-in-bottom' : '', !appReady ? 'opacity-0' : '']">
         <div class="flex gap-3 items-end">
           <textarea
             ref="inputRef"
@@ -1267,3 +1336,117 @@ async function addMemoryEntry() {
     </div>
   </div>
 </template>
+
+<style scoped>
+@keyframes startup-float {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+  }
+
+  50% {
+    transform: translateY(-6px) scale(1.03);
+  }
+}
+
+/* App startup slide-in animations */
+@keyframes appSlideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-80px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes appSlideInTop {
+  from {
+    opacity: 0;
+    transform: translateY(-60px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes appSlideInBottom {
+  from {
+    opacity: 0;
+    transform: translateY(80px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes appFadeInScale {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.app-slide-in-left {
+  animation: appSlideInLeft 1200ms cubic-bezier(0.25, 0.1, 0.25, 1) both;
+  animation-delay: 0ms;
+}
+
+.app-slide-in-top {
+  animation: appSlideInTop 1000ms cubic-bezier(0.25, 0.1, 0.25, 1) both;
+  animation-delay: 300ms;
+}
+
+.app-fade-in-scale {
+  animation: appFadeInScale 1200ms cubic-bezier(0.25, 0.1, 0.25, 1) both;
+  animation-delay: 600ms;
+}
+
+.app-slide-in-bottom {
+  animation: appSlideInBottom 1000ms cubic-bezier(0.25, 0.1, 0.25, 1) both;
+  animation-delay: 900ms;
+}
+
+/* Sidebar items staggered cascade */
+@keyframes sidebarItemIn {
+  from {
+    opacity: 0;
+    transform: translateX(-36px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.sidebar-item {
+  animation: sidebarItemIn 800ms cubic-bezier(0.25, 0.1, 0.25, 1) both;
+}
+
+.sidebar-item-1 { animation-delay: 200ms; }
+.sidebar-item-2 { animation-delay: 360ms; }
+.sidebar-item-3 { animation-delay: 520ms; }
+.sidebar-item-4 { animation-delay: 680ms; }
+.sidebar-item-5 { animation-delay: 840ms; }
+.sidebar-item-6 { animation-delay: 1000ms; }
+.sidebar-item-7 { animation-delay: 1200ms; }
+
+/* Sidebar toggle open/close — width-based so siblings animate too */
+.sidebar-wrapper {
+  transition: width 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.sidebar-open {
+  width: 18rem; /* w-72 */
+}
+
+.sidebar-closed {
+  width: 0;
+}
+</style>

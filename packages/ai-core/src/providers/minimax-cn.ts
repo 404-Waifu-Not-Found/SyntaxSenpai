@@ -24,7 +24,7 @@ export class MiniMaxCNProvider extends OpenAIProvider {
       ...options,
       id: "minimax-cn",
       displayName: "MiniMax CN",
-      baseUrl: "https://api.minimax.chat/v1",
+      baseUrl: "https://api.minimaxi.com/v1",
       supportedModels: MODELS,
     });
   }

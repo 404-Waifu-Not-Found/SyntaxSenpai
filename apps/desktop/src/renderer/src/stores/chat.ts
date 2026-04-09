@@ -48,6 +48,10 @@ function saveAffection(waifuId: string, value: number) {
   } catch { /* ignore */ }
 }
 
+function clampAffection(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)))
+}
+
 function createWaifuSystemPrompt(waifu: any, provider: string, model: string, affection: number) {
   return buildSystemPrompt(
     waifu,
@@ -400,11 +404,31 @@ export const useChatStore = defineStore('chat', () => {
     if (!text.trim() || isLoading.value) return
 
     const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const trimmedText = text.trim()
+    const setMeterMatch = trimmedText.match(/^\/setmeter\s+(-?\d+(?:\.\d+)?)$/i)
+
+    if (setMeterMatch) {
+      const newVal = clampAffection(Number(setMeterMatch[1]))
+      affection.value = newVal
+      saveAffection(selectedWaifuId.value, newVal)
+      inputValue.value = ''
+
+      const assistantId = `assistant-${Date.now()}`
+      messages.value.push({
+        id: assistantId,
+        role: 'assistant',
+        content: `好感度 forced to ${newVal}.`,
+        timestamp: now(),
+      })
+      recentMessageId.value = assistantId
+      setTimeout(() => { recentMessageId.value = null }, 1100)
+      return
+    }
 
     const userMsg: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
-      content: text,
+      content: trimmedText,
       timestamp: now(),
     }
 
@@ -637,7 +661,7 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
       // Auto-extract memory from user messages (name, preferences, etc.)
-      extractAndSaveMemory(text)
+      extractAndSaveMemory(trimmedText)
 
     } catch (err: any) {
       messages.value.push({

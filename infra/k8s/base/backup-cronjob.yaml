@@ -1,0 +1,22 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: syntax-senpai-backup
+spec:
+  schedule: "0 */6 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup-trigger
+              image: curlimages/curl:8.9.1
+              args:
+                - -X
+                - POST
+                - -H
+                - Content-Type: application/json
+                - -d
+                - '{"reason":"scheduled-kubernetes-backup"}'
+                - http://syntax-senpai-runtime/api/v1/backups/export

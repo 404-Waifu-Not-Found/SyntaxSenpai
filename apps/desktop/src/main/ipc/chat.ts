@@ -1,7 +1,18 @@
 const { ipcMain } = require('electron')
+const fs = require('fs').promises
+const path = require('path')
 import * as storage from '@syntax-senpai/storage'
 
 let registered = false
+
+function resolveDataPaths() {
+  const dbPath = process.env.CHAT_DB_PATH || 'syntax-senpai.sqlite'
+  return {
+    dbPath,
+    chatPath: dbPath.replace(/\.sqlite$/, '') + '.json',
+    memoryPath: dbPath.replace(/\.sqlite$/, '') + '-memory.json',
+  }
+}
 
 export function registerChatIpc() {
   if (registered) return
@@ -9,8 +20,13 @@ export function registerChatIpc() {
 
   // Create a platform chat store (desktop) using CHAT_DB_PATH if provided.
   const dbPath = process.env.CHAT_DB_PATH || undefined
-  const store = storage.createChatStore('desktop', dbPath) as any
-  const memoryStore = storage.createMemoryStore(dbPath)
+  let store = storage.createChatStore('desktop', dbPath) as any
+  let memoryStore = storage.createMemoryStore(dbPath)
+
+  function resetStores() {
+    store = storage.createChatStore('desktop', dbPath) as any
+    memoryStore = storage.createMemoryStore(dbPath)
+  }
 
   ipcMain.handle('store:createConversation', async (event: any, waifuId: string, title: string) => {
     try {
@@ -143,6 +159,56 @@ export function registerChatIpc() {
   ipcMain.handle('memory:clear', async () => {
     try {
       await memoryStore.clearAllMemories()
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('store:replaceSnapshot', async (_event: any, payload: any) => {
+    try {
+      const { chatPath, memoryPath } = resolveDataPaths()
+      const conversations = Array.isArray(payload?.conversations) ? payload.conversations : []
+      const memories = Array.isArray(payload?.memories) ? payload.memories : []
+
+      const chatData = {
+        conversations: {} as Record<string, any>,
+        messages: {} as Record<string, any[]>,
+        relationships: {},
+      }
+
+      for (const conversation of conversations) {
+        if (!conversation?.id) continue
+        const messages = Array.isArray(conversation.messages) ? conversation.messages : []
+        const { messages: _messages, ...conversationRecord } = conversation
+        chatData.conversations[conversation.id] = {
+          ...conversationRecord,
+          messageCount: typeof conversationRecord.messageCount === 'number'
+            ? conversationRecord.messageCount
+            : messages.length,
+        }
+        chatData.messages[conversation.id] = messages.map((message: any) => ({
+          ...message,
+          createdAt: message.createdAt || message.timestamp || new Date().toISOString(),
+        }))
+      }
+
+      const memoryData = memories.reduce((acc: Record<string, any>, entry: any) => {
+        if (!entry?.key) return acc
+        acc[entry.key] = {
+          ...entry,
+          category: entry.category || 'general',
+          createdAt: entry.createdAt || new Date().toISOString(),
+          updatedAt: entry.updatedAt || new Date().toISOString(),
+        }
+        return acc
+      }, {})
+
+      await fs.mkdir(path.dirname(chatPath), { recursive: true })
+      await fs.writeFile(chatPath, JSON.stringify(chatData, null, 2), 'utf-8')
+      await fs.writeFile(memoryPath, JSON.stringify(memoryData, null, 2), 'utf-8')
+      resetStores()
+
       return { success: true }
     } catch (err: any) {
       return { success: false, error: err instanceof Error ? err.message : String(err) }

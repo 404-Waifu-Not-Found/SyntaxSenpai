@@ -1,0 +1,9 @@
+node_modules
+**/node_modules
+.git
+.turbo
+dist
+coverage
+apps/desktop/dist
+apps/desktop/dist_electron
+apps/runtime/dist

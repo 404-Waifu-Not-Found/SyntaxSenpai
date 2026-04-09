@@ -13,11 +13,14 @@
     "desktop:quick": "pnpm --filter syntax-senpai-desktop run dev:quick",
     "dev:mobile": "turbo run dev --filter=mobile",
     "dev:desktop": "turbo run dev --filter=desktop",
+    "dev:runtime": "pnpm --filter syntax-senpai-runtime run dev",
     "build": "turbo run build",
     "test": "turbo run test",
     "test:unit": "pnpm -w -r --if-present run test:unit",
     "lint": "turbo run lint",
     "typecheck": "tsc -p tsconfig.base.json --noEmit",
+    "docker:build": "docker build -f Dockerfile -t syntax-senpai-runtime:local .",
+    "docker:up": "docker compose up --build",
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {

@@ -1,0 +1,27 @@
+name: Deploy Runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    if: ${{ secrets.KUBE_CONFIG_DATA != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: latest
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 --decode > "$HOME/.kube/config"
+      - name: Deploy production overlay
+        run: kubectl apply -k infra/k8s/overlays/production
+      - name: Wait for rollout
+        run: kubectl rollout status deployment/syntax-senpai-runtime -n syntax-senpai --timeout=180s

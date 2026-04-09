@@ -28,6 +28,9 @@ Every interaction is delivered in-character, blending emotional engagement with 
 - **AI memory** — persistent memory across all chats
 - **Theming** — full color customization with rainbow mode
 - **Desktop & mobile** — Electron desktop app and mobile target
+- **Runtime ops** — health probes, Prometheus metrics, Grafana dashboards, container builds, and Kubernetes manifests
+- **Backups** — export and restore chat + memory snapshots from the runtime API
+- **Plugin system** — manifest-based tool plugins for extending agent capabilities
 
 ## Architecture
 
@@ -35,7 +38,8 @@ Every interaction is delivered in-character, blending emotional engagement with 
 syntax-senpai/
 ├── apps/
 │   ├── desktop/          # Electron + Vue 3 + Vite
-│   └── mobile/           # Mobile target
+│   ├── mobile/           # Mobile target
+│   └── runtime/          # Container-friendly runtime service
 ├── packages/
 │   ├── ai-core/          # Provider adapters & chat logic
 │   ├── waifu-core/       # Waifu definitions & personalities
@@ -45,6 +49,9 @@ syntax-senpai/
 │   ├── ui-transitions/   # Reusable Vue transition components
 │   ├── ui-loading-screens/ # Loading screen components
 │   └── ws-protocol/      # WebSocket protocol definitions
+├── infra/k8s/            # Kubernetes base + overlays
+├── ops/                  # Prometheus/Grafana provisioning
+├── plugins/              # External tool plugins
 └── ...
 ```
 
@@ -80,11 +87,26 @@ API keys are configured in-app through the Settings panel — no `.env` file req
 |---|---|
 | `pnpm dev:desktop` | Start the desktop app in dev mode |
 | `pnpm dev:mobile` | Start the mobile app in dev mode |
+| `pnpm dev:runtime` | Start the runtime service locally |
 | `pnpm build` | Build all workspaces |
 | `pnpm test` | Run tests |
 | `pnpm lint` | Run linters |
 | `pnpm typecheck` | TypeScript type checks |
+| `pnpm docker:build` | Build the runtime container image |
+| `pnpm docker:up` | Start runtime + Prometheus + Grafana |
 | `pnpm clean` | Remove all build artifacts and node_modules |
+
+## Operations
+
+The runtime service exposes:
+
+- `/healthz` for liveness checks
+- `/readyz` for readiness checks
+- `/metrics` for Prometheus scraping
+- `/api/v1/backups/*` for chat and memory backup management
+- `/api/v1/plugins` for plugin discovery
+
+See [ops/README.md](ops/README.md) for Docker, monitoring, backup, plugin, and Kubernetes usage.
 
 ## Contributing
 

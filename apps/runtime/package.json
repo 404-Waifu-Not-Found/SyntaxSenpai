@@ -1,0 +1,13 @@
+{
+  "name": "syntax-senpai-runtime",
+  "version": "0.0.1",
+  "description": "Deployable SyntaxSenpai runtime service for health checks, metrics, backups, and plugins",
+  "private": true,
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "node src/server.js",
+    "build": "node scripts/build.mjs",
+    "start": "node dist/server.js",
+    "test": "node --test test/*.test.js"
+  }
+}

@@ -25,6 +25,8 @@ import { registerAgentIpc } from './ipc/agent'
 import { registerKeystoreIpc } from './ipc/keystore'
 import { registerProviderIpc } from './ipc/provider'
 import { registerTerminalIpc } from './ipc/terminal'
+import { registerSpotifyIpc } from './ipc/spotify'
+import { registerExportIpc } from './ipc/export'
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -73,6 +75,8 @@ app.whenReady().then(() => {
   registerKeystoreIpc()
   registerProviderIpc()
   registerTerminalIpc()
+  registerSpotifyIpc()
+  registerExportIpc()
 })
 
 app.on('window-all-closed', () => {

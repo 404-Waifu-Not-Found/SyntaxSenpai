@@ -29,6 +29,10 @@ export function registerAgentIpc() {
     return await executor.openExternal(url)
   })
 
+  ipcMain.handle('agent:webSearch', async (_event: any, query: string, limit?: number) => {
+    return await executor.webSearch(query, limit)
+  })
+
   ipcMain.handle('agent:getLog', async (event: any) => {
     try {
       const dbPath = process.env.CHAT_DB_PATH || 'syntax-senpai.sqlite'

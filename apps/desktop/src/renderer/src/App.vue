@@ -9,7 +9,18 @@ import TypingDots from './components/TypingDots.vue'
 import MessageSkeleton from './components/MessageSkeleton.vue'
 
 const store = useChatStore()
-const { theme, resetTheme, setColor, setRainbow, DEFAULT_THEME } = useTheme()
+const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, DEFAULT_THEME } = useTheme()
+
+const rainbowToggleBg = computed(() => {
+  if (!theme.value.rainbow.enabled) return 'rgb(64,64,64)'
+  const h = currentRainbowHue.value
+  const s = theme.value.rainbow.saturation
+  const l = theme.value.rainbow.lightness
+  const c1 = hslToHex(h, s, l)
+  const c2 = hslToHex((h + 60) % 360, s, l)
+  const c3 = hslToHex((h + 120) % 360, s, l)
+  return `linear-gradient(to right, ${c1}, ${c2}, ${c3})`
+})
 const settingsTab = ref<'general' | 'theme'>('general')
 const providerOrder = [
   'anthropic',
@@ -458,19 +469,13 @@ async function addMemoryEntry() {
                   <p class="text-xs text-neutral-400">Cycles through colors automatically</p>
                 </div>
                 <button
-                  :class="[
-                    'relative w-12 h-6 rounded-full transition-all duration-300',
-                    theme.rainbow.enabled
-                      ? 'bg-gradient-to-r from-red-500 via-yellow-500 via-green-500 via-blue-500 to-purple-500'
-                      : 'bg-neutral-700',
-                  ]"
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :style="{ background: rainbowToggleBg }"
                   @click="setRainbow({ enabled: !theme.rainbow.enabled })"
                 >
                   <span
-                    :class="[
-                      'absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-300',
-                      theme.rainbow.enabled ? 'translate-x-6' : 'translate-x-0.5',
-                    ]"
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: theme.rainbow.enabled ? 'translateX(20px)' : 'translateX(0)' }"
                   />
                 </button>
               </div>

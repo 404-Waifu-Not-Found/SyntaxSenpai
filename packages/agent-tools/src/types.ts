@@ -56,6 +56,23 @@ export interface ToolImplementation<TInput = unknown, TOutput = unknown> {
   requiresPermission: ToolPermissionKey;
 }
 
+export interface ToolPluginManifest {
+  name: string;
+  version: string;
+  main: string;
+  description?: string;
+  enabled?: boolean;
+}
+
+export interface ToolPluginActivationContext {
+  manifest: ToolPluginManifest;
+  registerTool: (tool: ToolImplementation) => void;
+}
+
+export interface ToolPluginModule {
+  activate: (context: ToolPluginActivationContext) => Promise<void> | void;
+}
+
 /**
  * Structured input for filesystem tools
  */

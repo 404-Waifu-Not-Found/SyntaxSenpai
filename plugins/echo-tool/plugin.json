@@ -1,0 +1,7 @@
+{
+  "name": "echo-tool",
+  "version": "0.1.0",
+  "description": "Example external tool plugin for SyntaxSenpai",
+  "main": "index.js",
+  "enabled": true
+}

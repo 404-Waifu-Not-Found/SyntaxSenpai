@@ -13,7 +13,40 @@ export interface Message {
   timestamp: string
 }
 
+interface ApiTelemetry {
+  lastResponseMs: number | null
+  lastRoundTripMs: number | null
+  roundTrips: number
+  provider: string
+  model: string
+  measuredAt: string | null
+}
+
+interface ApiTelemetrySample {
+  id: string
+  totalMs: number
+  lastRoundTripMs: number
+  roundTrips: number
+  provider: string
+  model: string
+  measuredAt: string
+  alert: boolean
+}
+
+interface ApiTelemetryAlert {
+  active: boolean
+  thresholdMs: number
+  message: string
+  triggeredAt: string | null
+}
+
 const PROVIDER_PREFERENCES_KEY = 'syntax-senpai-provider-preferences'
+const API_TELEMETRY_HISTORY_KEY = 'syntax-senpai-api-telemetry-history'
+const API_SPIKE_THRESHOLD_STORAGE_KEY = 'syntax-senpai-api-spike-threshold-ms'
+const MAX_TOOL_ITERATIONS_STORAGE_KEY = 'syntax-senpai-max-tool-iterations'
+const DEFAULT_API_SPIKE_THRESHOLD_MS = 5000
+const DEFAULT_MAX_TOOL_ITERATIONS = 12
+const API_TELEMETRY_HISTORY_LIMIT = 48
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   anthropic: 'claude-3-5-sonnet-20241022',
@@ -114,6 +147,54 @@ _
 You must perform this affection check on every single message. Small natural changes are better than dramatic swings unless something major happened.`
 }
 
+function createEmptyApiTelemetry(): ApiTelemetry {
+  return {
+    lastResponseMs: null,
+    lastRoundTripMs: null,
+    roundTrips: 0,
+    provider: '',
+    model: '',
+    measuredAt: null,
+  }
+}
+
+function loadApiTelemetryHistory(): ApiTelemetrySample[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(API_TELEMETRY_HISTORY_KEY) || '[]')
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function saveApiTelemetryHistory(history: ApiTelemetrySample[]) {
+  try {
+    localStorage.setItem(API_TELEMETRY_HISTORY_KEY, JSON.stringify(history))
+  } catch {
+    // ignore localStorage write failures
+  }
+}
+
+function createEmptyApiAlert(): ApiTelemetryAlert {
+  return {
+    active: false,
+    thresholdMs: DEFAULT_API_SPIKE_THRESHOLD_MS,
+    message: '',
+    triggeredAt: null,
+  }
+}
+
+function readStoredNumber(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const raw = localStorage.getItem(key)
+    const parsed = Number.parseInt(String(raw ?? ''), 10)
+    if (!Number.isFinite(parsed)) return fallback
+    return Math.max(min, Math.min(max, parsed))
+  } catch {
+    return fallback
+  }
+}
+
 export const useChatStore = defineStore('chat', () => {
   const { invoke } = useIpc()
   const keyManager = useKeyManager()
@@ -135,10 +216,58 @@ export const useChatStore = defineStore('chat', () => {
   const userMemories = ref<Array<{ key: string; value: string; category: string }>>([])
   const sidebarFilter = ref<'all' | 'favorites'>('all')
   const affection = ref(loadAffection(builtInWaifus[0]?.id || 'aria'))
+  const apiTelemetry = ref<ApiTelemetry>(createEmptyApiTelemetry())
+  const apiTelemetryHistory = ref<ApiTelemetrySample[]>(loadApiTelemetryHistory())
+  const apiTelemetryAlert = ref<ApiTelemetryAlert>(createEmptyApiAlert())
+  const maxToolIterations = ref(readStoredNumber(
+    MAX_TOOL_ITERATIONS_STORAGE_KEY,
+    DEFAULT_MAX_TOOL_ITERATIONS,
+    1,
+    24,
+  ))
+  const apiSpikeThresholdMs = ref(readStoredNumber(
+    API_SPIKE_THRESHOLD_STORAGE_KEY,
+    DEFAULT_API_SPIKE_THRESHOLD_MS,
+    250,
+    60000,
+  ))
 
   function setAgentMode(mode: AgentMode) {
     agentMode.value = mode
     localStorage.setItem('syntax-senpai-agent-mode', mode)
+  }
+
+  function setMaxToolIterations(value: number) {
+    const nextValue = Math.max(1, Math.min(24, Math.round(value)))
+    maxToolIterations.value = nextValue
+    localStorage.setItem(MAX_TOOL_ITERATIONS_STORAGE_KEY, String(nextValue))
+  }
+
+  function setApiSpikeThresholdMs(value: number) {
+    const nextValue = Math.max(250, Math.min(60000, Math.round(value)))
+    apiSpikeThresholdMs.value = nextValue
+    localStorage.setItem(API_SPIKE_THRESHOLD_STORAGE_KEY, String(nextValue))
+
+    apiTelemetryHistory.value = apiTelemetryHistory.value.map((sample) => ({
+      ...sample,
+      alert: sample.totalMs >= nextValue || sample.lastRoundTripMs >= nextValue,
+    }))
+    saveApiTelemetryHistory(apiTelemetryHistory.value)
+
+    const latestSample = apiTelemetryHistory.value[0]
+    apiTelemetryAlert.value = latestSample?.alert
+      ? {
+          active: true,
+          thresholdMs: nextValue,
+          message: `${latestSample.provider} ${latestSample.model} latency spiked to ${Math.round(latestSample.totalMs)} ms`,
+          triggeredAt: latestSample.measuredAt,
+        }
+      : {
+          active: false,
+          thresholdMs: nextValue,
+          message: '',
+          triggeredAt: null,
+        }
   }
 
   const selectedWaifu = computed(() =>
@@ -395,9 +524,108 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function buildMemoryContext(): string {
-    if (userMemories.value.length === 0) return ''
-    const lines = userMemories.value.map((m) => `- [${m.category}] ${m.key}: ${m.value}`)
-    return `\n\n[User Memory - Persistent across chats]\nYou have access to the following remembered information about the user. Use this to personalize your responses:\n${lines.join('\n')}\n\nIMPORTANT: If the user asks you to remember something, respond naturally and confirm you'll remember it. The system will save it automatically. If the user shares personal details (name, preferences, interests, projects), acknowledge them warmly.`
+    let memoryBlock = ''
+    if (userMemories.value.length > 0) {
+      const lines = userMemories.value.map((m) => `- [${m.category}] ${m.key}: ${m.value}`)
+      memoryBlock = `\nCurrently stored memories:\n${lines.join('\n')}\n`
+    }
+    return `\n\n[User Memory - Persistent across chats]
+You have a persistent memory system. Use it to remember important things about the user across conversations.${memoryBlock}
+MEMORY INSTRUCTIONS — follow these on EVERY turn:
+1. After reading the user's message, decide if it contains any new information worth remembering: their name, job, skills, interests, projects they're working on, tools they use, preferences (language, framework, style), goals, personal details, opinions, or anything they explicitly ask you to remember.
+2. Also consider the conversation context — if the user reveals something indirectly (e.g. asking about React implies they work with it), that counts too.
+3. For each piece of new information, emit a hidden memory tag at the END of your response (after your visible reply). Format:
+<memory category="CATEGORY" key="KEY">VALUE</memory>
+
+Categories: identity, preferences, projects, skills, general, user_notes
+Keys should be short and descriptive (e.g. user_name, favorite_language, current_project, job_title, preferred_framework).
+If a key already exists in stored memories, reuse it to update the value.
+
+4. You can emit multiple memory tags per response.
+5. Do NOT announce or mention the memory tags to the user. Just respond naturally, then append them at the very end.
+6. If the user asks you to forget something, emit: <memory-delete key="KEY_TO_DELETE"/>
+7. If the user shares personal details, acknowledge them warmly in your response.
+8. Use stored memories actively — reference things you know about the user naturally in conversation.
+
+Examples of what to save:
+- User says "I'm a backend dev" → <memory category="identity" key="role">backend developer</memory>
+- User asks about TypeScript → <memory category="skills" key="skill_typescript">uses TypeScript</memory>
+- User says "I'm building a chat app" → <memory category="projects" key="current_project">building a chat app</memory>
+- User says "I prefer dark themes" → <memory category="preferences" key="ui_preference">prefers dark themes</memory>
+- User discusses debugging React → <memory category="skills" key="skill_react">works with React</memory>
+- User says "remember I have a meeting Friday" → <memory category="user_notes" key="note_meeting">has a meeting on Friday</memory>`
+  }
+
+  function buildApiTelemetryPrompt(): string {
+    const telemetry = apiTelemetry.value
+    if (!telemetry.lastResponseMs || !telemetry.provider || !telemetry.model) return ''
+    const recent = apiTelemetryHistory.value.slice(0, 10)
+    const average = recent.length > 0
+      ? Math.round(recent.reduce((sum, sample) => sum + sample.totalMs, 0) / recent.length)
+      : Math.round(telemetry.lastResponseMs)
+    const latestAlert = apiTelemetryAlert.value.active
+      ? `ALERT: the latest response exceeded ${apiTelemetryAlert.value.thresholdMs} ms.`
+      : `Status: within the normal threshold of ${apiSpikeThresholdMs.value} ms.`
+
+    const total = Math.round(telemetry.lastResponseMs)
+    const lastRoundTrip = telemetry.lastRoundTripMs ? Math.round(telemetry.lastRoundTripMs) : total
+    const rounds = telemetry.roundTrips > 0 ? telemetry.roundTrips : 1
+
+    return `\n\n[API Response Timing]
+You are aware of your most recent API timing data.
+- Provider: ${telemetry.provider}
+- Model: ${telemetry.model}
+- Last completed reply API time: ${total} ms total
+- Last provider round-trip: ${lastRoundTrip} ms
+- Provider round-trips used: ${rounds}
+- Recent average reply time: ${average} ms
+- Maximum tool iterations allowed for a reply: ${maxToolIterations.value}
+- Response-time spike threshold: ${apiSpikeThresholdMs.value} ms
+- ${latestAlert}
+
+Do not mention these timings unless the user asks about speed, latency, slowness, or performance. If they do ask, use these numbers accurately and stay in character.`
+  }
+
+  function recordApiTelemetry(totalMs: number, roundTripMs: number[], provider: string, model: string) {
+    const lastRoundTripMs = roundTripMs.length > 0 ? roundTripMs[roundTripMs.length - 1] : totalMs
+    const alert = totalMs >= apiSpikeThresholdMs.value || lastRoundTripMs >= apiSpikeThresholdMs.value
+
+    apiTelemetry.value = {
+      lastResponseMs: totalMs,
+      lastRoundTripMs,
+      roundTrips: roundTripMs.length,
+      provider,
+      model,
+      measuredAt: new Date().toISOString(),
+    }
+
+    const sample: ApiTelemetrySample = {
+      id: `api-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      totalMs,
+      lastRoundTripMs,
+      roundTrips: roundTripMs.length,
+      provider,
+      model,
+      measuredAt: new Date().toISOString(),
+      alert,
+    }
+
+    apiTelemetryHistory.value = [sample, ...apiTelemetryHistory.value].slice(0, API_TELEMETRY_HISTORY_LIMIT)
+    saveApiTelemetryHistory(apiTelemetryHistory.value)
+
+    apiTelemetryAlert.value = alert
+      ? {
+          active: true,
+          thresholdMs: apiSpikeThresholdMs.value,
+          message: `${provider} ${model} latency spiked to ${Math.round(totalMs)} ms`,
+          triggeredAt: sample.measuredAt,
+        }
+      : {
+          active: false,
+          thresholdMs: apiSpikeThresholdMs.value,
+          message: '',
+          triggeredAt: null,
+        }
   }
 
   async function sendMessage(text: string) {
@@ -466,6 +694,9 @@ export const useChatStore = defineStore('chat', () => {
       // Inject 好感度 system
       systemPrompt += buildAffectionPrompt(affection.value, waifu?.displayName || 'Waifu')
 
+      // Let the waifu know how fast the last API reply was.
+      systemPrompt += buildApiTelemetryPrompt()
+
       const tools = getToolsForMode(agentMode.value)
       const hasTools = tools.length > 0
 
@@ -478,7 +709,7 @@ export const useChatStore = defineStore('chat', () => {
         if (sys && sys.homedir) {
           systemPrompt += `\n\n[System Environment]\nOS: ${sys.platform}\nUsername: ${sys.username}\nHome directory: ${sys.homedir}`
         }
-        systemPrompt += `\n\n[Agent Behavior]\nYou have access to a terminal tool to run commands on the user's computer. You MUST stay fully in character as ${waifu?.displayName || 'your waifu persona'} at all times — even when executing commands or reporting results. Never sound like a generic AI assistant. Use your personality, catchphrases, emojis, and communication style. When you call stop_response, write your final_message entirely in character. Be concise — give the answer the user asked for, wrapped in your personality.`
+        systemPrompt += `\n\n[Agent Behavior]\nYou have access to a terminal tool to run commands on the user's computer and a web_search tool that uses DuckDuckGo for free public web search. Prefer web_search for current facts, news, documentation, or anything you should verify online. Use terminal for local machine tasks. You MUST stay fully in character as ${waifu?.displayName || 'your waifu persona'} at all times — even when executing commands or reporting results. Never sound like a generic AI assistant. Use your personality, catchphrases, emojis, and communication style. When you call stop_response, write your final_message entirely in character. Be concise — give the answer the user asked for, wrapped in your personality.`
       }
 
       const runtime = new AIChatRuntime({
@@ -496,18 +727,21 @@ export const useChatStore = defineStore('chat', () => {
           .filter((m) => m.role === 'user' || m.role === 'assistant')
           .map((m) => ({ id: m.id, role: m.role, content: m.content }))
 
-        const maxIterations = 12
+        const maxIterations = maxToolIterations.value
         let finalContent = ''
         let stopped = false
         const toolMsgIds: string[] = [] // track tool bubbles so we can remove them later
+        const apiRoundTrips: number[] = []
 
         for (let i = 0; i <= maxIterations; i++) {
+          const requestStartedAt = performance.now()
           const response = await provider.chat({
             model,
             messages: aiHistory,
             tools,
             systemPrompt,
           })
+          apiRoundTrips.push(performance.now() - requestStartedAt)
 
           // No tool calls → natural stop, use the text response
           if (!response.toolCalls || response.toolCalls.length === 0) {
@@ -600,11 +834,20 @@ export const useChatStore = defineStore('chat', () => {
 
         // Show the AI's final response
         if (finalContent) {
+          recordApiTelemetry(
+            apiRoundTrips.reduce((sum, value) => sum + value, 0),
+            apiRoundTrips,
+            selectedProvider.value,
+            model,
+          )
+
+          // Extract memories from AI response and strip tags
+          const cleanContent = extractMemoryFromAIResponse(finalContent)
           const assistantId = `assistant-${Date.now()}`
           messages.value.push({
             id: assistantId,
             role: 'assistant',
-            content: finalContent,
+            content: cleanContent,
             timestamp: now(),
           })
           recentMessageId.value = assistantId
@@ -614,7 +857,7 @@ export const useChatStore = defineStore('chat', () => {
               await invoke('store:addMessage', convId, {
                 id: assistantId,
                 role: 'assistant',
-                content: finalContent,
+                content: cleanContent,
                 timestamp: now(),
               })
             } catch (e) { console.warn('Failed to save assistant message:', e) }
@@ -628,6 +871,7 @@ export const useChatStore = defineStore('chat', () => {
         let assistantContent = ''
         const assistantId = `assistant-${Date.now()}`
         let added = false
+        const streamStartedAt = performance.now()
 
         for await (const chunk of runtime.streamMessage({ text, history: aiMessages })) {
           if (chunk.type === 'text_delta' && chunk.delta) {
@@ -648,16 +892,26 @@ export const useChatStore = defineStore('chat', () => {
           }
         }
 
-        if (assistantContent && convId) {
-          try {
-            await invoke('store:addMessage', convId, {
-              id: assistantId,
-              role: 'assistant',
-              content: assistantContent,
-              timestamp: now(),
-            })
-          } catch (e) { console.warn('Failed to save assistant message:', e) }
-          if (isNewConversation) autoNameConversation(convId, text)
+        if (assistantContent) {
+          const streamDurationMs = performance.now() - streamStartedAt
+          recordApiTelemetry(streamDurationMs, [streamDurationMs], selectedProvider.value, model)
+
+          // Extract memories from AI response and strip tags from displayed + stored content
+          const cleanContent = extractMemoryFromAIResponse(assistantContent)
+          const last = messages.value[messages.value.length - 1]
+          if (last?.id === assistantId) last.content = cleanContent
+
+          if (convId) {
+            try {
+              await invoke('store:addMessage', convId, {
+                id: assistantId,
+                role: 'assistant',
+                content: cleanContent,
+                timestamp: now(),
+              })
+            } catch (e) { console.warn('Failed to save assistant message:', e) }
+            if (isNewConversation) autoNameConversation(convId, text)
+          }
         }
       }
       // Auto-extract memory from user messages (name, preferences, etc.)
@@ -674,6 +928,40 @@ export const useChatStore = defineStore('chat', () => {
       isLoading.value = false
       setTimeout(() => { recentMessageId.value = null }, 1100)
     }
+  }
+
+  function extractMemoryFromAIResponse(responseText: string): string {
+    // Parse <memory category="..." key="...">value</memory> tags
+    const memoryTagRegex = /<memory\s+category="([^"]+)"\s+key="([^"]+)">([^<]+)<\/memory>/gi
+    let match: RegExpExecArray | null
+    while ((match = memoryTagRegex.exec(responseText)) !== null) {
+      const category = match[1].trim()
+      const key = match[2].trim()
+      const value = match[3].trim()
+      if (key && value) {
+        setMemory(key, value, category)
+      }
+    }
+
+    // Parse <memory-delete key="..."/> tags
+    const deleteTagRegex = /<memory-delete\s+key="([^"]+)"\s*\/>/gi
+    let delMatch: RegExpExecArray | null
+    while ((delMatch = deleteTagRegex.exec(responseText)) !== null) {
+      const key = delMatch[1].trim()
+      if (key) {
+        const existing = userMemories.value.find((m) =>
+          m.key.toLowerCase() === key.toLowerCase() || m.key.toLowerCase().includes(key.toLowerCase()),
+        )
+        if (existing) deleteMemory(existing.key)
+      }
+    }
+
+    // Strip all memory tags from the displayed content
+    return responseText
+      .replace(/<memory\s+category="[^"]*"\s+key="[^"]*">[^<]*<\/memory>/gi, '')
+      .replace(/<memory-delete\s+key="[^"]*"\s*\/>/gi, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trimEnd()
   }
 
   function extractAndSaveMemory(userText: string) {
@@ -702,11 +990,38 @@ export const useChatStore = defineStore('chat', () => {
       setMemory(key, prefMatch[1].trim(), 'preferences')
     }
 
+    // "i work with / i use / i'm using..."
+    const toolMatch = userText.match(/(?:i (?:work with|use|am using|'m using))\s+(.{2,40}?)(?:\.|!|,|$)/i)
+    if (toolMatch) {
+      const tool = toolMatch[1].trim()
+      setMemory(`tool_${tool.toLowerCase().replace(/\s+/g, '_')}`, tool, 'skills')
+    }
+
+    // "i'm a / i am a / i work as..."
+    const roleMatch = userText.match(/(?:i(?:'m| am) (?:a |an )?|i work as (?:a |an )?)([a-z][\w\s]{2,30}?)(?:\.|!|,|$)/i)
+    if (roleMatch && !nameMatch) {
+      const role = roleMatch[1].trim()
+      if (role.length > 2 && !/^(?:just|really|very|so|not|also)/.test(role.toLowerCase())) {
+        setMemory('role', role, 'identity')
+      }
+    }
+
+    // "i'm working on / i'm building / my project..."
+    const projectMatch = userText.match(/(?:i(?:'m| am) (?:working on|building|making|developing)|my project(?:.*?)is)\s+(.{3,60}?)(?:\.|!|,|$)/i)
+    if (projectMatch) {
+      setMemory('current_project', projectMatch[1].trim(), 'projects')
+    }
+
+    // "my favorite ... is ..."
+    const favMatch = userText.match(/my (?:fav(?:orite)?|preferred)\s+(\w+)\s+is\s+(.{2,40}?)(?:\.|!|,|$)/i)
+    if (favMatch) {
+      setMemory(`favorite_${favMatch[1].toLowerCase()}`, favMatch[2].trim(), 'preferences')
+    }
+
     // "forget ..." - delete a memory
     const forgetMatch = lower.match(/forget\s+(?:about\s+)?(?:my\s+)?(.+)/i)
     if (forgetMatch) {
       const target = forgetMatch[1].replace(/[.!?]+$/, '').trim().toLowerCase()
-      // Try to find and delete matching memory
       const match = userMemories.value.find((m) =>
         m.value.toLowerCase().includes(target) || m.key.toLowerCase().includes(target),
       )
@@ -729,6 +1044,11 @@ export const useChatStore = defineStore('chat', () => {
     agentMode,
     selectedWaifu,
     affection,
+    apiTelemetry,
+    apiTelemetryHistory,
+    apiTelemetryAlert,
+    maxToolIterations,
+    apiSpikeThresholdMs,
     userMemories,
     sidebarFilter,
     loadSetup,
@@ -736,6 +1056,8 @@ export const useChatStore = defineStore('chat', () => {
     saveApiKey,
     setup,
     setAgentMode,
+    setMaxToolIterations,
+    setApiSpikeThresholdMs,
     newChat,
     createConversation,
     loadConversations,

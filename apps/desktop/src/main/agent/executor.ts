@@ -229,6 +229,126 @@ export async function openExternal(url: string) {
   }
 }
 
-module.exports = { runCommand, readFile, writeFile, listDirectory, openExternal, getAllowlist, saveAllowlist, addAllowed, removeAllowed }
+function stripHtml(value: string): string {
+  return value
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, '\'')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function decodeDuckDuckGoRedirect(url: string): string {
+  try {
+    const parsed = new URL(url, 'https://duckduckgo.com')
+    const uddg = parsed.searchParams.get('uddg')
+    return uddg ? decodeURIComponent(uddg) : parsed.toString()
+  } catch {
+    return url
+  }
+}
+
+async function fetchDuckDuckGoHtmlResults(query: string, limit: number) {
+  const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+    headers: {
+      'user-agent': 'SyntaxSenpai/0.0.1 (+https://github.com/unoxyrich/SyntaxSenpai)',
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(`DuckDuckGo HTML search failed: ${response.status} ${response.statusText}`)
+  }
+
+  const html = await response.text()
+  const results: Array<{ title: string; url: string; snippet: string }> = []
+  const pattern = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>|<div[^>]*class="[^"]*result__snippet[^"]*"[^>]*>)([\s\S]*?)(?:<\/a>|<\/div>)/g
+  let match: RegExpExecArray | null
+
+  while ((match = pattern.exec(html)) !== null && results.length < limit) {
+    const url = decodeDuckDuckGoRedirect(match[1])
+    const title = stripHtml(match[2])
+    const snippet = stripHtml(match[3])
+    if (!title || !url) continue
+    results.push({ title, url, snippet })
+  }
+
+  return results
+}
+
+async function fetchDuckDuckGoInstantAnswer(query: string) {
+  const response = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`, {
+    headers: {
+      'user-agent': 'SyntaxSenpai/0.0.1 (+https://github.com/unoxyrich/SyntaxSenpai)',
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(`DuckDuckGo instant answer failed: ${response.status} ${response.statusText}`)
+  }
+
+  const data = await response.json()
+  const related = Array.isArray(data?.RelatedTopics) ? data.RelatedTopics : []
+  const relatedItems = related
+    .flatMap((item: any) => Array.isArray(item?.Topics) ? item.Topics : [item])
+    .filter((item: any) => typeof item?.Text === 'string' && typeof item?.FirstURL === 'string')
+    .slice(0, 5)
+    .map((item: any) => ({
+      title: item.Text.split(' - ')[0] || item.Text,
+      url: item.FirstURL,
+      snippet: item.Text,
+    }))
+
+  return {
+    abstract: typeof data?.AbstractText === 'string' ? data.AbstractText : '',
+    abstractUrl: typeof data?.AbstractURL === 'string' ? data.AbstractURL : '',
+    heading: typeof data?.Heading === 'string' ? data.Heading : '',
+    related: relatedItems,
+  }
+}
+
+export async function webSearch(query: string, limit = 5) {
+  try {
+    const normalizedQuery = String(query || '').trim()
+    if (!normalizedQuery) {
+      return { success: false, error: 'Search query cannot be empty' }
+    }
+
+    const cappedLimit = Math.max(1, Math.min(8, Number(limit) || 5))
+    const instant = await fetchDuckDuckGoInstantAnswer(normalizedQuery).catch(() => null)
+    const htmlResults = await fetchDuckDuckGoHtmlResults(normalizedQuery, cappedLimit).catch(() => [])
+    const results = htmlResults.length > 0
+      ? htmlResults
+      : (instant?.related || []).slice(0, cappedLimit)
+
+    const lines: string[] = [`DuckDuckGo search results for: ${normalizedQuery}`]
+
+    if (instant?.abstract) {
+      lines.push(`\nInstant answer: ${instant.abstract}${instant.abstractUrl ? ` (${instant.abstractUrl})` : ''}`)
+    }
+
+    if (results.length === 0) {
+      lines.push('\nNo search results found.')
+    } else {
+      results.forEach((result, index) => {
+        lines.push(`\n${index + 1}. ${result.title}\nURL: ${result.url}${result.snippet ? `\nSnippet: ${result.snippet}` : ''}`)
+      })
+    }
+
+    return {
+      success: true,
+      query: normalizedQuery,
+      results,
+      instant: instant || undefined,
+      content: lines.join('\n'),
+    }
+  } catch (err: any) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+module.exports = { runCommand, readFile, writeFile, listDirectory, openExternal, webSearch, getAllowlist, saveAllowlist, addAllowed, removeAllowed }
 
 export {}

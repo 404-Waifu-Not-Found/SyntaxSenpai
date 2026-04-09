@@ -3,13 +3,17 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { builtInWaifus } from '@syntax-senpai/waifu-core'
 import { useChatStore } from './stores/chat'
 import { useTheme } from './composables/use-theme'
+import { useI18n } from './composables/use-i18n'
+import { useIpc } from './composables/use-ipc'
 import ChatBubble from './components/ChatBubble.vue'
 import AppAvatar from './components/AppAvatar.vue'
 import TypingDots from './components/TypingDots.vue'
 import MessageSkeleton from './components/MessageSkeleton.vue'
 
 const store = useChatStore()
+const { invoke } = useIpc()
 const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, DEFAULT_THEME } = useTheme()
+const { t, locale, setLocale, localeOptions } = useI18n()
 
 const rainbowToggleBg = computed(() => {
   if (!theme.value.rainbow.enabled) return 'rgb(64,64,64)'
@@ -144,6 +148,76 @@ const providers = providerOrder
   .filter(Boolean)
   .map((provider) => ({ value: provider!.id, label: provider!.displayName }))
 
+const colorPresets = [
+  {
+    id: 'default',
+    nameKey: 'preset.default',
+    colors: ['#6366f1', '#ec4899', '#0f0f0f'],
+    theme: { bg: '#0f0f0f', surface: '#111216', surface2: '#0d0f13', fg: '#ffffff', primary: '#6366f1', accent: '#ec4899', userBubble: '#4f46e5', assistantBubble: '#1a1a2e' },
+  },
+  {
+    id: 'ocean',
+    nameKey: 'preset.ocean',
+    colors: ['#0ea5e9', '#06b6d4', '#0a0f1a'],
+    theme: { bg: '#0a0f1a', surface: '#0d1525', surface2: '#081018', fg: '#e0f2fe', primary: '#0ea5e9', accent: '#06b6d4', userBubble: '#0369a1', assistantBubble: '#0c1a2e' },
+  },
+  {
+    id: 'sunset',
+    nameKey: 'preset.sunset',
+    colors: ['#f97316', '#ef4444', '#1a0f0a'],
+    theme: { bg: '#1a0f0a', surface: '#201410', surface2: '#150d08', fg: '#fff7ed', primary: '#f97316', accent: '#ef4444', userBubble: '#c2410c', assistantBubble: '#2a1810' },
+  },
+  {
+    id: 'emerald',
+    nameKey: 'preset.emerald',
+    colors: ['#10b981', '#34d399', '#0a1a14'],
+    theme: { bg: '#0a1a14', surface: '#0d2018', surface2: '#081510', fg: '#ecfdf5', primary: '#10b981', accent: '#34d399', userBubble: '#047857', assistantBubble: '#0f2a1e' },
+  },
+  {
+    id: 'rose',
+    nameKey: 'preset.rose',
+    colors: ['#f43f5e', '#fb7185', '#1a0a10'],
+    theme: { bg: '#1a0a10', surface: '#201015', surface2: '#150810', fg: '#fff1f2', primary: '#f43f5e', accent: '#fb7185', userBubble: '#be123c', assistantBubble: '#2a1018' },
+  },
+  {
+    id: 'cherry-blossom',
+    nameKey: 'preset.cherryBlossom',
+    colors: ['#f9a8d4', '#f472b6', '#ffffff'],
+    theme: { bg: '#ffffff', surface: '#fff5fb', surface2: '#fde7f3', fg: '#3f1630', primary: '#f472b6', accent: '#f9a8d4', userBubble: '#db2777', assistantBubble: '#fff0f7' },
+  },
+  {
+    id: 'lavender',
+    nameKey: 'preset.lavender',
+    colors: ['#a78bfa', '#c084fc', '#120f1a'],
+    theme: { bg: '#120f1a', surface: '#181425', surface2: '#100d18', fg: '#f5f3ff', primary: '#a78bfa', accent: '#c084fc', userBubble: '#7c3aed', assistantBubble: '#1e1830' },
+  },
+  {
+    id: 'amber',
+    nameKey: 'preset.amber',
+    colors: ['#f59e0b', '#fbbf24', '#1a150a'],
+    theme: { bg: '#1a150a', surface: '#201a10', surface2: '#151008', fg: '#fffbeb', primary: '#f59e0b', accent: '#fbbf24', userBubble: '#b45309', assistantBubble: '#2a2010' },
+  },
+  {
+    id: 'midnight',
+    nameKey: 'preset.midnight',
+    colors: ['#6366f1', '#818cf8', '#050510'],
+    theme: { bg: '#050510', surface: '#0a0a1a', surface2: '#060612', fg: '#e0e7ff', primary: '#6366f1', accent: '#818cf8', userBubble: '#4338ca', assistantBubble: '#10102a' },
+  },
+  {
+    id: 'light-mode',
+    nameKey: 'preset.lightMode',
+    colors: ['#3b82f6', '#f59e0b', '#f8fafc'],
+    theme: { bg: '#ffffff', surface: '#ffffff', surface2: '#f8fafc', fg: '#1f2937', primary: '#3b82f6', accent: '#f59e0b', userBubble: '#2563eb', assistantBubble: '#ffffff' },
+  },
+]
+
+function applyPreset(preset: typeof colorPresets[0]) {
+  setRainbow({ enabled: false })
+  Object.entries(preset.theme).forEach(([key, value]) => {
+    setColor(key as any, value)
+  })
+}
+
 const sidebarOpen = ref(true)
 const showSettings = ref(false)
 const showAgent = ref(false)
@@ -164,6 +238,8 @@ const showStartupSplash = ref(true)
 const appReady = ref(false)
 const startupAnimDone = ref(false)
 let startupSplashTimer: number | null = null
+const THEME_STORAGE_KEY = 'syntax-senpai-theme'
+const API_TELEMETRY_HISTORY_STORAGE_KEY = 'syntax-senpai-api-telemetry-history'
 
 function showToast(message: string, type: 'success' | 'error') {
   toast.value = { message, type, visible: true }
@@ -197,28 +273,34 @@ const currentProviderModels = computed(() =>
 
 const affectionTier = computed(() => {
   const value = store.affection
-  if (value <= 15) return '冰冷'
-  if (value <= 30) return '疏离'
-  if (value <= 45) return '普通'
-  if (value <= 60) return '友好'
-  if (value <= 75) return '亲近'
-  if (value <= 90) return '依恋'
-  return '挚爱'
+  if (value <= 15) return t('affection.icy')
+  if (value <= 30) return t('affection.distant')
+  if (value <= 45) return t('affection.neutral')
+  if (value <= 60) return t('affection.friendly')
+  if (value <= 75) return t('affection.close')
+  if (value <= 90) return t('affection.attached')
+  return t('affection.devoted')
 })
 
 const affectionFillStyle = computed(() => {
+  const fallbackGradient = `linear-gradient(to right, ${theme.value.colors.primary}, ${theme.value.colors.accent})`
   return {
     width: `${store.affection}%`,
-    background: rainbowToggleBg.value,
+    background: theme.value.rainbow.enabled ? rainbowToggleBg.value : fallbackGradient,
   }
 })
 
 const affectionAccentStyle = computed(() => {
-  const h = currentRainbowHue.value
-  const s = theme.value.rainbow.saturation
-  const l = theme.value.rainbow.lightness
-  const accent = hslToHex(h, s, l)
-  const softAccent = hslToHex(h, Math.max(s - 10, 35), Math.min(l + 18, 84))
+  const accent = theme.value.rainbow.enabled
+    ? hslToHex(currentRainbowHue.value, theme.value.rainbow.saturation, theme.value.rainbow.lightness)
+    : theme.value.colors.accent
+  const softAccent = theme.value.rainbow.enabled
+    ? hslToHex(
+        currentRainbowHue.value,
+        Math.max(theme.value.rainbow.saturation - 10, 35),
+        Math.min(theme.value.rainbow.lightness + 18, 84),
+      )
+    : theme.value.colors.primary
 
   return {
     borderColor: `${accent}55`,
@@ -226,6 +308,86 @@ const affectionAccentStyle = computed(() => {
     boxShadow: `0 0 18px color-mix(in srgb, ${accent} 24%, transparent)`,
   }
 })
+
+const affectionMeterClass = computed(() =>
+  locale.value === 'en' ? 'w-70' : 'w-52',
+)
+
+const appShellStyle = computed(() => ({
+  background: `linear-gradient(135deg, ${theme.value.colors.bg}, ${theme.value.colors.surface})`,
+  color: theme.value.colors.fg,
+}))
+
+const isLightTheme = computed(() =>
+  ['#ffffff', '#f8fafc', '#fff5fb'].includes(theme.value.colors.bg.toLowerCase()),
+)
+
+const secondaryPanelStyle = computed(() => ({
+  background: isLightTheme.value
+    ? `linear-gradient(135deg, color-mix(in srgb, ${theme.value.colors.surface} 94%, ${theme.value.colors.accent} 6%), color-mix(in srgb, ${theme.value.colors.surface2} 96%, ${theme.value.colors.primary} 4%))`
+    : `linear-gradient(135deg, color-mix(in srgb, ${theme.value.colors.surface} 82%, ${theme.value.colors.accent} 18%), color-mix(in srgb, ${theme.value.colors.surface2} 88%, ${theme.value.colors.primary} 12%))`,
+  borderColor: isLightTheme.value
+    ? `color-mix(in srgb, ${theme.value.colors.fg} 14%, transparent)`
+    : `color-mix(in srgb, ${theme.value.colors.accent} 22%, transparent)`,
+}))
+
+const inputSurfaceStyle = computed(() => ({
+  background: `color-mix(in srgb, ${theme.value.colors.surface2} 90%, ${theme.value.colors.accent} 10%)`,
+  borderColor: isLightTheme.value
+    ? `color-mix(in srgb, ${theme.value.colors.fg} 16%, transparent)`
+    : `color-mix(in srgb, ${theme.value.colors.accent} 24%, transparent)`,
+  color: theme.value.colors.fg,
+}))
+
+const primaryButtonStyle = computed(() => ({
+  background: `linear-gradient(135deg, ${theme.value.colors.primary}, ${theme.value.colors.accent})`,
+  color: '#ffffff',
+  borderColor: 'transparent',
+  boxShadow: `0 10px 24px color-mix(in srgb, ${theme.value.colors.primary} 26%, transparent)`,
+}))
+
+const secondaryButtonStyle = computed(() => ({
+  background: `color-mix(in srgb, ${theme.value.colors.surface} 84%, ${theme.value.colors.accent} 16%)`,
+  borderColor: isLightTheme.value
+    ? `color-mix(in srgb, ${theme.value.colors.fg} 16%, transparent)`
+    : `color-mix(in srgb, ${theme.value.colors.accent} 24%, transparent)`,
+  color: theme.value.colors.fg,
+}))
+
+const ghostButtonStyle = computed(() => ({
+  color: theme.value.colors.fg,
+  borderColor: isLightTheme.value
+    ? `color-mix(in srgb, ${theme.value.colors.fg} 14%, transparent)`
+    : `color-mix(in srgb, ${theme.value.colors.accent} 18%, transparent)`,
+}))
+
+const filterTabsStyle = computed(() => ({
+  background: `color-mix(in srgb, ${theme.value.colors.surface2} 88%, ${theme.value.colors.accent} 12%)`,
+  borderColor: isLightTheme.value
+    ? `color-mix(in srgb, ${theme.value.colors.fg} 12%, transparent)`
+    : `color-mix(in srgb, ${theme.value.colors.accent} 18%, transparent)`,
+}))
+
+function filterTabStyle(active: boolean, favorite = false) {
+  if (active) {
+    return {
+      background: favorite
+        ? `color-mix(in srgb, ${theme.value.colors.accent} 32%, ${theme.value.colors.surface})`
+        : `color-mix(in srgb, ${theme.value.colors.primary} 30%, ${theme.value.colors.surface})`,
+      color: theme.value.colors.fg,
+      boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${favorite ? theme.value.colors.accent : theme.value.colors.primary} 28%, transparent)`,
+    }
+  }
+
+  return {
+    color: `color-mix(in srgb, ${theme.value.colors.fg} 72%, transparent)`,
+  }
+}
+
+const affectionBoxStyle = computed(() => ({
+  ...affectionAccentStyle.value,
+  background: `linear-gradient(135deg, color-mix(in srgb, ${theme.value.colors.surface2} 84%, ${theme.value.colors.accent} 16%), color-mix(in srgb, ${theme.value.colors.surface} 90%, ${theme.value.colors.primary} 10%))`,
+}))
 
 const emptyStateGlowStyle = computed(() => {
   const h = currentRainbowHue.value
@@ -243,6 +405,38 @@ const emptyStateGlowStyle = computed(() => {
     textShadow: `0 0 18px color-mix(in srgb, ${accent} 55%, transparent)`,
   }
 })
+
+const telemetryHistory = computed(() => [...store.apiTelemetryHistory].reverse())
+
+const telemetryStats = computed(() => {
+  const history = store.apiTelemetryHistory
+  if (history.length === 0) {
+    return {
+      latest: null,
+      average: null,
+      p95: null,
+      fastest: null,
+      slowest: null,
+      alertCount: 0,
+      maxMs: 1,
+    }
+  }
+
+  const totals = history.map((sample) => sample.totalMs).sort((a, b) => a - b)
+  const latest = history[0]?.totalMs ?? null
+  const average = Math.round(totals.reduce((sum, value) => sum + value, 0) / totals.length)
+  const p95 = totals[Math.min(totals.length - 1, Math.floor(totals.length * 0.95))]
+  const fastest = totals[0]
+  const slowest = totals[totals.length - 1]
+  const alertCount = history.filter((sample) => sample.alert).length
+  const maxMs = Math.max(...totals, 1)
+
+  return { latest, average, p95, fastest, slowest, alertCount, maxMs }
+})
+
+function telemetryBarHeight(totalMs: number) {
+  return `${Math.max(18, Math.round((totalMs / telemetryStats.value.maxMs) * 100))}%`
+}
 
 const startupAccentStyle = computed(() => {
   const h = currentRainbowHue.value
@@ -298,6 +492,12 @@ watch(() => store.selectedProvider, async (provider, previousProvider) => {
   await store.hydrateProviderConfig(provider)
   await loadProviderModels(provider, store.apiKey)
 })
+
+watch(() => store.apiTelemetryAlert, (alert, previous) => {
+  if (!alert.active) return
+  if (previous?.triggeredAt === alert.triggeredAt) return
+  showToast(alert.message, 'error')
+}, { deep: true })
 
 async function loadProviderModels(provider: string, apiKeyValue: string) {
   const res = await (window as any).electron?.ipcRenderer?.invoke('provider:listModels', provider, apiKeyValue || '')
@@ -387,7 +587,211 @@ async function addMemoryEntry() {
   newMemoryKey.value = ''
   newMemoryValue.value = ''
   newMemoryCategory.value = 'general'
-  showToast('Memory saved', 'success')
+  showToast(t('toast.memorySaved'), 'success')
+}
+
+function readLocalStorageJson(key: string) {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+async function handleExportData() {
+  try {
+    const conversationsRes = await invoke('store:listConversations')
+    const allConversations = conversationsRes?.success ? (conversationsRes.conversations || []) : []
+
+    const conversations = await Promise.all(
+      allConversations.map(async (conversation: any) => {
+        const res = await invoke('store:getMessages', conversation.id)
+        return {
+          ...conversation,
+          messages: res?.success ? (res.messages || []) : [],
+        }
+      }),
+    )
+
+    const payload = {
+      schemaVersion: 1,
+      app: 'SyntaxSenpai',
+      exportedAt: new Date().toISOString(),
+      security: {
+        apiKeysIncluded: false,
+        notes: [
+          'API keys are stored separately in the secure keystore and are excluded from exports.',
+          'The current in-memory API key field is not serialized.',
+        ],
+      },
+      settings: {
+        locale: locale.value,
+        theme: theme.value,
+        setup: readLocalStorageJson('syntax-senpai-setup'),
+        providerPreferences: readLocalStorageJson('syntax-senpai-provider-preferences'),
+        agentMode: localStorage.getItem('syntax-senpai-agent-mode') || store.agentMode,
+        affection: readLocalStorageJson('syntax-senpai-affection'),
+        apiTelemetryHistory: readLocalStorageJson(API_TELEMETRY_HISTORY_STORAGE_KEY),
+        maxToolIterations: store.maxToolIterations,
+        apiSpikeThresholdMs: store.apiSpikeThresholdMs,
+      },
+      data: {
+        selectedWaifuId: store.selectedWaifuId,
+        selectedProvider: store.selectedProvider,
+        selectedModel: store.selectedModel,
+        conversations,
+        memories: store.userMemories,
+      },
+    }
+
+    const result = await invoke(
+      'export:saveJson',
+      payload,
+      `syntax-senpai-export-${new Date().toISOString().slice(0, 10)}.json`,
+    )
+
+    if (result?.success) {
+      showToast(t('toast.exportSaved'), 'success')
+      return
+    }
+
+    if (!result?.canceled) {
+      showToast(result?.error || t('toast.exportFailed'), 'error')
+    }
+  } catch (err: any) {
+    showToast(err?.message || t('toast.exportFailed'), 'error')
+  }
+}
+
+async function handleImportData() {
+  try {
+    const result = await invoke('export:openJson')
+    if (!result?.success) {
+      if (!result?.canceled) showToast(result?.error || t('toast.importFailed'), 'error')
+      return
+    }
+
+    const payload = result.payload || {}
+    const importedConversations = Array.isArray(payload?.data?.conversations) ? payload.data.conversations : []
+    const importedMemories = Array.isArray(payload?.data?.memories) ? payload.data.memories : []
+
+    const replace = await invoke('store:replaceSnapshot', {
+      conversations: importedConversations,
+      memories: importedMemories,
+    })
+
+    if (!replace?.success) {
+      showToast(replace?.error || t('toast.importFailed'), 'error')
+      return
+    }
+
+    if (payload?.settings?.locale) {
+      setLocale(payload.settings.locale as any)
+    }
+
+    if (payload?.settings?.theme) {
+      theme.value = {
+        colors: {
+          ...DEFAULT_THEME.colors,
+          ...(payload.settings.theme.colors || {}),
+        },
+        rainbow: {
+          ...DEFAULT_THEME.rainbow,
+          ...(payload.settings.theme.rainbow || {}),
+        },
+      }
+      localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(theme.value))
+    }
+
+    if (payload?.settings?.setup) {
+      localStorage.setItem('syntax-senpai-setup', JSON.stringify(payload.settings.setup))
+    }
+    if (payload?.settings?.providerPreferences) {
+      localStorage.setItem('syntax-senpai-provider-preferences', JSON.stringify(payload.settings.providerPreferences))
+    }
+    if (payload?.settings?.agentMode) {
+      store.setAgentMode(payload.settings.agentMode)
+    }
+    if (typeof payload?.settings?.maxToolIterations === 'number') {
+      store.setMaxToolIterations(payload.settings.maxToolIterations)
+    }
+    if (typeof payload?.settings?.apiSpikeThresholdMs === 'number') {
+      store.setApiSpikeThresholdMs(payload.settings.apiSpikeThresholdMs)
+    }
+    if (payload?.settings?.affection) {
+      localStorage.setItem('syntax-senpai-affection', JSON.stringify(payload.settings.affection))
+    }
+    if (payload?.settings?.apiTelemetryHistory) {
+      localStorage.setItem(API_TELEMETRY_HISTORY_STORAGE_KEY, JSON.stringify(payload.settings.apiTelemetryHistory))
+      store.apiTelemetryHistory = Array.isArray(payload.settings.apiTelemetryHistory)
+        ? payload.settings.apiTelemetryHistory
+        : []
+      const latestSample = store.apiTelemetryHistory[0]
+      store.apiTelemetry = latestSample
+        ? {
+            lastResponseMs: latestSample.totalMs,
+            lastRoundTripMs: latestSample.lastRoundTripMs,
+            roundTrips: latestSample.roundTrips,
+            provider: latestSample.provider,
+            model: latestSample.model,
+            measuredAt: latestSample.measuredAt,
+          }
+        : {
+            lastResponseMs: null,
+            lastRoundTripMs: null,
+            roundTrips: 0,
+            provider: '',
+            model: '',
+            measuredAt: null,
+          }
+      store.apiTelemetryAlert = latestSample?.alert
+        ? {
+            active: true,
+            thresholdMs: store.apiSpikeThresholdMs,
+            message: `${latestSample.provider} ${latestSample.model} latency spiked to ${Math.round(latestSample.totalMs)} ms`,
+            triggeredAt: latestSample.measuredAt,
+          }
+        : {
+            active: false,
+            thresholdMs: store.apiSpikeThresholdMs,
+            message: '',
+            triggeredAt: null,
+          }
+    } else {
+      localStorage.removeItem(API_TELEMETRY_HISTORY_STORAGE_KEY)
+      store.apiTelemetryHistory = []
+      store.apiTelemetry = {
+        lastResponseMs: null,
+        lastRoundTripMs: null,
+        roundTrips: 0,
+        provider: '',
+        model: '',
+        measuredAt: null,
+      }
+      store.apiTelemetryAlert = {
+        active: false,
+        thresholdMs: store.apiSpikeThresholdMs,
+        message: '',
+        triggeredAt: null,
+      }
+    }
+
+    if (payload?.data?.selectedWaifuId) store.selectedWaifuId = payload.data.selectedWaifuId
+    if (payload?.data?.selectedProvider) store.selectedProvider = payload.data.selectedProvider
+    if (payload?.data?.selectedModel) store.selectedModel = payload.data.selectedModel
+
+    store.messages = []
+    store.conversationId = null
+    await store.hydrateProviderConfig(store.selectedProvider)
+    await loadProviderModels(store.selectedProvider, store.apiKey)
+    await store.loadConversations()
+    await store.loadMemories()
+
+    showToast(t('toast.importSaved'), 'success')
+  } catch (err: any) {
+    showToast(err?.message || t('toast.importFailed'), 'error')
+  }
 }
 </script>
 
@@ -441,7 +845,7 @@ async function addMemoryEntry() {
               SyntaxSenpai
             </h1>
             <p class="text-sm uppercase tracking-[0.28em] text-neutral-300">
-              Booting Your Waifu Workspace
+              {{ t('app.booting') }}
             </p>
           </div>
         </div>
@@ -454,8 +858,8 @@ async function addMemoryEntry() {
     v-if="!store.isSetup && !showSettings"
     :class="[
       'flex items-center justify-center h-screen w-screen',
-      'bg-gradient-to-br from-neutral-950 to-neutral-900',
     ]"
+    :style="appShellStyle"
   >
     <div class="text-center max-w-md px-6">
       <div class="text-6xl mb-6">
@@ -465,20 +869,20 @@ async function addMemoryEntry() {
         SyntaxSenpai
       </h1>
       <p class="text-neutral-400 mb-8">
-        Your AI companion that codes with you
+        {{ t('setup.subtitle') }}
       </p>
       <div class="space-y-3">
         <button
           class="btn-primary w-full py-3 text-base font-bold"
           @click="showSettings = true"
         >
-          Get Started
+          {{ t('setup.getStarted') }}
         </button>
         <button
           class="btn-secondary w-full py-3 text-base font-bold"
           @click="startDemoMode"
         >
-          Try Demo Mode (no API)
+          {{ t('setup.demoMode') }}
         </button>
       </div>
     </div>
@@ -499,7 +903,7 @@ async function addMemoryEntry() {
       >
         <div class="glass-surface rounded-2xl p-6 max-w-lg w-full mx-4 animate-content-show max-h-[85vh] overflow-y-auto">
           <h2 class="text-xl font-bold text-white mb-4">
-            Settings
+            {{ t('settings.title') }}
           </h2>
 
           <!-- Tabs -->
@@ -513,7 +917,7 @@ async function addMemoryEntry() {
               ]"
               @click="settingsTab = 'general'"
             >
-              General
+              {{ t('settings.general') }}
             </button>
             <button
               :class="[
@@ -524,14 +928,27 @@ async function addMemoryEntry() {
               ]"
               @click="settingsTab = 'theme'"
             >
-              Theme
+              {{ t('settings.theme') }}
             </button>
           </div>
 
           <!-- General Tab -->
           <div v-if="settingsTab === 'general'">
             <div class="mb-4">
-              <label class="block text-sm font-semibold text-neutral-200 mb-2">Waifu</label>
+              <label class="block text-sm font-semibold text-neutral-200 mb-2">{{ t('settings.language') }}</label>
+              <select
+                :value="locale"
+                class="input-field"
+                @change="setLocale(($event.target as HTMLSelectElement).value as any)"
+              >
+                <option v-for="lang in localeOptions" :key="lang.value" :value="lang.value">
+                  {{ lang.label }}
+                </option>
+              </select>
+            </div>
+
+            <div class="mb-4">
+              <label class="block text-sm font-semibold text-neutral-200 mb-2">{{ t('settings.waifu') }}</label>
               <select
                 v-model="store.selectedWaifuId"
                 class="input-field"
@@ -543,7 +960,7 @@ async function addMemoryEntry() {
             </div>
 
             <div class="mb-4">
-              <label class="block text-sm font-semibold text-neutral-200 mb-2">Provider</label>
+              <label class="block text-sm font-semibold text-neutral-200 mb-2">{{ t('settings.provider') }}</label>
               <select v-model="store.selectedProvider" class="input-field">
                 <option v-for="provider in providers" :key="provider.value" :value="provider.value">
                   {{ provider.label }}
@@ -552,7 +969,7 @@ async function addMemoryEntry() {
             </div>
 
             <div class="mb-6">
-              <label class="block text-sm font-semibold text-neutral-200 mb-2">API Key</label>
+              <label class="block text-sm font-semibold text-neutral-200 mb-2">{{ t('settings.apiKey') }}</label>
               <input
                 v-model="store.apiKey"
                 type="password"
@@ -561,30 +978,190 @@ async function addMemoryEntry() {
               >
             </div>
 
+            <div class="mb-6 rounded-xl border border-neutral-700/40 bg-neutral-800/30 p-4">
+              <div class="mb-3">
+                <h3 class="text-sm font-bold text-white">{{ t('settings.exportData') }}</h3>
+                <p class="text-xs text-neutral-400">
+                  {{ t('settings.exportDescription') }}
+                </p>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <button class="btn-secondary w-full" @click="handleExportData">
+                  {{ t('settings.exportButton') }}
+                </button>
+                <button class="btn-secondary w-full" @click="handleImportData">
+                  {{ t('settings.importButton') }}
+                </button>
+              </div>
+              <p class="mt-3 text-[11px] text-neutral-500">
+                {{ t('settings.importDescription') }}
+              </p>
+            </div>
+
+            <div class="mb-6 rounded-xl border border-neutral-700/40 bg-neutral-800/30 p-4">
+              <div class="mb-3">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 class="text-sm font-bold text-white">{{ t('settings.metricsTitle') }}</h3>
+                    <p class="text-xs text-neutral-400">
+                      {{ t('settings.metricsDescription') }}
+                    </p>
+                  </div>
+                  <span
+                    class="rounded-full px-2.5 py-1 text-[11px] font-semibold"
+                    :class="store.apiTelemetryAlert.active ? 'bg-red-500/20 text-red-200' : 'bg-emerald-500/20 text-emerald-200'"
+                  >
+                    {{ t('settings.metricsThreshold') }}: {{ store.apiSpikeThresholdMs }} ms
+                  </span>
+                </div>
+              </div>
+
+              <div class="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
+                  <div class="font-semibold text-neutral-200">{{ t('settings.maxIterations') }}</div>
+                  <div class="mt-1 text-xs text-neutral-500">{{ t('settings.maxIterationsDescription') }}</div>
+                  <input
+                    class="input-field mt-3"
+                    type="number"
+                    min="1"
+                    max="24"
+                    :value="store.maxToolIterations"
+                    @change="store.setMaxToolIterations(Number(($event.target as HTMLInputElement).value))"
+                  >
+                </label>
+                <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
+                  <div class="font-semibold text-neutral-200">{{ t('settings.responseThreshold') }}</div>
+                  <div class="mt-1 text-xs text-neutral-500">{{ t('settings.responseThresholdDescription') }}</div>
+                  <input
+                    class="input-field mt-3"
+                    type="number"
+                    min="250"
+                    max="60000"
+                    step="250"
+                    :value="store.apiSpikeThresholdMs"
+                    @change="store.setApiSpikeThresholdMs(Number(($event.target as HTMLInputElement).value))"
+                  >
+                </label>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <div class="rounded-xl bg-neutral-900/55 p-3">
+                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsLatest') }}</div>
+                  <div class="mt-2 text-xl font-bold text-white">{{ telemetryStats.latest ?? '—' }}<span v-if="telemetryStats.latest !== null" class="ml-1 text-xs text-neutral-400">ms</span></div>
+                </div>
+                <div class="rounded-xl bg-neutral-900/55 p-3">
+                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsAverage') }}</div>
+                  <div class="mt-2 text-xl font-bold text-white">{{ telemetryStats.average ?? '—' }}<span v-if="telemetryStats.average !== null" class="ml-1 text-xs text-neutral-400">ms</span></div>
+                </div>
+                <div class="rounded-xl bg-neutral-900/55 p-3">
+                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsP95') }}</div>
+                  <div class="mt-2 text-xl font-bold text-white">{{ telemetryStats.p95 ?? '—' }}<span v-if="telemetryStats.p95 !== null" class="ml-1 text-xs text-neutral-400">ms</span></div>
+                </div>
+                <div class="rounded-xl bg-neutral-900/55 p-3">
+                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsAlerts') }}</div>
+                  <div class="mt-2 text-xl font-bold" :class="store.apiTelemetryAlert.active ? 'text-red-300' : 'text-white'">{{ telemetryStats.alertCount }}</div>
+                </div>
+              </div>
+
+              <div class="mt-4 rounded-xl bg-neutral-900/55 p-3">
+                <div class="mb-3 flex items-center justify-between">
+                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsHistory') }}</div>
+                  <div v-if="store.apiTelemetryAlert.active" class="text-xs font-semibold text-red-300">
+                    {{ store.apiTelemetryAlert.message }}
+                  </div>
+                </div>
+
+                <div v-if="telemetryHistory.length > 0" class="space-y-3">
+                  <div class="flex h-24 items-end gap-2">
+                    <div
+                      v-for="sample in telemetryHistory.slice(-16)"
+                      :key="sample.id"
+                      class="flex-1 rounded-t-md transition-all"
+                      :class="sample.alert ? 'bg-red-400/80' : 'bg-cyan-400/80'"
+                      :style="{ height: telemetryBarHeight(sample.totalMs) }"
+                      :title="`${sample.provider} ${sample.model}: ${Math.round(sample.totalMs)} ms`"
+                    />
+                  </div>
+                  <div class="max-h-36 space-y-2 overflow-y-auto pr-1">
+                    <div
+                      v-for="sample in store.apiTelemetryHistory.slice(0, 6)"
+                      :key="sample.id"
+                      class="flex items-center justify-between rounded-lg bg-black/20 px-3 py-2 text-xs"
+                    >
+                      <div class="min-w-0">
+                        <div class="truncate font-semibold text-neutral-200">{{ sample.provider }} · {{ sample.model }}</div>
+                        <div class="text-neutral-500">{{ new Date(sample.measuredAt).toLocaleTimeString() }}</div>
+                      </div>
+                      <div class="ml-3 text-right">
+                        <div :class="sample.alert ? 'text-red-300' : 'text-cyan-200'">{{ Math.round(sample.totalMs) }} ms</div>
+                        <div class="text-neutral-500">{{ sample.roundTrips }} calls</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-else class="py-4 text-sm text-neutral-500">
+                  {{ t('settings.metricsEmpty') }}
+                </div>
+              </div>
+            </div>
+
             <div class="flex gap-2">
               <button class="btn-secondary flex-1" @click="showSettings = false">
-                Cancel
+                {{ t('settings.cancel') }}
               </button>
               <button
                 class="btn-primary flex-1"
                 @click="handleSetup(store.apiKey)"
               >
-                Save
+                {{ t('settings.save') }}
               </button>
               <button class="btn-ghost flex-1" @click="startDemoMode">
-                Skip (Demo)
+                {{ t('settings.skipDemo') }}
               </button>
             </div>
           </div>
 
           <!-- Theme Tab -->
           <div v-if="settingsTab === 'theme'">
+            <!-- Color Presets -->
+            <div class="mb-6 p-4 rounded-xl border border-neutral-700/40 bg-neutral-800/30">
+              <div class="mb-3">
+                <h3 class="text-sm font-bold text-white">{{ t('theme.presets') }}</h3>
+                <p class="text-xs text-neutral-400">{{ t('theme.presetsDesc') }}</p>
+              </div>
+
+              <div class="grid grid-cols-2 gap-3">
+                <button
+                  v-for="preset in colorPresets"
+                  :key="preset.id"
+                  class="rounded-xl border border-neutral-700/40 bg-neutral-900/60 p-3 text-left transition-all duration-150 hover:border-neutral-500/50 hover:bg-neutral-800/70"
+                  @click="applyPreset(preset)"
+                >
+                  <div class="flex items-center gap-2 mb-2">
+                    <div
+                      v-for="color in preset.colors"
+                      :key="color"
+                      class="h-4 w-4 rounded-full border border-white/10 shadow-sm"
+                      :style="{ backgroundColor: color }"
+                    />
+                  </div>
+                  <div class="text-sm font-semibold text-neutral-100">
+                    {{ t(preset.nameKey) }}
+                  </div>
+                  <div class="mt-1 text-[10px] font-mono uppercase text-neutral-500">
+                    {{ preset.theme.primary }} / {{ preset.theme.accent }}
+                  </div>
+                </button>
+              </div>
+            </div>
+
             <!-- Rainbow Mode -->
             <div class="mb-6 p-4 rounded-xl border border-neutral-700/40 bg-neutral-800/30">
               <div class="flex items-center justify-between mb-3">
                 <div>
-                  <h3 class="text-sm font-bold text-white">Rainbow Mode</h3>
-                  <p class="text-xs text-neutral-400">Cycles through colors automatically</p>
+                  <h3 class="text-sm font-bold text-white">{{ t('theme.rainbowMode') }}</h3>
+                  <p class="text-xs text-neutral-400">{{ t('theme.rainbowDesc') }}</p>
                 </div>
                 <button
                   class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
@@ -607,7 +1184,7 @@ async function addMemoryEntry() {
                 <div v-if="theme.rainbow.enabled" class="space-y-3 mt-3 pt-3 border-t border-neutral-700/40">
                   <div>
                     <div class="flex items-center justify-between mb-1">
-                      <label class="text-xs font-semibold text-neutral-300">Speed</label>
+                      <label class="text-xs font-semibold text-neutral-300">{{ t('theme.speed') }}</label>
                       <span class="text-xs text-neutral-500">{{ theme.rainbow.speed }}</span>
                     </div>
                     <input
@@ -621,7 +1198,7 @@ async function addMemoryEntry() {
                   </div>
                   <div>
                     <div class="flex items-center justify-between mb-1">
-                      <label class="text-xs font-semibold text-neutral-300">Saturation</label>
+                      <label class="text-xs font-semibold text-neutral-300">{{ t('theme.saturation') }}</label>
                       <span class="text-xs text-neutral-500">{{ theme.rainbow.saturation }}%</span>
                     </div>
                     <input
@@ -635,7 +1212,7 @@ async function addMemoryEntry() {
                   </div>
                   <div>
                     <div class="flex items-center justify-between mb-1">
-                      <label class="text-xs font-semibold text-neutral-300">Lightness</label>
+                      <label class="text-xs font-semibold text-neutral-300">{{ t('theme.lightness') }}</label>
                       <span class="text-xs text-neutral-500">{{ theme.rainbow.lightness }}%</span>
                     </div>
                     <input
@@ -653,18 +1230,18 @@ async function addMemoryEntry() {
 
             <!-- Color Pickers -->
             <div class="space-y-3 mb-6">
-              <h3 class="text-sm font-bold text-white">Colors</h3>
+              <h3 class="text-sm font-bold text-white">{{ t('theme.colors') }}</h3>
 
               <div class="grid grid-cols-2 gap-3">
                 <div v-for="(colorDef, idx) in [
-                  { key: 'primary', label: 'Primary' },
-                  { key: 'accent', label: 'Accent' },
-                  { key: 'bg', label: 'Background' },
-                  { key: 'surface', label: 'Surface' },
-                  { key: 'fg', label: 'Text' },
-                  { key: 'userBubble', label: 'User Bubble' },
-                  { key: 'assistantBubble', label: 'AI Bubble' },
-                  { key: 'surface2', label: 'Surface Alt' },
+                  { key: 'primary', label: t('theme.primary') },
+                  { key: 'accent', label: t('theme.accent') },
+                  { key: 'bg', label: t('theme.background') },
+                  { key: 'surface', label: t('theme.surface') },
+                  { key: 'fg', label: t('theme.text') },
+                  { key: 'userBubble', label: t('theme.userBubble') },
+                  { key: 'assistantBubble', label: t('theme.aiBubble') },
+                  { key: 'surface2', label: t('theme.surfaceAlt') },
                 ]" :key="idx" class="flex items-center gap-2 p-2 rounded-lg bg-neutral-800/30">
                   <div class="relative shrink-0">
                     <div
@@ -688,7 +1265,7 @@ async function addMemoryEntry() {
 
               <!-- RGB Input for primary -->
               <div class="p-3 rounded-lg bg-neutral-800/30 border border-neutral-700/30">
-                <p class="text-xs font-semibold text-neutral-300 mb-2">Primary RGB</p>
+                <p class="text-xs font-semibold text-neutral-300 mb-2">{{ t('theme.primaryRgb') }}</p>
                 <div class="flex gap-2">
                   <div class="flex-1">
                     <label class="text-[10px] text-neutral-500 block mb-0.5">R</label>
@@ -745,28 +1322,28 @@ async function addMemoryEntry() {
             <!-- Preview -->
             <div class="mb-5 p-4 rounded-xl border border-neutral-700/30 overflow-hidden"
                  :style="{ backgroundColor: theme.colors.bg }">
-              <p class="text-xs font-semibold text-neutral-400 mb-2">Preview</p>
+              <p class="text-xs font-semibold text-neutral-400 mb-2">{{ t('theme.preview') }}</p>
               <div class="space-y-2">
                 <div class="flex justify-end">
                   <div class="px-3 py-2 rounded-xl text-xs text-white max-w-[70%]"
                        :style="{ background: `linear-gradient(to right, ${theme.colors.userBubble}, ${theme.colors.primary})` }">
-                    Hey, how's it going?
+                    {{ t('theme.previewUser') }}
                   </div>
                 </div>
                 <div class="flex justify-start">
                   <div class="px-3 py-2 rounded-xl text-xs max-w-[70%] border border-neutral-700/40"
                        :style="{ backgroundColor: theme.colors.assistantBubble, color: theme.colors.fg }">
-                    I'm doing great! What can I help with?
+                    {{ t('theme.previewAi') }}
                   </div>
                 </div>
                 <div class="flex gap-2 mt-2">
                   <div class="h-5 rounded-md text-[10px] px-2 flex items-center text-white font-semibold"
                        :style="{ backgroundColor: theme.colors.primary }">
-                    Button
+                    {{ t('theme.button') }}
                   </div>
                   <div class="h-5 rounded-md text-[10px] px-2 flex items-center text-white font-semibold"
                        :style="{ backgroundColor: theme.colors.accent }">
-                    Accent
+                    {{ t('theme.accent') }}
                   </div>
                 </div>
               </div>
@@ -774,10 +1351,10 @@ async function addMemoryEntry() {
 
             <div class="flex gap-2">
               <button class="btn-secondary flex-1" @click="resetTheme">
-                Reset Defaults
+                {{ t('theme.resetDefaults') }}
               </button>
               <button class="btn-primary flex-1" @click="showSettings = false">
-                Done
+                {{ t('theme.done') }}
               </button>
             </div>
           </div>
@@ -800,14 +1377,14 @@ async function addMemoryEntry() {
       >
         <div class="glass-surface rounded-2xl p-6 max-w-md w-full mx-4 animate-content-show">
           <h2 class="text-xl font-bold text-white mb-2">
-            Choose Model
+            {{ t('model.title') }}
           </h2>
           <p class="text-sm text-neutral-400 mb-5">
-            Pick which model {{ providers.find((provider) => provider.value === store.selectedProvider)?.label || store.selectedProvider }} should use with this saved API key.
+            {{ t('model.description', { provider: providers.find((provider) => provider.value === store.selectedProvider)?.label || store.selectedProvider }) }}
           </p>
 
           <div class="mb-6">
-            <label class="block text-sm font-semibold text-neutral-200 mb-2">Model</label>
+            <label class="block text-sm font-semibold text-neutral-200 mb-2">{{ t('model.label') }}</label>
             <select v-model="store.selectedModel" class="input-field">
               <option v-for="model in currentProviderModels" :key="model.id" :value="model.id">
                 {{ model.displayName }}
@@ -817,10 +1394,10 @@ async function addMemoryEntry() {
 
           <div class="flex gap-2">
             <button class="btn-secondary flex-1" @click="showModelPicker = false">
-              Cancel
+              {{ t('settings.cancel') }}
             </button>
             <button class="btn-primary flex-1" @click="finalizeSetup(store.apiKey)">
-              Save
+              {{ t('settings.save') }}
             </button>
           </div>
         </div>
@@ -843,10 +1420,10 @@ async function addMemoryEntry() {
       >
         <div class="glass-surface rounded-2xl p-6 max-w-md w-full mx-4 animate-content-show">
           <h2 class="text-xl font-bold text-white mb-1">
-            Agent Access
+            {{ t('agent.title') }}
           </h2>
           <p class="text-sm text-neutral-400 mb-5">
-            Choose how the agent can act on your machine.
+            {{ t('agent.description') }}
           </p>
 
           <div class="space-y-3 mb-6">
@@ -864,10 +1441,10 @@ async function addMemoryEntry() {
                 <span class="text-xl">🔔</span>
                 <div>
                   <div class="text-sm font-semibold text-white">
-                    Ask before running
+                    {{ t('agent.askTitle') }}
                   </div>
                   <div class="text-xs text-neutral-400 mt-0.5">
-                    Confirm every command before it executes
+                    {{ t('agent.askDesc') }}
                   </div>
                 </div>
                 <div v-if="agentMode === 'ask'" class="ml-auto w-2 h-2 rounded-full bg-primary-400" />
@@ -888,10 +1465,10 @@ async function addMemoryEntry() {
                 <span class="text-xl">⚡</span>
                 <div>
                   <div class="text-sm font-semibold text-white">
-                    Edit automatically
+                    {{ t('agent.autoTitle') }}
                   </div>
                   <div class="text-xs text-neutral-400 mt-0.5">
-                    Auto-run common commands (read, write, build) — confirm others
+                    {{ t('agent.autoDesc') }}
                   </div>
                 </div>
                 <div v-if="agentMode === 'auto'" class="ml-auto w-2 h-2 rounded-full bg-primary-400" />
@@ -912,10 +1489,10 @@ async function addMemoryEntry() {
                 <span class="text-xl">🔓</span>
                 <div>
                   <div class="text-sm font-semibold text-white">
-                    Full access
+                    {{ t('agent.fullTitle') }}
                   </div>
                   <div class="text-xs text-neutral-400 mt-0.5">
-                    Run any command without confirmation — use with caution
+                    {{ t('agent.fullDesc') }}
                   </div>
                 </div>
                 <div v-if="agentMode === 'full'" class="ml-auto w-2 h-2 rounded-full bg-red-400" />
@@ -924,7 +1501,7 @@ async function addMemoryEntry() {
           </div>
 
           <button class="btn-secondary w-full" @click="showAgent = false">
-            Cancel
+            {{ t('settings.cancel') }}
           </button>
         </div>
       </div>
@@ -947,12 +1524,12 @@ async function addMemoryEntry() {
         <div class="glass-surface rounded-2xl p-6 max-w-lg w-full mx-4 animate-content-show max-h-[80vh] flex flex-col">
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-xl font-bold text-white">
-              AI Memory
+              {{ t('memory.title') }}
             </h2>
-            <span class="text-xs text-neutral-400">{{ store.userMemories.length }} entries</span>
+            <span class="text-xs text-neutral-400">{{ t('memory.entries', { count: store.userMemories.length }) }}</span>
           </div>
           <p class="text-sm text-neutral-400 mb-4">
-            Persistent memory the AI uses across all chats. The AI auto-saves things you share (name, preferences), or you can add entries manually.
+            {{ t('memory.description') }}
           </p>
 
           <!-- Add new memory -->
@@ -960,7 +1537,7 @@ async function addMemoryEntry() {
             <div class="flex gap-2 mb-2">
               <input
                 v-model="newMemoryKey"
-                placeholder="Label (e.g. favorite_language)"
+                :placeholder="t('memory.labelPlaceholder')"
                 class="input-field text-sm flex-1"
               >
               <select v-model="newMemoryCategory" class="input-field text-sm w-28">
@@ -974,12 +1551,12 @@ async function addMemoryEntry() {
             <div class="flex gap-2">
               <input
                 v-model="newMemoryValue"
-                placeholder="Value (e.g. TypeScript)"
+                :placeholder="t('memory.valuePlaceholder')"
                 class="input-field text-sm flex-1"
                 @keydown.enter="addMemoryEntry"
               >
               <button class="btn-primary text-sm px-4" @click="addMemoryEntry">
-                Add
+                {{ t('memory.add') }}
               </button>
             </div>
           </div>
@@ -987,7 +1564,7 @@ async function addMemoryEntry() {
           <!-- Memory list -->
           <div class="flex-1 overflow-auto space-y-2 min-h-0">
             <div v-if="store.userMemories.length === 0" class="text-center text-neutral-500 text-sm py-6">
-              No memories yet. Chat naturally and the AI will remember key details, or add them manually above.
+              {{ t('memory.empty') }}
             </div>
             <div
               v-for="mem in store.userMemories"
@@ -1013,14 +1590,14 @@ async function addMemoryEntry() {
 
           <div class="flex gap-2 mt-4">
             <button class="btn-secondary flex-1" @click="showMemory = false">
-              Close
+              {{ t('memory.close') }}
             </button>
             <button
               v-if="store.userMemories.length > 0"
               class="btn-ghost text-sm text-red-400 hover:text-red-300"
-              @click="store.clearMemories(); showToast('All memories cleared', 'success')"
+              @click="store.clearMemories(); showToast(t('toast.memoriesCleared'), 'success')"
             >
-              Clear All
+              {{ t('memory.clearAll') }}
             </button>
           </div>
         </div>
@@ -1033,8 +1610,8 @@ async function addMemoryEntry() {
     v-if="store.isSetup"
     :class="[
       'relative flex h-screen w-screen overflow-hidden',
-      'bg-gradient-to-br from-neutral-950 to-neutral-900 text-white',
     ]"
+    :style="appShellStyle"
   >
     <!-- Ambient background -->
     <div class="absolute inset-0 pointer-events-none -z-10 opacity-60">
@@ -1054,7 +1631,8 @@ async function addMemoryEntry() {
       ]"
     >
       <div
-        class="w-72 h-full flex flex-col p-4 glass-surface border-r border-neutral-800/40"
+        class="w-72 h-full flex flex-col p-4 glass-surface border-r"
+        :style="secondaryPanelStyle"
       >
         <h1 :class="['text-xl font-bold mb-3 themed-primary-text', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-1' : '', !appReady ? 'opacity-0' : '']">
           SyntaxSenpai
@@ -1063,60 +1641,58 @@ async function addMemoryEntry() {
         <!-- New Chat button -->
         <button
           :class="['themed-new-chat-btn w-full flex items-center justify-center gap-2 px-4 py-2.5 mb-3 rounded-xl text-white font-semibold text-sm shadow-lg transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-2' : '', !appReady ? 'opacity-0' : '']"
+          :style="primaryButtonStyle"
           @click="store.newChat()"
         >
-          <span class="text-base">+</span> New Chat
+          <span class="text-base">+</span> {{ t('sidebar.newChat') }}
         </button>
 
         <div :class="['flex items-center gap-2 mb-3', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-3' : '', !appReady ? 'opacity-0' : '']">
           <div class="flex-1">
             <p class="text-xs text-neutral-500">
-              Waifu
+              {{ t('sidebar.waifu') }}
             </p>
             <p class="text-sm font-semibold">
               {{ store.selectedWaifu?.displayName }}
             </p>
           </div>
           <div class="flex items-center gap-1">
-            <span class="text-[10px] text-emerald-400 font-medium px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">auto-saved</span>
+            <span class="text-[10px] text-emerald-400 font-medium px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">{{ t('sidebar.autoSaved') }}</span>
           </div>
         </div>
 
         <!-- Filter tabs: All / Favorites -->
-        <div :class="['flex gap-1 mb-3 p-1 rounded-lg bg-neutral-800/40', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-4' : '', !appReady ? 'opacity-0' : '']">
+        <div :class="['flex gap-1 mb-3 p-1 rounded-lg border', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-4' : '', !appReady ? 'opacity-0' : '']" :style="filterTabsStyle">
           <button
             :class="[
               'flex-1 text-xs font-semibold py-1.5 rounded-md transition-all duration-150',
-              store.sidebarFilter === 'all'
-                ? 'bg-neutral-700/60 text-white'
-                : 'text-neutral-400 hover:text-neutral-200',
             ]"
+            :style="filterTabStyle(store.sidebarFilter === 'all')"
             @click="store.sidebarFilter = 'all'"
           >
-            All Chats
+            {{ t('sidebar.allChats') }}
           </button>
           <button
             :class="[
               'flex-1 text-xs font-semibold py-1.5 rounded-md transition-all duration-150',
-              store.sidebarFilter === 'favorites'
-                ? 'bg-neutral-700/60 text-amber-400'
-                : 'text-neutral-400 hover:text-neutral-200',
             ]"
+            :style="filterTabStyle(store.sidebarFilter === 'favorites', true)"
             @click="store.sidebarFilter = 'favorites'"
           >
-            Favorites
+            {{ t('sidebar.favorites') }}
           </button>
         </div>
 
         <input
           v-model="convSearch"
-          placeholder="Search conversations..."
+          :placeholder="t('sidebar.searchPlaceholder')"
           :class="['input-field text-sm mb-3', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-5' : '', !appReady ? 'opacity-0' : '']"
+          :style="inputSurfaceStyle"
         >
 
         <div :class="['flex-1 overflow-auto', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-6' : '', !appReady ? 'opacity-0' : '']">
           <p v-if="filteredConversations.length === 0" class="text-xs text-neutral-500 text-center py-4">
-            {{ store.sidebarFilter === 'favorites' ? 'No favorite chats yet' : 'No conversations yet' }}
+            {{ store.sidebarFilter === 'favorites' ? t('sidebar.noFavorites') : t('sidebar.noConversations') }}
           </p>
           <ul class="space-y-1.5">
             <li
@@ -1169,23 +1745,24 @@ async function addMemoryEntry() {
         </div>
 
         <div :class="['mt-3 space-y-2', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-7' : '', !appReady ? 'opacity-0' : '']">
-          <button class="btn-primary themed-btn-primary w-full text-sm" @click="showAgent = true">
-            Agent
+          <button class="btn-primary themed-btn-primary w-full text-sm" :style="primaryButtonStyle" @click="showAgent = true">
+            {{ t('sidebar.agent') }}
           </button>
           <div class="flex gap-2">
-            <button class="btn-secondary flex-1 text-sm" @click="showSettings = true">
-              Settings
+            <button class="btn-secondary flex-1 text-sm" :style="secondaryButtonStyle" @click="showSettings = true">
+              {{ t('sidebar.settings') }}
             </button>
             <button
               class="btn-secondary text-sm px-3"
+              :style="secondaryButtonStyle"
               title="AI Memory"
               @click="showMemory = true"
             >
               🧠
             </button>
           </div>
-          <button class="btn-ghost w-full text-sm" @click="sidebarOpen = false">
-            Collapse
+          <button class="btn-ghost w-full text-sm" :style="ghostButtonStyle" @click="sidebarOpen = false">
+            {{ t('sidebar.collapse') }}
           </button>
         </div>
       </div>
@@ -1197,11 +1774,12 @@ async function addMemoryEntry() {
       <div
         :class="[
           'sticky top-0 z-20 px-6 py-3',
-          'glass-surface border-b border-neutral-800/40',
+          'glass-surface border-b',
           'flex items-center justify-between',
           !startupAnimDone && appReady ? 'app-slide-in-top' : '',
           !appReady ? 'opacity-0' : '',
         ]"
+        :style="secondaryPanelStyle"
       >
         <div class="flex items-center gap-3 min-w-0">
           <button class="btn-ghost p-2" @click="sidebarOpen = !sidebarOpen">
@@ -1216,9 +1794,9 @@ async function addMemoryEntry() {
                 {{ store.selectedWaifu?.backstory?.slice(0, 60) }}
               </div>
             </div>
-            <div class="w-44 shrink-0 rounded-xl border bg-neutral-900/70 px-3 py-2" :style="affectionAccentStyle">
+            <div :class="[affectionMeterClass, 'shrink-0 rounded-xl border px-3 py-2']" :style="affectionBoxStyle">
               <div class="flex items-center justify-between text-[11px] uppercase tracking-[0.18em]">
-                <span>好感度</span>
+                <span>{{ t('header.affection') }}</span>
                 <span>{{ store.affection }} / 100({{ affectionTier }})</span>
               </div>
               <div class="mt-2 h-2 overflow-hidden rounded-full bg-neutral-800/90">
@@ -1228,10 +1806,10 @@ async function addMemoryEntry() {
           </div>
         </div>
         <div class="flex items-center gap-2">
-          <button class="btn-ghost p-2" @click="showSettings = true">
+          <button class="btn-ghost p-2" :style="ghostButtonStyle" @click="showSettings = true">
             ⚙️
           </button>
-          <button class="btn-ghost p-2" @click="showAgent = true">
+          <button class="btn-ghost p-2" :style="ghostButtonStyle" @click="showAgent = true">
             🤖
           </button>
         </div>
@@ -1247,10 +1825,10 @@ async function addMemoryEntry() {
             💬
           </div>
           <h3 class="text-lg font-semibold text-white mb-2 font-display" :style="emptyStateGlowStyle">
-            Chat with {{ store.selectedWaifu?.displayName }}
+            {{ t('chat.emptyTitle', { name: store.selectedWaifu?.displayName || '' }) }}
           </h3>
           <p class="text-sm" :style="emptyStateGlowStyle">
-            Start a conversation!
+            {{ t('chat.emptySubtitle') }}
           </p>
         </div>
 
@@ -1305,12 +1883,15 @@ async function addMemoryEntry() {
       </div>
 
       <!-- Input -->
-      <div :class="['glass-surface border-t border-neutral-800/40 p-4', !startupAnimDone && appReady ? 'app-slide-in-bottom' : '', !appReady ? 'opacity-0' : '']">
+      <div
+        :class="['glass-surface border-t p-4', !startupAnimDone && appReady ? 'app-slide-in-bottom' : '', !appReady ? 'opacity-0' : '']"
+        :style="secondaryPanelStyle"
+      >
         <div class="flex gap-3 items-end">
           <textarea
             ref="inputRef"
             v-model="store.inputValue"
-            placeholder="Say something... (Press / to focus)"
+            :placeholder="t('chat.inputPlaceholder')"
             :disabled="store.isLoading"
             rows="1"
             :class="[
@@ -1318,19 +1899,21 @@ async function addMemoryEntry() {
               'disabled:opacity-50',
             ]"
             style="max-height: 100px"
+            :style="inputSurfaceStyle"
             @input="adjustInputHeight"
             @keydown="handleKeyDown"
           />
           <button
             class="btn-primary themed-btn-primary min-w-fit flex items-center justify-center gap-2"
+            :style="primaryButtonStyle"
             :disabled="!store.inputValue.trim() || store.isLoading"
             @click="store.sendMessage(store.inputValue)"
           >
-            {{ store.isLoading ? '⚙️ Sending' : '➤ Send' }}
+            {{ store.isLoading ? t('chat.sending') : t('chat.send') }}
           </button>
         </div>
         <p class="text-xs text-neutral-500 mt-2">
-          Press Enter to send, Shift+Enter for newline
+          {{ t('chat.inputHint') }}
         </p>
       </div>
     </div>

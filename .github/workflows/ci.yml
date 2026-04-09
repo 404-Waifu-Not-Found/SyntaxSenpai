@@ -7,20 +7,26 @@ on:
     branches: [ 'main', 'master' ]
 
 jobs:
-  build:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - uses: pnpm/action-setup@v4
         with:
           version: 8
       - name: Install dependencies
-        run: pnpm install
-      - name: Build
+        run: pnpm install --frozen-lockfile
+      - name: Build shared packages and runtime
         run: pnpm -w -r --if-present --filter "!syntax-senpai-mobile" --filter "!syntax-senpai-desktop" run build
-      - name: Lint (skipped)
-        run: echo "Skipping lint in CI (no eslint configuration detected)"
       - name: Typecheck
         run: pnpm -w -r --if-present run typecheck
-      - name: Test
-        run: pnpm -w -r --if-present run test
+      - name: Unit tests
+        run: |
+          pnpm --filter @syntax-senpai/waifu-core run test:unit
+          pnpm --filter syntax-senpai-runtime run test
+      - name: Docker build smoke test
+        run: docker build -f Dockerfile -t syntax-senpai-runtime:ci .

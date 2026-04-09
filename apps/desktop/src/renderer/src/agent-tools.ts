@@ -1,8 +1,9 @@
 /**
  * Agent tool definitions and executor for AI tool calling.
  *
- * Two tools:
+ * Tools:
  *  - `terminal`       – run any shell command in a real terminal
+ *  - `web_search`     – search the public web using DuckDuckGo
  *  - `stop_response`  – signal the AI is done and deliver a final message
  *
  * The executor routes calls through Electron IPC to the main process
@@ -30,6 +31,52 @@ export const agentTools: ToolDefinition[] = [
         },
       },
       required: ['command'],
+    },
+  },
+  {
+    name: 'web_search',
+    description:
+      'Search the public web using DuckDuckGo free search. Use this when the user asks for current events, recent information, web lookups, documentation, product pages, or anything you should verify online before answering.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'The search query to run on DuckDuckGo.',
+        },
+        limit: {
+          type: 'integer',
+          description: 'Maximum number of results to return, between 1 and 8.',
+          default: 5,
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'spotify_now_playing',
+    description:
+      'Get the song currently playing on the user\'s Spotify. Returns track name, artist, album, playback position, and duration. Use this whenever the user asks what they\'re listening to, or when you want to comment on their music.',
+    parameters: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'spotify_control',
+    description:
+      'Control the user\'s Spotify playback. Can play, pause, skip to next track, or go to previous track.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          description: 'The playback action: "play", "pause", "play_pause", "next", or "previous"',
+          enum: ['play', 'pause', 'play_pause', 'next', 'previous'],
+        },
+      },
+      required: ['action'],
     },
   },
   {
@@ -100,6 +147,25 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
       if (res.stderr) out += (out ? '\n' : '') + `STDERR: ${res.stderr}`
       if (!out.trim()) out = `(exit code ${res.code ?? 0})`
       return out
+    }
+
+    case 'web_search': {
+      const res = await ipc.invoke('agent:webSearch', args.query, args.limit || 5)
+      if (!res.success) return `Web search error: ${res.error}`
+      return res.content || 'No search results found.'
+    }
+
+    case 'spotify_now_playing': {
+      const res = await ipc.invoke('spotify:nowPlaying')
+      if (!res.success) return `Spotify error: ${res.error}`
+      const d = res.data
+      return `Now playing: "${d.track}" by ${d.artist}\nAlbum: ${d.album}\nProgress: ${d.position} / ${d.duration}\nState: ${d.state}`
+    }
+
+    case 'spotify_control': {
+      const res = await ipc.invoke('spotify:control', args.action)
+      if (!res.success) return `Spotify error: ${res.error}`
+      return `Spotify: ${args.action} executed successfully.`
     }
 
     case STOP_TOOL_NAME:

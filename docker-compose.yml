@@ -1,0 +1,48 @@
+services:
+  runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: syntax-senpai-runtime:local
+    ports:
+      - "8787:8787"
+    environment:
+      PORT: 8787
+      SYNTAX_SENPAI_DATA_DIR: /data
+      SYNTAX_SENPAI_PLUGIN_DIR: /app/plugins
+      SYNTAX_SENPAI_BACKUP_DIR: /data/backups
+    volumes:
+      - syntax_senpai_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8787/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - runtime
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  syntax_senpai_data:

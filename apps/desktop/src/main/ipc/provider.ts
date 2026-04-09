@@ -6,7 +6,7 @@ const OPENAI_COMPATIBLE_BASE_URLS: Record<string, string> = {
   deepseek: 'https://api.deepseek.com/v1',
   groq: 'https://api.groq.com/openai/v1',
   'minimax-global': 'https://api.minimax.io/v1',
-  'minimax-cn': 'https://api.minimax.chat/v1',
+  'minimax-cn': 'https://api.minimaxi.com/v1',
   xai: 'https://api.x.ai/v1',
   'xai-grok': 'https://api.x.ai/v1',
   mistral: 'https://api.mistral.ai/v1',

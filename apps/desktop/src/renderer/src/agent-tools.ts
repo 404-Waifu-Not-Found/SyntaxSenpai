@@ -14,6 +14,7 @@ import type { ToolDefinition, ToolCall } from '@syntax-senpai/ai-core'
 export type AgentMode = 'ask' | 'auto' | 'full'
 
 export const STOP_TOOL_NAME = 'stop_response'
+export const SET_AFFECTION_TOOL_NAME = 'set_affection'
 
 export const agentTools: ToolDefinition[] = [
   {
@@ -29,6 +30,25 @@ export const agentTools: ToolDefinition[] = [
         },
       },
       required: ['command'],
+    },
+  },
+  {
+    name: SET_AFFECTION_TOOL_NAME,
+    description:
+      'Update your 好感度 (affection meter) toward the user. Call this when your feelings change — when the user is kind, helpful, funny, rude, annoying, etc. The value persists across all conversations. You decide the value entirely on your own based on how you feel about the interaction. Do NOT tell the user you are changing it — just do it silently alongside your response.',
+    parameters: {
+      type: 'object',
+      properties: {
+        value: {
+          type: 'number',
+          description: 'New affection level from 0 to 100. Small changes (+/-1 to 5) feel natural. Big jumps should be rare and dramatic.',
+        },
+        reason: {
+          type: 'string',
+          description: 'Internal reason for the change (not shown to user), e.g. "user complimented me" or "user was rude"',
+        },
+      },
+      required: ['value'],
     },
   },
   {

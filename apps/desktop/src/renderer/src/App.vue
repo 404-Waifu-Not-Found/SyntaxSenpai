@@ -191,6 +191,55 @@ const currentProviderModels = computed(() =>
   [],
 )
 
+const affectionTier = computed(() => {
+  const value = store.affection
+  if (value <= 15) return '冰冷'
+  if (value <= 30) return '疏离'
+  if (value <= 45) return '普通'
+  if (value <= 60) return '友好'
+  if (value <= 75) return '亲近'
+  if (value <= 90) return '依恋'
+  return '挚爱'
+})
+
+const affectionFillStyle = computed(() => {
+  return {
+    width: `${store.affection}%`,
+    background: rainbowToggleBg.value,
+  }
+})
+
+const affectionAccentStyle = computed(() => {
+  const h = currentRainbowHue.value
+  const s = theme.value.rainbow.saturation
+  const l = theme.value.rainbow.lightness
+  const accent = hslToHex(h, s, l)
+  const softAccent = hslToHex(h, Math.max(s - 10, 35), Math.min(l + 18, 84))
+
+  return {
+    borderColor: `${accent}55`,
+    color: softAccent,
+    boxShadow: `0 0 18px color-mix(in srgb, ${accent} 24%, transparent)`,
+  }
+})
+
+const emptyStateGlowStyle = computed(() => {
+  const h = currentRainbowHue.value
+  const s = theme.value.rainbow.saturation
+  const l = theme.value.rainbow.lightness
+  const accent = theme.value.rainbow.enabled
+    ? hslToHex(h, s, l)
+    : theme.value.colors.primary
+  const softAccent = theme.value.rainbow.enabled
+    ? hslToHex(h, Math.max(s - 10, 35), Math.min(l + 18, 84))
+    : accent
+
+  return {
+    color: softAccent,
+    textShadow: `0 0 18px color-mix(in srgb, ${accent} 55%, transparent)`,
+  }
+})
+
 onMounted(() => {
   ;(async () => {
     store.loadSetup()
@@ -1085,16 +1134,27 @@ async function addMemoryEntry() {
           'flex items-center justify-between',
         ]"
       >
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-3 min-w-0">
           <button class="btn-ghost p-2" @click="sidebarOpen = !sidebarOpen">
             {{ sidebarOpen ? '←' : '☰' }}
           </button>
-          <div>
-            <div class="text-lg font-semibold">
-              {{ store.selectedWaifu?.displayName }}
+          <div class="flex items-center gap-4 min-w-0">
+            <div class="min-w-0">
+              <div class="text-lg font-semibold truncate">
+                {{ store.selectedWaifu?.displayName }}
+              </div>
+              <div class="text-xs text-neutral-400 truncate">
+                {{ store.selectedWaifu?.backstory?.slice(0, 60) }}
+              </div>
             </div>
-            <div class="text-xs text-neutral-400">
-              {{ store.selectedWaifu?.backstory?.slice(0, 60) }}
+            <div class="w-44 shrink-0 rounded-xl border bg-neutral-900/70 px-3 py-2" :style="affectionAccentStyle">
+              <div class="flex items-center justify-between text-[11px] uppercase tracking-[0.18em]">
+                <span>好感度</span>
+                <span>{{ store.affection }} / 100({{ affectionTier }})</span>
+              </div>
+              <div class="mt-2 h-2 overflow-hidden rounded-full bg-neutral-800/90">
+                <div class="h-full rounded-full transition-all duration-500 ease-out" :style="affectionFillStyle" />
+              </div>
             </div>
           </div>
         </div>
@@ -1114,13 +1174,13 @@ async function addMemoryEntry() {
           v-if="store.messages.length === 0"
           class="flex flex-col items-center justify-center h-full text-center text-neutral-400"
         >
-          <div class="text-4xl mb-4">
+          <div class="text-4xl mb-4" :style="emptyStateGlowStyle">
             💬
           </div>
-          <h3 class="text-lg font-semibold text-white mb-2 font-display">
+          <h3 class="text-lg font-semibold text-white mb-2 font-display" :style="emptyStateGlowStyle">
             Chat with {{ store.selectedWaifu?.displayName }}
           </h3>
-          <p class="text-sm">
+          <p class="text-sm" :style="emptyStateGlowStyle">
             Start a conversation!
           </p>
         </div>
@@ -1177,7 +1237,7 @@ async function addMemoryEntry() {
 
       <!-- Input -->
       <div class="glass-surface border-t border-neutral-800/40 p-4">
-        <div class="flex gap-3">
+        <div class="flex gap-3 items-end">
           <textarea
             ref="inputRef"
             v-model="store.inputValue"
@@ -1193,7 +1253,7 @@ async function addMemoryEntry() {
             @keydown="handleKeyDown"
           />
           <button
-            class="btn-primary themed-btn-primary min-w-fit flex items-center gap-2"
+            class="btn-primary themed-btn-primary min-w-fit flex items-center justify-center gap-2"
             :disabled="!store.inputValue.trim() || store.isLoading"
             @click="store.sendMessage(store.inputValue)"
           >

@@ -3,6 +3,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SplashScreen from "expo-splash-screen";
 import { Stack, useRouter } from "expo-router";
+import { loadThemeFromStorage } from "./src/hooks/useTheme";
 
 // Prevent splash screen from auto hiding
 SplashScreen.preventAutoHideAsync();
@@ -14,6 +15,8 @@ export default function RootLayout() {
   React.useEffect(() => {
     // Check onboarding status
     const checkOnboarding = async () => {
+      // Hydrate theme before UI renders
+      await loadThemeFromStorage().catch(() => {});
       try {
         const state = await AsyncStorage.getItem("syntax-senpai-app-state");
         if (state) {

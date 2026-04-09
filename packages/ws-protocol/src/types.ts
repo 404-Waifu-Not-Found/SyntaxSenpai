@@ -69,6 +69,11 @@ export interface AgentRequestPayload {
   messages: Message[];
   waifuId: string;
   relationshipSnapshot: WaifuRelationship;
+  providerConfig: {
+    type: string;
+    apiKey: string;
+    model: string;
+  };
 }
 
 /**

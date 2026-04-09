@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   View,
   ScrollView,
@@ -16,6 +16,8 @@ import { useRouter } from "expo-router";
 import { AIChatRuntime } from "@syntax-senpai/ai-core";
 import { APIKeyManager } from "@syntax-senpai/storage";
 import { buildSystemPrompt, builtInWaifus } from "@syntax-senpai/waifu-core";
+import { useTheme } from "../../src/hooks/useTheme";
+import { useWsConnection, sendAgentRequest } from "../../src/hooks/useWsConnection";
 
 interface Message {
   id: string;
@@ -79,6 +81,9 @@ function createWaifuSystemPrompt(waifu: any, provider: string, model: string) {
 
 export default function ChatScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const { connectionState } = useWsConnection();
+  const isRemoteMode = connectionState === "paired";
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -88,6 +93,7 @@ export default function ChatScreen() {
   const [showSettings, setShowSettings] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState("");
   const scrollViewRef = useRef<ScrollView>(null);
+  const pendingRemoteId = useRef<string | null>(null);
 
   const selectedWaifu = builtInWaifus.find((w) => w.id === selectedWaifuId) || builtInWaifus[0];
 
@@ -150,6 +156,35 @@ export default function ChatScreen() {
     scrollToBottom();
   }, [messages]);
 
+  // Handle stream chunks from remote desktop
+  useWsConnection({
+    onStreamChunk: useCallback((_convId: string, chunk: string) => {
+      setMessages((prev) => {
+        const id = pendingRemoteId.current;
+        if (!id) return prev;
+        const last = prev[prev.length - 1];
+        if (last?.id === id) {
+          return [...prev.slice(0, -1), { ...last, content: last.content + chunk }];
+        }
+        const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        return [...prev, { id, role: "assistant", content: chunk, timestamp: ts }];
+      });
+    }, []),
+    onStreamEnd: useCallback((_convId: string, _final: string) => {
+      pendingRemoteId.current = null;
+      setIsLoading(false);
+    }, []),
+    onStreamError: useCallback((_convId: string, error: string) => {
+      pendingRemoteId.current = null;
+      setIsLoading(false);
+      const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      setMessages((prev) => [
+        ...prev,
+        { id: `err-${Date.now()}`, role: "assistant", content: `Error: ${error}`, timestamp: ts },
+      ]);
+    }, []),
+  });
+
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isLoading) return;
 
@@ -167,6 +202,41 @@ export default function ChatScreen() {
     setInputValue("");
     setIsLoading(true);
 
+    // Remote mode: proxy through desktop WS
+    if (isRemoteMode) {
+      try {
+        const keyManager = new APIKeyManager("mobile");
+        const apiKey = await keyManager.getKey(selectedProvider);
+        if (!apiKey) throw new Error(`No API key configured for ${selectedProvider}`);
+        const model = DEFAULT_MODEL_BY_PROVIDER[selectedProvider] || "gpt-4o";
+        const conversationId = `conv-${Date.now()}`;
+        const assistantId = `assistant-remote-${Date.now()}`;
+        pendingRemoteId.current = assistantId;
+
+        const aiMessages = [...messages, userMessage].map((m) => ({
+          id: m.id,
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        }));
+
+        sendAgentRequest({
+          conversationId,
+          messages: aiMessages,
+          waifuId: selectedWaifuId,
+          providerConfig: { type: selectedProvider, apiKey, model },
+        });
+      } catch (error) {
+        setIsLoading(false);
+        const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        setMessages((prev) => [
+          ...prev,
+          { id: `err-${Date.now()}`, role: "assistant", content: error instanceof Error ? error.message : "An error occurred", timestamp: ts },
+        ]);
+      }
+      return;
+    }
+
+    // Standalone mode: use AIChatRuntime directly
     try {
       const keyManager = new APIKeyManager("mobile");
       const apiKey = await keyManager.getKey(selectedProvider);
@@ -245,15 +315,15 @@ export default function ChatScreen() {
 
   if (isInitializing) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: "#0f0f0f", justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator color="#6366f1" size="large" />
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg, justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator color={colors.primary} size="large" />
       </SafeAreaView>
     );
   }
 
   if (showSettings) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: "#0f0f0f" }}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
         <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 20 }}>
           <Text style={{ fontSize: 28, marginBottom: 16, textAlign: "center", color: "white", fontWeight: "bold" }}>
             Setup SyntaxSenpai
@@ -345,25 +415,29 @@ export default function ChatScreen() {
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#0f0f0f" }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bg }}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         {/* Top Bar */}
         <View style={{
           borderBottomWidth: 1,
-          borderBottomColor: "#1a1a1a",
-          backgroundColor: "#0f0f0f",
+          borderBottomColor: colors.surface,
+          backgroundColor: colors.bg,
           paddingVertical: 12,
           paddingHorizontal: 16,
         }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#10b981" }} />
-              <Text style={{ fontSize: 12, fontWeight: "600", color: "#a0a0a0" }}>
-                {selectedWaifu.displayName} · Online
+              <View style={{
+                width: 8, height: 8, borderRadius: 4,
+                backgroundColor: isRemoteMode ? colors.primary : connectionState === "connecting" ? "#f59e0b" : "#10b981",
+              }} />
+              <Text style={{ fontSize: 12, fontWeight: "600", color: colors.fg + "80" }}>
+                {selectedWaifu.displayName}
+                {isRemoteMode ? " · Desktop" : connectionState === "connecting" ? " · Connecting..." : " · Local"}
               </Text>
             </View>
-            <TouchableOpacity onPress={() => setShowSettings(true)}>
-              <Text style={{ fontSize: 16 }}>⚙️</Text>
+            <TouchableOpacity onPress={() => router.push("/(main)/settings")}>
+              <Text style={{ fontSize: 16, color: colors.fg + "80" }}>⚙</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -385,7 +459,7 @@ export default function ChatScreen() {
             <View key={msg.id} style={{ flexDirection: msg.role === "user" ? "row-reverse" : "row" }}>
               <View style={{
                 maxWidth: "85%",
-                backgroundColor: msg.role === "user" ? "#6366f1" : "#1a1a1a",
+                backgroundColor: msg.role === "user" ? colors.userBubble : colors.assistantBubble,
                 borderRadius: 12,
                 padding: 12,
               }}>
@@ -405,7 +479,7 @@ export default function ChatScreen() {
 
           {isLoading && (
             <View style={{ flexDirection: "row", gap: 8, alignItems: "flex-end" }}>
-              <ActivityIndicator color="#6366f1" size="small" />
+              <ActivityIndicator color={colors.primary} size="small" />
               <Text style={{ color: "#a0a0a0", fontSize: 12 }}>
                 {selectedWaifu.displayName} is typing...
               </Text>
@@ -416,8 +490,8 @@ export default function ChatScreen() {
         {/* Input Area */}
         <View style={{
           borderTopWidth: 1,
-          borderTopColor: "#1a1a1a",
-          backgroundColor: "#0f0f0f",
+          borderTopColor: colors.surface,
+          backgroundColor: colors.bg,
           paddingVertical: 12,
           paddingHorizontal: 16,
           paddingBottom: Platform.OS === "ios" ? 20 : 12,
@@ -427,15 +501,15 @@ export default function ChatScreen() {
             gap: 8,
             alignItems: "flex-end",
             borderWidth: 1,
-            borderColor: "#333333",
+            borderColor: colors.surface2,
             borderRadius: 12,
             paddingHorizontal: 12,
-            backgroundColor: "#1a1a1a",
+            backgroundColor: colors.surface,
           }}>
             <TextInput
-              style={{ flex: 1, color: "#ffffff", paddingVertical: 12, fontSize: 14 }}
+              style={{ flex: 1, color: colors.fg, paddingVertical: 12, fontSize: 14 }}
               placeholder="Say something..."
-              placeholderTextColor="#606060"
+              placeholderTextColor={colors.fg + "40"}
               value={inputValue}
               onChangeText={setInputValue}
               editable={!isLoading}
@@ -445,7 +519,7 @@ export default function ChatScreen() {
               onPress={handleSendMessage}
               disabled={!inputValue.trim() || isLoading}
               style={{
-                backgroundColor: inputValue.trim() ? "#6366f1" : "#2a2a2a",
+                backgroundColor: inputValue.trim() ? colors.primary : colors.surface2,
                 paddingVertical: 8,
                 paddingHorizontal: 12,
                 borderRadius: 8,

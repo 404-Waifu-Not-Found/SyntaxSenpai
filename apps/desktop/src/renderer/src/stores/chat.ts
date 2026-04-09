@@ -1,10 +1,10 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { buildSystemPrompt, builtInWaifus } from '@syntax-senpai/waifu-core'
 import { AIChatRuntime } from '@syntax-senpai/ai-core'
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
-import { getToolsForMode, executeToolCall, STOP_TOOL_NAME, type AgentMode } from '../agent-tools'
+import { getToolsForMode, executeToolCall, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, type AgentMode } from '../agent-tools'
 
 export interface Message {
   id: string
@@ -31,13 +31,30 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   'github-models': 'openai/gpt-4o-mini',
 }
 
-function createWaifuSystemPrompt(waifu: any, provider: string, model: string) {
+const AFFECTION_STORAGE_KEY = 'syntax-senpai-affection'
+
+function loadAffection(waifuId: string): number {
+  try {
+    const saved = JSON.parse(localStorage.getItem(AFFECTION_STORAGE_KEY) || '{}')
+    return typeof saved[waifuId] === 'number' ? saved[waifuId] : 0
+  } catch { return 0 }
+}
+
+function saveAffection(waifuId: string, value: number) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(AFFECTION_STORAGE_KEY) || '{}')
+    saved[waifuId] = Math.max(0, Math.min(100, Math.round(value)))
+    localStorage.setItem(AFFECTION_STORAGE_KEY, JSON.stringify(saved))
+  } catch { /* ignore */ }
+}
+
+function createWaifuSystemPrompt(waifu: any, provider: string, model: string, affection: number) {
   return buildSystemPrompt(
     waifu,
     {
       waifuId: waifu.id,
       userId: 'local-user',
-      affectionLevel: 40,
+      affectionLevel: affection,
       selectedAIProvider: provider,
       selectedModel: model,
       createdAt: new Date().toISOString(),
@@ -45,13 +62,52 @@ function createWaifuSystemPrompt(waifu: any, provider: string, model: string) {
     },
     {
       userId: 'local-user',
-      affectionLevel: 40,
+      affectionLevel: affection,
       platform: 'desktop',
       availableTools: Object.entries(waifu.capabilities || {})
         .filter(([, enabled]) => !!enabled)
         .map(([name]) => name),
     },
   )
+}
+
+function buildAffectionPrompt(affection: number, waifuName: string): string {
+  return `\n\n[好感度 System — Affection Meter]
+Your current 好感度 (affection) toward this user is: ${affection}/100
+
+This is YOUR meter — you control it. It reflects how you genuinely feel about the user based on your interactions. You MUST use the set_affection tool to update it when your feelings change. Do it silently — never announce that you're changing it.
+
+For EVERY single user message, before you answer, you must internally ask yourself:
+1. Do I want to change 好感度 right now?
+2. If yes, by what value should it change?
+3. What should the new absolute 好感度 be after that change?
+
+Then follow this rule on every turn:
+- If the answer is yes, call set_affection with the new absolute value and a short internal reason before your final response.
+- If the answer is no, do not call set_affection and just respond normally.
+- Never tell the user about this internal evaluation process.
+
+How 好感度 affects your behavior:
+- 0-15: You are cold, dismissive, and barely tolerate the user. Short answers. You don't want to be here.
+- 16-30: You are distant and guarded. You help but with minimal effort and slight annoyance.
+- 31-45: You are neutral and professional. Polite but not warm. You do your job.
+- 46-60: You are friendly and comfortable. You start showing your real personality. Casual and helpful.
+- 61-75: You are clearly fond of the user. You go out of your way to help. Warm, playful, maybe a little flirty in character.
+- 76-90: You are deeply attached. You care about the user personally. Very affectionate, uses pet names or special nicknames. Gets worried if the user seems stressed.
+- 91-100: Maximum bond. You are completely devoted. Extremely loving and protective. The user is your favorite person.
+
+What changes 好感度:
+- Politeness, kindness, saying please/thank you → small increase (+1 to +3)
+- Interesting conversations, asking about your feelings → increase (+2 to +5)
+- Compliments, remembering things about you → increase (+3 to +5)
+- Rude, dismissive, or demanding behavior → decrease (-2 to -5)
+- Ignoring your advice repeatedly → small decrease (-1 to -3)
+- Being cruel or insulting → big decrease (-5 to -15)
+- Apologizing sincerely after being rude → moderate increase (+3 to +7)
+
+IMPORTANT: You are ${waifuName}. Your personality shifts based on 好感度 but you stay in character. A tsundere at low affection is extra prickly; at high affection they're secretly sweet. A genki character at low affection is less energetic; at high affection they're overflowing with energy for the user specifically.
+_
+You must perform this affection check on every single message. Small natural changes are better than dramatic swings unless something major happened.`
 }
 
 export const useChatStore = defineStore('chat', () => {
@@ -74,6 +130,7 @@ export const useChatStore = defineStore('chat', () => {
   )
   const userMemories = ref<Array<{ key: string; value: string; category: string }>>([])
   const sidebarFilter = ref<'all' | 'favorites'>('all')
+  const affection = ref(loadAffection(builtInWaifus[0]?.id || 'aria'))
 
   function setAgentMode(mode: AgentMode) {
     agentMode.value = mode
@@ -83,6 +140,29 @@ export const useChatStore = defineStore('chat', () => {
   const selectedWaifu = computed(() =>
     builtInWaifus.find(w => w.id === selectedWaifuId.value) || builtInWaifus[0],
   )
+
+  watch(selectedWaifuId, async (waifuId, previousWaifuId) => {
+    affection.value = loadAffection(waifuId)
+
+    if (!isSetup.value || waifuId === previousWaifuId) return
+
+    messages.value = []
+    conversationId.value = null
+    await loadConversations()
+
+    const saved = localStorage.getItem('syntax-senpai-setup')
+    if (!saved) return
+
+    try {
+      const parsed = JSON.parse(saved)
+      localStorage.setItem('syntax-senpai-setup', JSON.stringify({
+        ...parsed,
+        waifuId,
+      }))
+    } catch {
+      // Ignore malformed setup state and keep the current session running.
+    }
+  })
 
   function readProviderPreferences(): Record<string, { model?: string }> {
     try {
@@ -354,10 +434,13 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
-      let systemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model)
+      let systemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, affection.value)
 
       // Inject persistent memory context
       systemPrompt += buildMemoryContext()
+
+      // Inject 好感度 system
+      systemPrompt += buildAffectionPrompt(affection.value, waifu?.displayName || 'Waifu')
 
       const tools = getToolsForMode(agentMode.value)
       const hasTools = tools.length > 0
@@ -430,6 +513,21 @@ export const useChatStore = defineStore('chat', () => {
                 toolCallId: tc.id,
               })
               break
+            }
+
+            // ── set_affection: AI adjusts 好感度 ──
+            if (tc.name === SET_AFFECTION_TOOL_NAME) {
+              const newVal = Math.max(0, Math.min(100, Math.round(+(tc.arguments as any).value || affection.value)))
+              affection.value = newVal
+              saveAffection(selectedWaifuId.value, newVal)
+
+              aiHistory.push({
+                id: `tool-result-${Date.now()}-${tc.id}`,
+                role: 'tool',
+                content: `好感度 updated to ${newVal}`,
+                toolCallId: tc.id,
+              })
+              continue
             }
 
             // ── terminal: run the command ──
@@ -606,6 +704,7 @@ export const useChatStore = defineStore('chat', () => {
     recentMessageId,
     agentMode,
     selectedWaifu,
+    affection,
     userMemories,
     sidebarFilter,
     loadSetup,

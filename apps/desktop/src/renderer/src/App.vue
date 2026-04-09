@@ -9,6 +9,7 @@ import ChatBubble from './components/ChatBubble.vue'
 import AppAvatar from './components/AppAvatar.vue'
 import TypingDots from './components/TypingDots.vue'
 import MessageSkeleton from './components/MessageSkeleton.vue'
+import QrPairModal from './components/QrPairModal.vue'
 
 const store = useChatStore()
 const { invoke } = useIpc()
@@ -25,7 +26,22 @@ const rainbowToggleBg = computed(() => {
   const c3 = hslToHex((h + 120) % 360, s, l)
   return `linear-gradient(to right, ${c1}, ${c2}, ${c3})`
 })
-const settingsTab = ref<'general' | 'theme'>('general')
+const settingsTab = ref<'general' | 'theme' | 'mobile'>('general')
+const showQrPair = ref(false)
+const mobilePairedDevice = ref<string | null>(null)
+
+async function checkMobilePairingStatus() {
+  try {
+    const status = await invoke('ws:getPairingStatus')
+    if (status?.paired) {
+      mobilePairedDevice.value = status.deviceName || 'Mobile Device'
+    } else {
+      mobilePairedDevice.value = null
+    }
+  } catch {
+    mobilePairedDevice.value = null
+  }
+}
 const providerOrder = [
   'anthropic',
   'openai',
@@ -930,6 +946,17 @@ async function handleImportData() {
             >
               {{ t('settings.theme') }}
             </button>
+            <button
+              :class="[
+                'flex-1 text-sm font-semibold py-2 rounded-md transition-all duration-150',
+                settingsTab === 'mobile'
+                  ? 'bg-neutral-700/60 text-white'
+                  : 'text-neutral-400 hover:text-neutral-200',
+              ]"
+              @click="settingsTab = 'mobile'; checkMobilePairingStatus()"
+            >
+              Mobile
+            </button>
           </div>
 
           <!-- General Tab -->
@@ -1358,9 +1385,50 @@ async function handleImportData() {
               </button>
             </div>
           </div>
+
+          <!-- Mobile Tab -->
+          <div v-if="settingsTab === 'mobile'">
+            <!-- Connection Status -->
+            <div class="mb-6 p-4 rounded-xl border border-neutral-700/40 bg-neutral-800/30">
+              <h3 class="text-sm font-bold text-white mb-1">Desktop Connection</h3>
+              <p class="text-xs text-neutral-400 mb-4">Pair your phone to use the chatbot remotely via your local network.</p>
+
+              <div class="flex items-center gap-2 mb-4">
+                <div
+                  class="w-2.5 h-2.5 rounded-full"
+                  :class="mobilePairedDevice ? 'bg-emerald-400' : 'bg-neutral-600'"
+                />
+                <span class="text-sm text-neutral-300">
+                  {{ mobilePairedDevice ? `Connected: ${mobilePairedDevice}` : 'No device connected' }}
+                </span>
+              </div>
+
+              <div class="flex gap-2">
+                <button class="btn-primary flex-1" @click="showQrPair = true; showSettings = false">
+                  Show QR Code
+                </button>
+                <button
+                  v-if="mobilePairedDevice"
+                  class="btn-secondary flex-1"
+                  @click="invoke('ws:stop').then(() => { mobilePairedDevice = null })"
+                >
+                  Disconnect
+                </button>
+              </div>
+            </div>
+
+            <div class="flex gap-2">
+              <button class="btn-primary flex-1" @click="showSettings = false">Done</button>
+            </div>
+          </div>
         </div>
       </div>
     </Transition>
+  </Teleport>
+
+  <!-- QR Pair Modal -->
+  <Teleport to="body">
+    <QrPairModal v-if="showQrPair" @close="showQrPair = false; checkMobilePairingStatus()" />
   </Teleport>
 
   <Teleport to="body">

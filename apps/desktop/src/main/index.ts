@@ -27,6 +27,8 @@ import { registerProviderIpc } from './ipc/provider'
 import { registerTerminalIpc } from './ipc/terminal'
 import { registerSpotifyIpc } from './ipc/spotify'
 import { registerExportIpc } from './ipc/export'
+import { registerWsIpc } from './ipc/ws'
+import { startWsServer } from './ws-server'
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -77,6 +79,8 @@ app.whenReady().then(() => {
   registerTerminalIpc()
   registerSpotifyIpc()
   registerExportIpc()
+  registerWsIpc()
+  startWsServer().catch((err) => console.error('[ws-server] Failed to start:', err))
 })
 
 app.on('window-all-closed', () => {

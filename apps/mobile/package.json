@@ -22,6 +22,7 @@
     "expo-router": "^4.0.0",
     "expo-sqlite": "^14.0.0",
     "expo-secure-store": "^14.0.0",
+    "expo-camera": "^16.0.0",
     "expo-splash-screen": "^0.27.0",
     "react": "^19.0.0",
     "react-native": "^0.76.0",

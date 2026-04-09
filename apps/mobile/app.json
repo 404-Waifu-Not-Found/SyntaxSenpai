@@ -28,7 +28,8 @@
     },
     "plugins": [
       "expo-router",
-      ["expo-secure-store", {}]
+      ["expo-secure-store", {}],
+      ["expo-camera", { "cameraPermission": "Allow SyntaxSenpai to access your camera to scan QR codes." }]
     ],
     "scheme": "syntaxsenpai"
   }

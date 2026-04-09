@@ -32,7 +32,7 @@ const bubbleClasses = computed(() => [
   'relative px-4 py-3 rounded-xl max-w-xs lg:max-w-md',
   'transition-all duration-160 ease-out',
   props.role === 'user'
-    ? 'bg-gradient-to-r from-primary-600 to-primary-500 text-white animate-slide-up'
+    ? 'themed-user-bubble text-white animate-slide-up'
     : 'glass-surface text-neutral-100 animate-slide-up',
   props.recent ? 'animate-pop-in' : '',
 ])

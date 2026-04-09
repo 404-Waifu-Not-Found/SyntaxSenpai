@@ -82,6 +82,19 @@ export default defineConfig({
           --surface: #111216;
           --surface-2: #0d0f13;
           --fg: #ffffff;
+          --primary: #6366f1;
+          --primary-rgb: 99,102,241;
+          --primary-100: #e0e7ff;
+          --primary-200: #c7d2fe;
+          --primary-300: #a5b4fc;
+          --primary-400: #818cf8;
+          --primary-500: #6366f1;
+          --primary-600: #4f46e5;
+          --primary-700: #4338ca;
+          --accent: #ec4899;
+          --accent-rgb: 236,72,153;
+          --user-bubble: #4f46e5;
+          --assistant-bubble: #1a1a2e;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -92,6 +105,28 @@ export default defineConfig({
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #555; }
+
+        /* Theme-aware overrides — these use CSS vars set by use-theme.ts */
+        .themed-bg { background-color: var(--bg) !important; }
+        .themed-surface { background-color: var(--surface) !important; }
+        .themed-fg { color: var(--fg) !important; }
+        .themed-primary-text { color: var(--primary-400) !important; }
+        .themed-user-bubble { background: linear-gradient(to right, var(--primary-600), var(--primary-500)) !important; }
+        .themed-active-item { background: linear-gradient(to right, var(--primary-600), var(--primary-500)) !important; }
+        .themed-new-chat-btn { background: linear-gradient(to right, var(--primary-600), var(--primary-500)) !important; }
+        .themed-new-chat-btn:hover { box-shadow: 0 10px 15px -3px rgba(var(--primary-rgb), 0.25) !important; }
+        .themed-user-avatar { background-color: var(--primary-700) !important; }
+        .themed-assistant-avatar { background: linear-gradient(to bottom right, var(--primary-500), var(--accent)) !important; }
+        .themed-ambient-1 { background: radial-gradient(circle at 10% 10%, rgba(var(--primary-rgb),0.12), transparent 8%) !important; }
+        .themed-ambient-2 { background: radial-gradient(circle at 90% 90%, rgba(var(--accent-rgb),0.08), transparent 18%) !important; }
+        .themed-btn-primary {
+          background-color: rgba(var(--primary-rgb), 0.15) !important;
+          border-color: rgba(var(--primary-rgb), 0.05) !important;
+          color: var(--primary-100) !important;
+        }
+        .themed-btn-primary:hover { background-color: rgba(var(--primary-rgb), 0.20) !important; }
+        .themed-btn-primary:focus { ring-color: rgba(var(--primary-rgb), 0.6) !important; }
+        .themed-input:focus { border-color: rgba(var(--primary-rgb), 0.5) !important; }
       `,
     },
   ],

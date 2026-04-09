@@ -35,6 +35,23 @@ function formatInlineMarkdown(value: string): string {
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
 }
 
+function isHorizontalRule(line: string): boolean {
+  return /^(\s*)([-*_])(\s*\2){2,}\s*$/.test(line)
+}
+
+function isTableRow(line: string): boolean {
+  return /^\s*\|?.+\|.+\|?\s*$/.test(line)
+}
+
+function isTableDivider(line: string): boolean {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)
+}
+
+function parseTableCells(line: string): string[] {
+  const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '')
+  return trimmed.split('|').map((cell) => formatInlineMarkdown(cell.trim()))
+}
+
 function renderMarkdown(value: string): string {
   const escaped = escapeHtml(value).replace(/\r\n/g, '\n')
   const lines = escaped.split('\n')
@@ -71,13 +88,39 @@ function renderMarkdown(value: string): string {
       continue
     }
 
+    if (isHorizontalRule(line)) {
+      blocks.push('<hr>')
+      index += 1
+      continue
+    }
+
+    if (
+      index + 1 < lines.length &&
+      isTableRow(line) &&
+      isTableDivider(lines[index + 1])
+    ) {
+      const headerCells = parseTableCells(line)
+      index += 2
+      const bodyRows: string[][] = []
+      while (index < lines.length && lines[index].trim() && isTableRow(lines[index])) {
+        bodyRows.push(parseTableCells(lines[index]))
+        index += 1
+      }
+
+      blocks.push(
+        `<div class="table-wrap"><table><thead><tr>${headerCells.map((cell) => `<th>${cell}</th>`).join('')}</tr></thead>` +
+        `<tbody>${bodyRows.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`,
+      )
+      continue
+    }
+
     if (/^>\s?/.test(line)) {
       const quoteLines: string[] = []
       while (index < lines.length && /^>\s?/.test(lines[index])) {
         quoteLines.push(lines[index].replace(/^>\s?/, ''))
         index += 1
       }
-      blocks.push(`<blockquote>${quoteLines.map((entry) => formatInlineMarkdown(entry)).join('<br>')}</blockquote>`)
+      blocks.push(`<blockquote>${renderMarkdown(quoteLines.join('\n'))}</blockquote>`)
       continue
     }
 
@@ -221,6 +264,12 @@ const renderedAssistantHtml = computed(() => renderMarkdown(props.content || '')
   color: rgba(255, 255, 255, 0.82);
 }
 
+.markdown-content :deep(hr) {
+  margin: 0.9rem 0;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+
 .markdown-content :deep(pre) {
   margin: 0 0 0.75rem;
   padding: 0.8rem;
@@ -246,6 +295,33 @@ const renderedAssistantHtml = computed(() => renderMarkdown(props.content || '')
 .markdown-content :deep(a) {
   color: #93c5fd;
   text-decoration: underline;
+}
+
+.markdown-content :deep(.table-wrap) {
+  margin: 0 0 0.75rem;
+  overflow-x: auto;
+}
+
+.markdown-content :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.markdown-content :deep(th),
+.markdown-content :deep(td) {
+  padding: 0.5rem 0.65rem;
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.markdown-content :deep(th) {
+  background: rgba(255, 255, 255, 0.08);
+  font-weight: 700;
+}
+
+.markdown-content :deep(td) {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .markdown-content :deep(strong) {

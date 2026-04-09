@@ -5,4 +5,4 @@
 
 export * from "./types";
 export { APIKeyManager, createAPIKeyManager } from "./keystore";
-export { InMemoryChatStore, DesktopSQLiteChatStore, createChatStore } from "./chat-store";
+export { InMemoryChatStore, DesktopSQLiteChatStore, DesktopMemoryStore, createChatStore, createMemoryStore } from "./chat-store";

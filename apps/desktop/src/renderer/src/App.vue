@@ -141,6 +141,10 @@ const agentMode = computed({
   set: (v: AgentMode) => store.setAgentMode(v),
 })
 const convSearch = ref('')
+const showMemory = ref(false)
+const newMemoryKey = ref('')
+const newMemoryValue = ref('')
+const newMemoryCategory = ref('general')
 const toast = ref<{ message: string; type: 'success' | 'error'; visible: boolean }>({ message: '', type: 'success', visible: false })
 
 function showToast(message: string, type: 'success' | 'error') {
@@ -152,9 +156,15 @@ const messagesEndRef = ref<HTMLDivElement>()
 const inputRef = ref<HTMLTextAreaElement>()
 
 const filteredConversations = computed(() => {
-  if (!convSearch.value) return store.conversations
-  const q = convSearch.value.toLowerCase()
-  return store.conversations.filter((c: any) => (c.title || '').toLowerCase().includes(q))
+  let convs = store.conversations
+  if (store.sidebarFilter === 'favorites') {
+    convs = convs.filter((c: any) => c.favorited)
+  }
+  if (convSearch.value) {
+    const q = convSearch.value.toLowerCase()
+    convs = convs.filter((c: any) => (c.title || '').toLowerCase().includes(q))
+  }
+  return convs
 })
 
 const currentProviderMeta = computed(() =>
@@ -172,7 +182,10 @@ onMounted(() => {
     store.loadSetup()
     await store.hydrateProviderConfig()
     await loadProviderModels(store.selectedProvider, store.apiKey)
-    if (store.isSetup) store.loadConversations()
+    if (store.isSetup) {
+      store.loadConversations()
+      store.loadMemories()
+    }
   })()
 })
 
@@ -268,6 +281,15 @@ function startDemoMode() {
 
 function saveAgentMode(mode: AgentMode) {
   store.setAgentMode(mode)
+}
+
+async function addMemoryEntry() {
+  if (!newMemoryKey.value.trim() || !newMemoryValue.value.trim()) return
+  await store.setMemory(newMemoryKey.value.trim(), newMemoryValue.value.trim(), newMemoryCategory.value)
+  newMemoryKey.value = ''
+  newMemoryValue.value = ''
+  newMemoryCategory.value = 'general'
+  showToast('Memory saved', 'success')
 }
 </script>
 
@@ -543,6 +565,103 @@ function saveAgentMode(mode: AgentMode) {
     </Transition>
   </Teleport>
 
+  <!-- Memory Modal -->
+  <Teleport to="body">
+    <Transition
+      enter-active-class="transition-opacity duration-200"
+      leave-active-class="transition-opacity duration-200"
+      enter-from-class="opacity-0"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="showMemory"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50"
+        @click.self="showMemory = false"
+      >
+        <div class="glass-surface rounded-2xl p-6 max-w-lg w-full mx-4 animate-content-show max-h-[80vh] flex flex-col">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-bold text-white">
+              AI Memory
+            </h2>
+            <span class="text-xs text-neutral-400">{{ store.userMemories.length }} entries</span>
+          </div>
+          <p class="text-sm text-neutral-400 mb-4">
+            Persistent memory the AI uses across all chats. The AI auto-saves things you share (name, preferences), or you can add entries manually.
+          </p>
+
+          <!-- Add new memory -->
+          <div class="mb-4 p-3 rounded-xl bg-neutral-800/40 border border-neutral-700/40">
+            <div class="flex gap-2 mb-2">
+              <input
+                v-model="newMemoryKey"
+                placeholder="Label (e.g. favorite_language)"
+                class="input-field text-sm flex-1"
+              >
+              <select v-model="newMemoryCategory" class="input-field text-sm w-28">
+                <option value="general">General</option>
+                <option value="identity">Identity</option>
+                <option value="preferences">Preferences</option>
+                <option value="projects">Projects</option>
+                <option value="user_notes">Notes</option>
+              </select>
+            </div>
+            <div class="flex gap-2">
+              <input
+                v-model="newMemoryValue"
+                placeholder="Value (e.g. TypeScript)"
+                class="input-field text-sm flex-1"
+                @keydown.enter="addMemoryEntry"
+              >
+              <button class="btn-primary text-sm px-4" @click="addMemoryEntry">
+                Add
+              </button>
+            </div>
+          </div>
+
+          <!-- Memory list -->
+          <div class="flex-1 overflow-auto space-y-2 min-h-0">
+            <div v-if="store.userMemories.length === 0" class="text-center text-neutral-500 text-sm py-6">
+              No memories yet. Chat naturally and the AI will remember key details, or add them manually above.
+            </div>
+            <div
+              v-for="mem in store.userMemories"
+              :key="mem.key"
+              class="flex items-start gap-3 px-3 py-2.5 rounded-xl bg-neutral-800/30 border border-neutral-700/30 group"
+            >
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-0.5">
+                  <span class="text-xs font-semibold text-primary-400 truncate">{{ mem.key }}</span>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-neutral-700/50 text-neutral-400">{{ mem.category }}</span>
+                </div>
+                <div class="text-sm text-neutral-200 truncate">{{ mem.value }}</div>
+              </div>
+              <button
+                class="text-xs text-neutral-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all duration-150 shrink-0 mt-1"
+                title="Delete memory"
+                @click="store.deleteMemory(mem.key)"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          <div class="flex gap-2 mt-4">
+            <button class="btn-secondary flex-1" @click="showMemory = false">
+              Close
+            </button>
+            <button
+              v-if="store.userMemories.length > 0"
+              class="btn-ghost text-sm text-red-400 hover:text-red-300"
+              @click="store.clearMemories(); showToast('All memories cleared', 'success')"
+            >
+              Clear All
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
+
   <!-- Main Chat Interface -->
   <div
     v-if="store.isSetup"
@@ -573,9 +692,17 @@ function saveAgentMode(mode: AgentMode) {
           'glass-surface border-r border-neutral-800/40',
         ]"
       >
-        <h1 class="text-xl font-bold text-primary-400 mb-4">
+        <h1 class="text-xl font-bold text-primary-400 mb-3">
           SyntaxSenpai
         </h1>
+
+        <!-- New Chat button -->
+        <button
+          class="w-full flex items-center justify-center gap-2 px-4 py-2.5 mb-3 rounded-xl bg-gradient-to-r from-primary-600 to-primary-500 text-white font-semibold text-sm shadow-lg hover:shadow-primary-500/25 transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+          @click="store.newChat()"
+        >
+          <span class="text-base">+</span> New Chat
+        </button>
 
         <div class="flex items-center gap-2 mb-3">
           <div class="flex-1">
@@ -586,27 +713,53 @@ function saveAgentMode(mode: AgentMode) {
               {{ store.selectedWaifu?.displayName }}
             </p>
           </div>
-          <button class="btn-ghost text-xs px-3 py-1" @click="store.createConversation()">
-            New
+          <div class="flex items-center gap-1">
+            <span class="text-[10px] text-emerald-400 font-medium px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">auto-saved</span>
+          </div>
+        </div>
+
+        <!-- Filter tabs: All / Favorites -->
+        <div class="flex gap-1 mb-3 p-1 rounded-lg bg-neutral-800/40">
+          <button
+            :class="[
+              'flex-1 text-xs font-semibold py-1.5 rounded-md transition-all duration-150',
+              store.sidebarFilter === 'all'
+                ? 'bg-neutral-700/60 text-white'
+                : 'text-neutral-400 hover:text-neutral-200',
+            ]"
+            @click="store.sidebarFilter = 'all'"
+          >
+            All Chats
+          </button>
+          <button
+            :class="[
+              'flex-1 text-xs font-semibold py-1.5 rounded-md transition-all duration-150',
+              store.sidebarFilter === 'favorites'
+                ? 'bg-neutral-700/60 text-amber-400'
+                : 'text-neutral-400 hover:text-neutral-200',
+            ]"
+            @click="store.sidebarFilter = 'favorites'"
+          >
+            Favorites
           </button>
         </div>
 
         <input
           v-model="convSearch"
-          placeholder="Search conversations"
+          placeholder="Search conversations..."
           class="input-field text-sm mb-3"
         >
 
         <div class="flex-1 overflow-auto">
-          <p v-if="store.conversations.length === 0" class="text-xs text-neutral-500">
-            No conversations yet
+          <p v-if="filteredConversations.length === 0" class="text-xs text-neutral-500 text-center py-4">
+            {{ store.sidebarFilter === 'favorites' ? 'No favorite chats yet' : 'No conversations yet' }}
           </p>
-          <ul class="space-y-2">
+          <ul class="space-y-1.5">
             <li
               v-for="c in filteredConversations"
               :key="c.id"
               :class="[
-                'flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer',
+                'flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer group',
                 'transition-all duration-160',
                 store.conversationId === c.id
                   ? 'bg-gradient-to-r from-primary-600 to-primary-500 text-white shadow-lg'
@@ -619,13 +772,28 @@ function saveAgentMode(mode: AgentMode) {
                 <div class="text-sm font-semibold truncate">
                   {{ c.title }}
                 </div>
-                <div class="text-xs text-neutral-400">
+                <div class="text-xs text-neutral-400 flex items-center gap-1">
                   {{ new Date(c.updatedAt).toLocaleString() }}
+                  <span v-if="c.messageCount" class="text-neutral-500">({{ c.messageCount }})</span>
                 </div>
               </div>
-              <div class="flex gap-1 shrink-0">
+              <div class="flex gap-0.5 shrink-0 items-center">
+                <!-- Favorite star -->
                 <button
-                  class="text-xs px-1 opacity-60 hover:opacity-100"
+                  :class="[
+                    'text-sm px-1 transition-all duration-150',
+                    c.favorited
+                      ? 'text-amber-400 opacity-100'
+                      : 'opacity-0 group-hover:opacity-60 hover:!opacity-100 text-neutral-400',
+                  ]"
+                  title="Toggle favorite"
+                  @click.stop="store.toggleFavorite(c.id)"
+                >
+                  {{ c.favorited ? '★' : '☆' }}
+                </button>
+                <!-- Delete -->
+                <button
+                  class="text-xs px-1 opacity-0 group-hover:opacity-60 hover:!opacity-100 text-neutral-400 hover:text-red-400 transition-all duration-150"
                   title="Delete"
                   @click.stop="store.deleteConversation(c.id)"
                 >
@@ -640,9 +808,18 @@ function saveAgentMode(mode: AgentMode) {
           <button class="btn-primary w-full text-sm" @click="showAgent = true">
             Agent
           </button>
-          <button class="btn-secondary w-full text-sm" @click="showSettings = true">
-            Settings
-          </button>
+          <div class="flex gap-2">
+            <button class="btn-secondary flex-1 text-sm" @click="showSettings = true">
+              Settings
+            </button>
+            <button
+              class="btn-secondary text-sm px-3"
+              title="AI Memory"
+              @click="showMemory = true"
+            >
+              🧠
+            </button>
+          </div>
           <button class="btn-ghost w-full text-sm" @click="sidebarOpen = false">
             Collapse
           </button>

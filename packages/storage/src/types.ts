@@ -69,6 +69,30 @@ export interface ConversationRecord {
   updatedAt: string;
   summary?: string;
   messageCount: number;
+  favorited?: boolean;
+}
+
+/**
+ * A single AI memory entry persisted across chats
+ */
+export interface MemoryEntry {
+  key: string;
+  value: string;
+  category: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Persistent AI memory store interface
+ */
+export interface IMemoryStore {
+  setMemory(key: string, value: string, category?: string): Promise<void>;
+  getMemory(key: string): Promise<MemoryEntry | null>;
+  getAllMemories(): Promise<MemoryEntry[]>;
+  getMemoriesByCategory(category: string): Promise<MemoryEntry[]>;
+  deleteMemory(key: string): Promise<void>;
+  clearAllMemories(): Promise<void>;
 }
 
 /**

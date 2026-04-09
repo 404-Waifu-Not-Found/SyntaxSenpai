@@ -1,31 +1,69 @@
 # Contributing to SyntaxSenpai
 
-Thanks for your interest in contributing! A few quick notes to get started.
+Thanks for your interest in contributing! This guide will help you get set up and make your first contribution.
 
-## Requirements
-- Node >= 25
-- npm >= 11
+## Prerequisites
+
+- **Node.js** >= 20
+- **pnpm** >= 8
 
 ## Local setup
-1. Copy environment template: `cp .env.example .env.local`
-2. Fill in any provider API keys you need in `.env.local` (see PROVIDER_SETUP.md)
-3. Install dependencies: `npm install`
+
+```bash
+# Clone your fork
+git clone https://github.com/<your-username>/SyntaxSenpai.git
+cd SyntaxSenpai
+
+# Install dependencies
+pnpm install
+
+# Start the desktop app
+pnpm dev:desktop
+```
+
+API keys are configured in-app through the Settings panel.
+
+## Project structure
+
+This is a **pnpm monorepo** managed with [Turborepo](https://turbo.build/repo). Key directories:
+
+- `apps/desktop/` — Electron + Vue 3 desktop app
+- `apps/mobile/` — Mobile app target
+- `packages/` — Shared libraries (AI core, waifu definitions, storage, UI, etc.)
 
 ## Useful scripts
-- `npm run dev:desktop` — start the desktop app in dev mode
-- `npm run dev:mobile` — start the mobile app in dev mode
-- `npm run build` — build all workspaces
-- `npm run test` — run tests
-- `npm run lint` — run linters
-- `npm run typecheck` — run TypeScript type checks
 
-## Provider setup & security
-- See PROVIDER_SETUP.md for provider configuration details.
-- Do NOT commit API keys or secrets. Use `.env.local` and platform-native keystores.
+| Command | Description |
+|---|---|
+| `pnpm dev:desktop` | Start the desktop app in dev mode |
+| `pnpm dev:mobile` | Start the mobile app in dev mode |
+| `pnpm build` | Build all workspaces |
+| `pnpm test` | Run all tests |
+| `pnpm lint` | Run linters |
+| `pnpm typecheck` | TypeScript type checks |
+
+## Guidelines
+
+- **Do NOT commit API keys or secrets.** Use the in-app settings or `.env.local` (gitignored).
+- Write clear, descriptive commit messages.
+- Keep PRs focused — one feature or fix per PR.
+- Add tests for new functionality when possible.
+- Follow the existing code style (TypeScript, Vue 3 Composition API, UnoCSS).
 
 ## Pull request process
-1. Fork the repo
-2. Create a branch for your changes
-3. Open a PR — include screenshots and a summary of changes
 
-Thanks — maintainers will review and provide feedback.
+1. Fork the repo and create a branch from `main`.
+2. Make your changes and ensure `pnpm test` and `pnpm typecheck` pass.
+3. Open a PR with a clear title and description.
+4. Include screenshots for UI changes.
+5. A maintainer will review and provide feedback.
+
+## Reporting bugs
+
+Please use [GitHub Issues](https://github.com/404-Waifu-Not-Found/SyntaxSenpai/issues) with the bug report template.
+
+## Code of Conduct
+
+This project follows our [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you agree to uphold it.
+
+Thanks for contributing!

@@ -1,16 +1,12 @@
-# .gitignore for SyntaxSenpai monorepo
-
-# Node / JavaScript
+# Dependencies
 node_modules/
 **/node_modules/
+
+# Package manager
+pnpm-debug.log*
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-pnpm-debug.log*
-
-# Package manager lockfiles (optional)
-package-lock.json
-yarn.lock
 
 # Build outputs
 dist/
@@ -19,133 +15,77 @@ build/
 **/build/
 out/
 **/out/
-coverage/
-**/coverage/
-.cache/
-**/.cache/
+release/
+**/release/
 .turbo/
 **/.turbo/
-.parcel-cache/
-**/.parcel-cache/
+.cache/
+**/.cache/
 .vite/
 **/.vite/
-.esbuild/
-**/.esbuild/
-.next/
-**/.next/
-.nuxt/
-**/.nuxt/
+
+# Electron
+apps/desktop/dist_electron/
+**/dist_electron/
+**/dist-electron/
+electron-builder-effective-config.yaml
+
+# Mobile
 .expo/
 **/.expo/
 .expo-shared/
-**/.expo-shared/
+
+# TypeScript
+*.tsbuildinfo
+
+# Test & coverage
+coverage/
+**/coverage/
 .nyc_output/
 **/.nyc_output/
-tmp/
-**/tmp/
-temp/
-**/temp/
-release/
-**/release/
 
-# Electron / desktop build artifacts
-apps/desktop/dist_electron/
-apps/desktop/dist_electron/**
-**/dist_electron/
-**/dist-electron/
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.test
 
-# OS generated files
+# Secrets
+credentials.json
+
+# OS files
 .DS_Store
 .AppleDouble
 .LSOverride
-Icon?
 ._*
 .Spotlight-V100
 .Trashes
 Desktop.ini
 Thumbs.db
 
-# Environment variable files
-.env
-.env.local
-.env.*.local
-.env.test
-
 # IDE / Editor
 .vscode/
 .idea/
 *.sublime-workspace
 *.sublime-project
-
-# Logs
-*.log
-
-# TypeScript
-*.tsbuildinfo
-
-# Rust
-target/
-
-# Misc
-*.tmp
-*.temp
-*.class
-*.pyc
-# Dependencies
-node_modules/
-yarn.lock
-package-lock.json
-
-# Build outputs
-dist/
-build/
-out/
-.expo/
-.next/
-
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Environment variables
-.env
-.env.local
-.env.*.local
-
-# OS files
-.DS_Store
-Thumbs.db
 *.swp
 *.swo
 *~
-
-# IDE
-.vscode/
-.idea/
-*.sublime-workspace
-*.sublime-project
 .eslintcache
 
-# Electron
-electron-builder-effective-config.yaml
-
-# SQLite
+# Database
 *.db
 *.sqlite
 *.sqlite3
+
+# Logs
+*.log
 
 # Temp
 tmp/
 temp/
 *.tmp
+*.temp
 
-# Coverage
-coverage/
-.nyc_output/
-
-# Secrets
-.env.local
-credentials.json
-apps/desktop/dist_electron
+# Rust (if applicable)
+target/

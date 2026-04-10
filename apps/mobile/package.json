@@ -2,7 +2,7 @@
   "name": "syntax-senpai-mobile",
   "version": "0.0.1",
   "description": "SyntaxSenpai mobile app (iOS/Android)",
-  "main": "index.js",
+  "main": "expo-router/entry",
   "scripts": {
     "dev": "expo start",
     "ios": "expo run:ios",
@@ -13,29 +13,36 @@
     "lint": "eslint . --ext .ts,.tsx"
   },
   "dependencies": {
+    "@babel/runtime": "^7.29.2",
+    "@react-native-async-storage/async-storage": "^1.23.0",
     "@syntax-senpai/ai-core": "workspace:*",
-    "@syntax-senpai/waifu-core": "workspace:*",
     "@syntax-senpai/storage": "workspace:*",
     "@syntax-senpai/ui": "workspace:*",
+    "@syntax-senpai/waifu-core": "workspace:*",
     "@syntax-senpai/ws-protocol": "workspace:*",
+    "babel-preset-expo": "~12.0.0",
     "expo": "^52.0.0",
-    "expo-router": "^4.0.0",
-    "expo-sqlite": "^14.0.0",
-    "expo-secure-store": "^14.0.0",
+    "expo-asset": "~11.0.5",
     "expo-camera": "^16.0.0",
+    "expo-router": "^4.0.0",
+    "expo-secure-store": "^14.0.0",
     "expo-splash-screen": "^0.27.0",
+    "expo-sqlite": "^14.0.0",
+    "nativewind": "^4.0.0",
     "react": "^19.0.0",
     "react-native": "^0.76.0",
+    "react-native-css-interop": "^0.2.3",
     "react-native-gesture-handler": "^2.16.0",
-    "@react-native-async-storage/async-storage": "^1.23.0",
-    "nativewind": "^4.0.0",
+    "react-native-reanimated": "~3.16.1",
+    "react-native-screens": "~4.4.0",
     "tailwindcss": "^4.0.0",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.2",
-    "@types/react": "^19.0.0",
+    "@babel/plugin-transform-react-jsx": "^7.28.6",
     "@react-native-community/eslint-config": "^3.2.0",
-    "eslint": "^9.0.0"
+    "@types/react": "^19.0.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.7.2"
   }
 }

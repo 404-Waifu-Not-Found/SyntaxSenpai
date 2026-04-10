@@ -358,9 +358,9 @@
 					"-lc++",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
-				PROVISIONING_PROFILE_SPECIFIER = "";
-				PRODUCT_BUNDLE_IDENTIFIER = org.name.SyntaxSenpai;
+				PRODUCT_BUNDLE_IDENTIFIER = com.syntaxsenpai.app;
 				PRODUCT_NAME = SyntaxSenpai;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 				VERSIONING_SYSTEM = "apple-generic";
@@ -389,9 +389,9 @@
 					"-lc++",
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
-				PROVISIONING_PROFILE_SPECIFIER = "";
-				PRODUCT_BUNDLE_IDENTIFIER = org.name.SyntaxSenpai;
+				PRODUCT_BUNDLE_IDENTIFIER = com.syntaxsenpai.app;
 				PRODUCT_NAME = SyntaxSenpai;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_VERSION = 5.0;
 				VERSIONING_SYSTEM = "apple-generic";
 			};

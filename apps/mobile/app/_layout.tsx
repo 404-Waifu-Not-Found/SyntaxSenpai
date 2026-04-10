@@ -3,19 +3,16 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SplashScreen from "expo-splash-screen";
 import { Stack, useRouter } from "expo-router";
-import { loadThemeFromStorage } from "./src/hooks/useTheme";
+import { loadThemeFromStorage } from "../src/hooks/useTheme";
 
-// Prevent splash screen from auto hiding
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const router = useRouter();
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState<boolean | null>(null);
 
-  React.useEffect(() => {
-    // Check onboarding status
+  useEffect(() => {
     const checkOnboarding = async () => {
-      // Hydrate theme before UI renders
       await loadThemeFromStorage().catch(() => {});
       try {
         const state = await AsyncStorage.getItem("syntax-senpai-app-state");
@@ -36,7 +33,6 @@ export default function RootLayout() {
     checkOnboarding();
   }, []);
 
-  // Redirect based on onboarding status
   useEffect(() => {
     if (hasCompletedOnboarding === true) {
       router.replace("/(main)/chat");
@@ -46,7 +42,7 @@ export default function RootLayout() {
   }, [hasCompletedOnboarding, router]);
 
   if (hasCompletedOnboarding === null) {
-    return null; // Still loading
+    return null;
   }
 
   return (

@@ -1652,6 +1652,115 @@ PODS:
     - ReactCommon/turbomodule/bridging
     - ReactCommon/turbomodule/core
     - Yoga
+  - RNReanimated (3.16.7):
+    - DoubleConversion
+    - glog
+    - hermes-engine
+    - RCT-Folly (= 2024.10.14.00)
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - RNReanimated/reanimated (= 3.16.7)
+    - RNReanimated/worklets (= 3.16.7)
+    - Yoga
+  - RNReanimated/reanimated (3.16.7):
+    - DoubleConversion
+    - glog
+    - hermes-engine
+    - RCT-Folly (= 2024.10.14.00)
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - RNReanimated/reanimated/apple (= 3.16.7)
+    - Yoga
+  - RNReanimated/reanimated/apple (3.16.7):
+    - DoubleConversion
+    - glog
+    - hermes-engine
+    - RCT-Folly (= 2024.10.14.00)
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - Yoga
+  - RNReanimated/worklets (3.16.7):
+    - DoubleConversion
+    - glog
+    - hermes-engine
+    - RCT-Folly (= 2024.10.14.00)
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - Yoga
+  - RNScreens (4.4.0):
+    - DoubleConversion
+    - glog
+    - hermes-engine
+    - RCT-Folly (= 2024.10.14.00)
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-RCTImage
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - Yoga
   - SocketRocket (0.7.1)
   - "sqlite3 (3.45.3+1)":
     - "sqlite3/common (= 3.45.3+1)"
@@ -1678,7 +1787,7 @@ DEPENDENCIES:
   - "ExpoCamera (from `../../../node_modules/.pnpm/expo-camera@16.1.11_expo@52.0.49_react-native@0.76.9_react@19.2.4/node_modules/expo-camera/ios`)"
   - "ExpoFileSystem (from `../../../node_modules/.pnpm/expo-file-system@18.0.12_expo@52.0.49_react-native@0.76.9/node_modules/expo-file-system/ios`)"
   - "ExpoFont (from `../../../node_modules/.pnpm/expo-font@13.0.4_expo@52.0.49_react@19.2.4/node_modules/expo-font/ios`)"
-  - "ExpoHead (from `../../../node_modules/.pnpm/expo-router@4.0.22_expo-constants@17.0.8_expo-linking@7.0.5_expo@52.0.49_react-dom@18.3.1_rea_bsy7o6ih76kqndxxgid3uyozaa/node_modules/expo-router/ios`)"
+  - "ExpoHead (from `../../../node_modules/.pnpm/expo-router@4.0.22_expo-constants@17.0.8_expo-linking@7.0.5_expo@52.0.49_react-dom@18.3.1_rea_q4g2hadrjxhntfr35ltdvhwyma/node_modules/expo-router/ios`)"
   - "ExpoKeepAwake (from `../../../node_modules/.pnpm/expo-keep-awake@14.0.3_expo@52.0.49_react@19.2.4/node_modules/expo-keep-awake/ios`)"
   - "ExpoModulesCore (from `../../../node_modules/.pnpm/expo-modules-core@2.2.3/node_modules/expo-modules-core`)"
   - "ExpoSecureStore (from `../../../node_modules/.pnpm/expo-secure-store@14.2.4_expo@52.0.49/node_modules/expo-secure-store/ios`)"
@@ -1749,6 +1858,8 @@ DEPENDENCIES:
   - "ReactCommon/turbomodule/core (from `../../../node_modules/.pnpm/react-native@0.76.9_@babel+core@7.29.0_@babel+preset-env@7.29.2_@types+react@19.2.14_react@19.2.4/node_modules/react-native/ReactCommon`)"
   - "RNCAsyncStorage (from `../node_modules/@react-native-async-storage/async-storage`)"
   - RNGestureHandler (from `../node_modules/react-native-gesture-handler`)
+  - RNReanimated (from `../node_modules/react-native-reanimated`)
+  - RNScreens (from `../node_modules/react-native-screens`)
   - "Yoga (from `../../../node_modules/.pnpm/react-native@0.76.9_@babel+core@7.29.0_@babel+preset-env@7.29.2_@types+react@19.2.14_react@19.2.4/node_modules/react-native/ReactCommon/yoga`)"
 
 SPEC REPOS:
@@ -1775,7 +1886,7 @@ EXTERNAL SOURCES:
   ExpoFont:
     :path: "../../../node_modules/.pnpm/expo-font@13.0.4_expo@52.0.49_react@19.2.4/node_modules/expo-font/ios"
   ExpoHead:
-    :path: "../../../node_modules/.pnpm/expo-router@4.0.22_expo-constants@17.0.8_expo-linking@7.0.5_expo@52.0.49_react-dom@18.3.1_rea_bsy7o6ih76kqndxxgid3uyozaa/node_modules/expo-router/ios"
+    :path: "../../../node_modules/.pnpm/expo-router@4.0.22_expo-constants@17.0.8_expo-linking@7.0.5_expo@52.0.49_react-dom@18.3.1_rea_q4g2hadrjxhntfr35ltdvhwyma/node_modules/expo-router/ios"
   ExpoKeepAwake:
     :path: "../../../node_modules/.pnpm/expo-keep-awake@14.0.3_expo@52.0.49_react@19.2.4/node_modules/expo-keep-awake/ios"
   ExpoModulesCore:
@@ -1913,6 +2024,10 @@ EXTERNAL SOURCES:
     :path: "../node_modules/@react-native-async-storage/async-storage"
   RNGestureHandler:
     :path: "../node_modules/react-native-gesture-handler"
+  RNReanimated:
+    :path: "../node_modules/react-native-reanimated"
+  RNScreens:
+    :path: "../node_modules/react-native-screens"
   Yoga:
     :path: "../../../node_modules/.pnpm/react-native@0.76.9_@babel+core@7.29.0_@babel+preset-env@7.29.2_@types+react@19.2.14_react@19.2.4/node_modules/react-native/ReactCommon/yoga"
 
@@ -1994,6 +2109,8 @@ SPEC CHECKSUMS:
   ReactCommon: 300d8d9c5cb1a6cd79a67cf5d8f91e4d477195f9
   RNCAsyncStorage: b6410dead2732b5c72a7fdb1ecb5651bbcf4674b
   RNGestureHandler: b1c06808f2eaf5c568e006ab3f34813d959ca1c8
+  RNReanimated: 381741319c42cd662a717299c97c0e4debb1ecac
+  RNScreens: 295d9c0aaeb7f680d03d7e9b476569a4959aae89
   SocketRocket: d4aabe649be1e368d1318fdf28a022d714d65748
   sqlite3: 02d1f07eaaa01f80a1c16b4b31dfcbb3345ee01a
   Yoga: feb4910aba9742cfedc059e2b2902e22ffe9954a

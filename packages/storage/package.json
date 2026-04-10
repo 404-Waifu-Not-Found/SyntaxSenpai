@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "type": "module",
   "main": "dist/index.js",
+  "react-native": "src/index.native.ts",
   "types": "dist/index.d.ts",
   "files": [
     "dist"

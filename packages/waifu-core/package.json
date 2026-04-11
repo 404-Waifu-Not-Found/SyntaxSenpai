@@ -4,6 +4,7 @@
   "description": "Waifu model, personality engine, and built-in roster",
   "private": true,
   "main": "dist/index.js",
+  "react-native": "src/index.ts",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",

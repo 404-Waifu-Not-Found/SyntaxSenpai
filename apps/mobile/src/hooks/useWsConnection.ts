@@ -51,6 +51,10 @@ let onStreamChunkCb: StreamChunkHandler | null = null;
 let onStreamEndCb: StreamEndHandler | null = null;
 let onStreamErrorCb: StreamErrorHandler | null = null;
 
+function createMessageId() {
+  return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function notifyListeners() {
   stateListeners.forEach((fn) => fn());
 }
@@ -146,7 +150,7 @@ function openSocket(url: string, token: string, deviceId: string) {
 
   ws.onopen = () => {
     const pairRequest: WSMessage = {
-      id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+      id: createMessageId(),
       type: "pair_request",
       payload: {
         deviceName: wsState.deviceName,
@@ -211,7 +215,7 @@ export function sendAgentRequest(payload: {
   if (!ws || wsState.connectionState !== "paired") return;
 
   const msg: WSMessage = {
-    id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+    id: createMessageId(),
     type: "agent_request",
     payload: {
       ...payload,

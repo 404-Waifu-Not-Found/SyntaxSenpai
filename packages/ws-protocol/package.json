@@ -4,6 +4,7 @@
   "description": "WebSocket protocol types for phone↔desktop communication",
   "private": true,
   "main": "dist/index.js",
+  "react-native": "src/index.ts",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",

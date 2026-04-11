@@ -8,6 +8,7 @@ export { BaseAIProvider, OpenAICompatibleProvider } from "./base";
 export { AnthropicProvider, createAnthropicProvider } from "./anthropic";
 export { OpenAIProvider, createOpenAIProvider } from "./openai";
 export { OllamaProvider, createOllamaProvider } from "./ollama";
+export { LMStudioProvider, createLMStudioProvider } from "./lmstudio";
 
 // Stub providers (to be implemented)
 export { GeminiProvider, createGeminiProvider } from "./google-gemini";
@@ -47,6 +48,7 @@ import { XAIProvider } from "./xai";
 import { OpenAICodexProvider } from "./openai-codex";
 import { GitHubModelsProvider } from "./github-models";
 import { OllamaProvider } from "./ollama";
+import { LMStudioProvider } from "./lmstudio";
 import { XAIGrokProvider } from "./xai-grok";
 import { AzureOpenAIProvider } from "./azure-openai";
 import { AWSBedrockProvider } from "./aws-bedrock";
@@ -70,6 +72,7 @@ export type ProviderConfig =
   | { type: "minimax-global"; apiKey: string }
   | { type: "minimax-cn"; apiKey: string }
   | { type: "ollama"; baseUrl?: string }
+  | { type: "lmstudio"; baseUrl?: string; apiKey?: string }
   | { type: "xai"; apiKey: string }
   | { type: "xai-grok"; apiKey: string }
   | { type: "openai-codex"; apiKey: string }
@@ -108,6 +111,8 @@ export function createProvider(config: ProviderConfig): AIProvider {
       return new MiniMaxCNProvider({ apiKey: config.apiKey });
     case "ollama":
       return new OllamaProvider({ baseUrl: config.baseUrl });
+    case "lmstudio":
+      return new LMStudioProvider({ baseUrl: config.baseUrl, apiKey: config.apiKey });
     case "xai":
       return new XAIProvider({ apiKey: config.apiKey });
     case "xai-grok":
@@ -149,6 +154,7 @@ export function getAllProviderMetadata() {
     new MiniMaxGlobalProvider({ apiKey: "dummy" }),
     new MiniMaxCNProvider({ apiKey: "dummy" }),
     new OllamaProvider(),
+    new LMStudioProvider(),
     new XAIProvider({ apiKey: "dummy" }),
     new XAIGrokProvider({ apiKey: "dummy" }),
     new OpenAICodexProvider({ apiKey: "dummy" }),

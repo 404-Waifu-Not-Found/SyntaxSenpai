@@ -26,6 +26,20 @@ interface PairedSession {
 }
 let pairedSession: PairedSession | null = null
 
+interface DesktopRuntimeConfig {
+  provider: string
+  model: string
+  apiKey?: string
+}
+
+const KEYLESS_PROVIDERS = new Set(['lmstudio'])
+
+function providerRequiresApiKey(provider: string): boolean {
+  return !KEYLESS_PROVIDERS.has(provider)
+}
+
+let desktopRuntimeConfig: DesktopRuntimeConfig | null = null
+
 function getLanIp(): string {
   const interfaces = os.networkInterfaces()
   for (const name of Object.keys(interfaces)) {
@@ -52,7 +66,18 @@ function send(socket: WebSocket, type: string, payload: unknown) {
 
 async function handleAgentRequest(socket: WebSocket, msg: WSMessage<AgentRequestPayload>) {
   const { conversationId, messages, waifuId, providerConfig } = msg.payload
-  const { type, apiKey, model } = providerConfig
+  const type = desktopRuntimeConfig?.provider || providerConfig.type
+  const apiKey = desktopRuntimeConfig?.apiKey || providerConfig.apiKey
+  const model = desktopRuntimeConfig?.model || providerConfig.model
+
+  if (!type || !model || (providerRequiresApiKey(type) && !apiKey)) {
+    const errorPayload: StreamErrorPayload = {
+      conversationId,
+      error: 'Desktop AI provider is not configured. Open desktop settings and set a provider, model, and API key.',
+    }
+    send(socket, 'stream_error', errorPayload)
+    return
+  }
 
   const waifu = builtInWaifus.find((w) => w.id === waifuId) || builtInWaifus[0]
   const systemPrompt = buildSystemPrompt(
@@ -75,19 +100,29 @@ async function handleAgentRequest(socket: WebSocket, msg: WSMessage<AgentRequest
   )
 
   const runtime = new AIChatRuntime({
-    provider: { type, apiKey } as any,
+    provider: providerRequiresApiKey(type)
+      ? ({ type, apiKey } as any)
+      : ({ type } as any),
     model,
     systemPrompt,
   })
 
   const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user')
   const history = messages.filter((m) => m !== lastUserMessage)
+  const userText = typeof lastUserMessage?.content === 'string'
+    ? lastUserMessage.content
+    : Array.isArray(lastUserMessage?.content)
+      ? lastUserMessage.content
+          .filter((part: any) => part?.type === 'text' && typeof part?.text === 'string')
+          .map((part: any) => part.text)
+          .join('\n')
+      : ''
 
   let fullContent = ''
 
   try {
     for await (const chunk of runtime.streamMessage({
-      text: lastUserMessage?.content || '',
+      text: userText,
       history,
     })) {
       if (chunk.type === 'text_delta' && chunk.delta) {
@@ -223,4 +258,10 @@ export function getPairingStatus(): { paired: boolean; deviceName?: string; sess
     deviceName: pairedSession.deviceName,
     sessionId: pairedSession.sessionId,
   }
+}
+
+export function setDesktopRuntimeConfig(config: DesktopRuntimeConfig | null): void {
+  desktopRuntimeConfig = config && config.provider && config.model && (providerRequiresApiKey(config.provider) ? !!config.apiKey : true)
+    ? config
+    : null
 }

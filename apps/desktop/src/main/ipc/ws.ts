@@ -1,5 +1,5 @@
 const { ipcMain } = require('electron')
-import { startWsServer, stopWsServer, getQrData, getPairingStatus } from '../ws-server'
+import { startWsServer, stopWsServer, getQrData, getPairingStatus, setDesktopRuntimeConfig } from '../ws-server'
 
 let registered = false
 
@@ -38,6 +38,15 @@ export function registerWsIpc() {
     try {
       const status = getPairingStatus()
       return { success: true, ...status }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('ws:updateRuntimeConfig', async (_event: unknown, config: { provider: string; model: string; apiKey?: string } | null) => {
+    try {
+      setDesktopRuntimeConfig(config)
+      return { success: true }
     } catch (err: any) {
       return { success: false, error: err instanceof Error ? err.message : String(err) }
     }

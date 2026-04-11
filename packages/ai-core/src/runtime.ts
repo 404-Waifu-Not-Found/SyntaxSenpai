@@ -252,6 +252,12 @@ export function createProviderConfigFromEnv(
         type: "ollama",
         baseUrl: env.OLLAMA_BASE_URL || "http://localhost:11434",
       };
+    case "lmstudio":
+      return {
+        type: "lmstudio",
+        baseUrl: env.LM_STUDIO_BASE_URL || "http://127.0.0.1:1234/v1",
+        apiKey: env.LM_STUDIO_API_KEY,
+      };
     case "xai":
       return { type: "xai", apiKey: getRequired(env, "XAI_API_KEY") };
     case "xai-grok":

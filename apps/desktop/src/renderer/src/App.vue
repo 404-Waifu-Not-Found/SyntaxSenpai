@@ -45,6 +45,7 @@ async function checkMobilePairingStatus() {
 const providerOrder = [
   'anthropic',
   'openai',
+  'lmstudio',
   'openai-codex',
   'deepseek',
   'gemini',
@@ -74,6 +75,11 @@ const providerMetadata = [
       { id: 'gpt-4-turbo', displayName: 'GPT-4 Turbo' },
       { id: 'gpt-4', displayName: 'GPT-4' },
     ],
+  },
+  {
+    id: 'lmstudio',
+    displayName: 'LM Studio (Local)',
+    models: [{ id: 'local-model', displayName: 'Detected Local Model' }],
   },
   {
     id: 'openai-codex',
@@ -256,6 +262,11 @@ const startupAnimDone = ref(false)
 let startupSplashTimer: number | null = null
 const THEME_STORAGE_KEY = 'syntax-senpai-theme'
 const API_TELEMETRY_HISTORY_STORAGE_KEY = 'syntax-senpai-api-telemetry-history'
+const KEYLESS_PROVIDERS = new Set(['lmstudio'])
+
+function providerRequiresApiKey(provider: string) {
+  return !KEYLESS_PROVIDERS.has(provider)
+}
 
 function showToast(message: string, type: 'success' | 'error') {
   toast.value = { message, type, visible: true }
@@ -509,6 +520,18 @@ watch(() => store.selectedProvider, async (provider, previousProvider) => {
   await loadProviderModels(provider, store.apiKey)
 })
 
+watch(
+  () => [store.selectedProvider, store.selectedModel, store.apiKey],
+  async ([provider, model, apiKey]) => {
+    await invoke('ws:updateRuntimeConfig', {
+      provider,
+      model,
+      apiKey,
+    })
+  },
+  { immediate: true },
+)
+
 watch(() => store.apiTelemetryAlert, (alert, previous) => {
   if (!alert.active) return
   if (previous?.triggeredAt === alert.triggeredAt) return
@@ -541,8 +564,9 @@ function handleKeyDown(e: KeyboardEvent) {
 
 async function handleSetup(apiKeyValue: string) {
   const trimmedKey = apiKeyValue.trim()
+  const requiresApiKey = providerRequiresApiKey(store.selectedProvider)
 
-  if (trimmedKey) {
+  if (trimmedKey || !requiresApiKey) {
     // Validate the API key first
     const validation = await (window as any).electron?.ipcRenderer?.invoke(
       'provider:validateKey',
@@ -559,7 +583,9 @@ async function handleSetup(apiKeyValue: string) {
       showToast(validation.message || 'API key is valid', 'success')
     }
 
-    await store.saveApiKey(apiKeyValue)
+    if (trimmedKey) {
+      await store.saveApiKey(apiKeyValue)
+    }
     await loadProviderModels(store.selectedProvider, trimmedKey)
     const hasSelectedModel = currentProviderModels.value.some((model) => model.id === store.selectedModel)
     if (!hasSelectedModel) {

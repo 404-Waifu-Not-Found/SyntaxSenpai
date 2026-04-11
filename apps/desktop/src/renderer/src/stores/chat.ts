@@ -51,6 +51,7 @@ const API_TELEMETRY_HISTORY_LIMIT = 48
 const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   anthropic: 'claude-3-5-sonnet-20241022',
   openai: 'gpt-4o',
+  lmstudio: 'local-model',
   'openai-codex': 'gpt-4o',
   gemini: 'gemini-2.0-flash',
   mistral: 'mistral-large-latest',
@@ -65,6 +66,11 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
 }
 
 const AFFECTION_STORAGE_KEY = 'syntax-senpai-affection'
+const KEYLESS_PROVIDERS = new Set(['lmstudio'])
+
+function providerRequiresApiKey(provider: string): boolean {
+  return !KEYLESS_PROVIDERS.has(provider)
+}
 
 function loadAffection(waifuId: string): number {
   try {
@@ -452,9 +458,11 @@ export const useChatStore = defineStore('chat', () => {
       const key = await keyManager.getKey(selectedProvider.value)
       const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
       const waifu = selectedWaifu.value
-      if (!key) return
+      if (providerRequiresApiKey(selectedProvider.value) && !key) return
       const runtime = new AIChatRuntime({
-        provider: { type: selectedProvider.value as any, apiKey: key } as any,
+        provider: providerRequiresApiKey(selectedProvider.value)
+          ? ({ type: selectedProvider.value as any, apiKey: key } as any)
+          : ({ type: selectedProvider.value as any } as any),
         model,
         systemPrompt: `You are ${waifu?.displayName || 'an assistant'}. Reply ONLY with a short chat title (3-6 words max, no quotes, no punctuation at end) that captures what the user's first message is about.`,
       })
@@ -681,7 +689,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       const key = await keyManager.getKey(selectedProvider.value)
       const waifu = selectedWaifu.value
 
-      if (!key || key === '') {
+      if (providerRequiresApiKey(selectedProvider.value) && (!key || key === '')) {
         throw new Error(`No API key configured for ${selectedProvider.value}. Open Settings and add one to chat with ${waifu?.displayName || 'your assistant'}.`)
       }
 
@@ -713,7 +721,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       }
 
       const runtime = new AIChatRuntime({
-        provider: { type: selectedProvider.value as any, apiKey: key } as any,
+        provider: providerRequiresApiKey(selectedProvider.value)
+          ? ({ type: selectedProvider.value as any, apiKey: key } as any)
+          : ({ type: selectedProvider.value as any } as any),
         model,
         systemPrompt,
       })

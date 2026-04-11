@@ -12,30 +12,20 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { APIKeyManager } from "@syntax-senpai/storage";
 import { builtInWaifus } from "@syntax-senpai/waifu-core";
+import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  getProviderById,
+  PROVIDERS_WITH_MODELS,
+} from "../../src/constants/providers";
 
 type OnboardingStep = "welcome" | "select-waifu" | "setup-api" | "done";
-
-const PROVIDERS = [
-  { id: "anthropic", name: "Anthropic", displayName: "Claude 3.5" },
-  { id: "openai", name: "OpenAI", displayName: "GPT-4o" },
-  { id: "openai-codex", name: "OpenAI (Codex / Web Auth)", displayName: "OpenAI bearer token" },
-  { id: "deepseek", name: "DeepSeek", displayName: "DeepSeek Chat" },
-  { id: "gemini", name: "Gemini", displayName: "Gemini 2.0 Flash" },
-  { id: "mistral", name: "Mistral", displayName: "Mistral Large" },
-  { id: "groq", name: "Groq", displayName: "Groq (Free)" },
-  { id: "minimax-global", name: "MiniMax Global", displayName: "MiniMax Text 01" },
-  { id: "minimax-cn", name: "MiniMax CN", displayName: "MiniMax Text 01" },
-  { id: "xai", name: "xAI", displayName: "Grok 2" },
-  { id: "huggingface", name: "Hugging Face", displayName: "HF Router" },
-  { id: "github-models", name: "GitHub Models", displayName: "Device code token" },
-  { id: "together", name: "Together AI", displayName: "Together AI" },
-];
 
 export default function OnboardingScreen() {
   const router = useRouter();
   const [step, setStep] = useState<OnboardingStep>("welcome");
   const [selectedWaifu, setSelectedWaifu] = useState<string | null>(null);
   const [selectedProvider, setSelectedProvider] = useState("anthropic");
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_BY_PROVIDER.anthropic);
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -70,6 +60,7 @@ export default function OnboardingScreen() {
         JSON.stringify({
           selectedWaifuId: selectedWaifu,
           selectedProvider,
+          selectedModel,
           hasCompletedOnboarding: true,
         })
       );
@@ -329,7 +320,7 @@ export default function OnboardingScreen() {
                 }}
               >
                 <Text style={{ color: "#ffffff" }}>
-                  {PROVIDERS.find((p) => p.id === selectedProvider)?.displayName}
+                  {getProviderById(selectedProvider)?.label || selectedProvider}
                 </Text>
                 <Text style={{ color: "#a0a0a0" }}>▼</Text>
               </TouchableOpacity>
@@ -337,6 +328,59 @@ export default function OnboardingScreen() {
             <Text style={{ fontSize: 12, color: "#606060", marginTop: 8 }}>
               Get a free API key from your chosen provider
             </Text>
+          </View>
+
+          <View style={{ width: "100%", marginBottom: 20 }}>
+            {PROVIDERS_WITH_MODELS.map((provider) => (
+              <TouchableOpacity
+                key={provider.id}
+                onPress={() => {
+                  setSelectedProvider(provider.id);
+                  setSelectedModel(
+                    DEFAULT_MODEL_BY_PROVIDER[provider.id] || provider.models[0]?.id || ""
+                  );
+                  setError("");
+                }}
+                style={{
+                  padding: 12,
+                  marginBottom: 8,
+                  borderRadius: 8,
+                  backgroundColor: selectedProvider === provider.id ? "#6366f1" : "#1a1a1a",
+                  borderWidth: 1,
+                  borderColor: "#333333",
+                }}
+              >
+                <Text style={{ color: "white", fontWeight: selectedProvider === provider.id ? "bold" : "normal" }}>
+                  {provider.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <View style={{ marginBottom: 20 }}>
+            <Text style={{ color: "#d0d0d0", fontSize: 14, marginBottom: 8 }}>
+              Model
+            </Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              {(getProviderById(selectedProvider)?.models ?? []).map((model) => (
+                <TouchableOpacity
+                  key={model.id}
+                  onPress={() => setSelectedModel(model.id)}
+                  style={{
+                    padding: 10,
+                    marginRight: 8,
+                    borderRadius: 8,
+                    backgroundColor: selectedModel === model.id ? "#6366f1" : "#1a1a1a",
+                    borderWidth: 1,
+                    borderColor: "#333333",
+                  }}
+                >
+                  <Text style={{ color: "white", fontSize: 13, fontWeight: selectedModel === model.id ? "bold" : "normal" }}>
+                    {model.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
 
           <View style={{ marginBottom: 20 }}>

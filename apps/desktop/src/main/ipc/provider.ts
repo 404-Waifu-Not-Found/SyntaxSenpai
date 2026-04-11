@@ -14,7 +14,10 @@ const OPENAI_COMPATIBLE_BASE_URLS: Record<string, string> = {
   perplexity: 'https://api.perplexity.ai',
   huggingface: 'https://router.huggingface.co/v1',
   'github-models': 'https://models.inference.ai.azure.com',
+  lmstudio: 'http://127.0.0.1:1234/v1',
 }
+
+const KEYLESS_PROVIDERS = new Set(['lmstudio'])
 
 const FALLBACK_MODELS: Record<string, Array<{ id: string; displayName: string }>> = {
   anthropic: [
@@ -67,6 +70,7 @@ const FALLBACK_MODELS: Record<string, Array<{ id: string; displayName: string }>
     { id: 'openai/gpt-4o-mini', displayName: 'GPT-4o Mini' },
     { id: 'meta/Llama-3.3-70B-Instruct', displayName: 'Llama 3.3 70B' },
   ],
+  lmstudio: [{ id: 'local-model', displayName: 'Detected Local Model' }],
 }
 
 let registered = false
@@ -98,12 +102,55 @@ async function fetchOpenAICompatibleModels(provider: string, apiKey: string) {
   return models.length > 0 ? models : null
 }
 
+async function fetchLMStudioModels() {
+  const response = await fetch('http://127.0.0.1:1234/v1/models')
+  if (!response.ok) {
+    throw new Error(`LM Studio model request failed: ${response.status} ${response.statusText}`)
+  }
+
+  const data = await response.json()
+  const models = Array.isArray(data?.data)
+    ? data.data
+        .filter((model: any) => typeof model?.id === 'string' && model.id.length > 0)
+        .map((model: any) => ({
+          id: model.id,
+          displayName: model.id,
+        }))
+    : []
+
+  return models.length > 0 ? models : null
+}
+
+async function validateLMStudioConnection() {
+  const response = await fetch('http://127.0.0.1:1234/v1/models')
+  if (response.ok) {
+    return { success: true, message: 'LM Studio is reachable' }
+  }
+
+  return {
+    success: false,
+    error: `LM Studio is not reachable (${response.status} ${response.statusText}). Start LM Studio local server on http://127.0.0.1:1234.`,
+  }
+}
+
 export function registerProviderIpc() {
   if (registered) return
   registered = true
 
   ipcMain.handle('provider:validateKey', async (_event: any, provider: string, apiKey: string) => {
     const trimmedKey = String(apiKey || '').trim()
+
+    if (provider === 'lmstudio') {
+      try {
+        return await validateLMStudioConnection()
+      } catch (err: any) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        }
+      }
+    }
+
     if (!trimmedKey) return { success: false, error: 'API key is empty' }
 
     try {
@@ -146,7 +193,23 @@ export function registerProviderIpc() {
   ipcMain.handle('provider:listModels', async (event: any, provider: string, apiKey: string) => {
     try {
       const trimmedKey = String(apiKey || '').trim()
-      if (!trimmedKey) {
+
+      if (provider === 'lmstudio') {
+        try {
+          const models = await fetchLMStudioModels()
+          if (models) return { success: true, models, source: 'remote' }
+        } catch (error: any) {
+          return {
+            success: true,
+            models: FALLBACK_MODELS[provider] || [],
+            source: 'fallback',
+            warning: error instanceof Error ? error.message : String(error),
+          }
+        }
+        return { success: true, models: FALLBACK_MODELS[provider] || [], source: 'fallback' }
+      }
+
+      if (!trimmedKey && !KEYLESS_PROVIDERS.has(provider)) {
         return { success: true, models: FALLBACK_MODELS[provider] || [] }
       }
 

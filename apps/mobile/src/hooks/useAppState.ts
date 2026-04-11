@@ -5,6 +5,7 @@ import { builtInWaifus } from "@syntax-senpai/waifu-core";
 interface AppState {
   selectedWaifuId: string;
   selectedProvider: string;
+  selectedModel?: string;
   hasCompletedOnboarding: boolean;
 }
 

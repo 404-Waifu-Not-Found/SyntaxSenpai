@@ -332,7 +332,7 @@ export async function webSearch(query: string, limit = 5) {
     if (results.length === 0) {
       lines.push('\nNo search results found.')
     } else {
-      results.forEach((result, index) => {
+      results.forEach((result: { title: string; url: string; snippet?: string }, index: number) => {
         lines.push(`\n${index + 1}. ${result.title}\nURL: ${result.url}${result.snippet ? `\nSnippet: ${result.snippet}` : ''}`)
       })
     }

@@ -6,7 +6,7 @@ export default function MainLayout() {
       <Stack.Screen name="chat" />
       <Stack.Screen name="settings" />
       <Stack.Screen name="scan" options={{ presentation: "modal" }} />
-      <Stack.Screen name="pair-confirm" options={{ presentation: "modal" }} />
+      <Stack.Screen name="pair-confirm" />
     </Stack>
   );
 }

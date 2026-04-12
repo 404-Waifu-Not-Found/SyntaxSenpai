@@ -17,11 +17,18 @@ const selectedIp = ref<string | null>(null)
 let pollInterval: ReturnType<typeof setInterval> | null = null
 
 async function loadQrForIp(ip: string) {
-  selectedIp.value = ip
-  const result = await invoke('ws:generateQrForIp', ip)
-  if (result?.success && result.data?.qrDataUrl) {
-    qrDataUrl.value = result.data.qrDataUrl
-    wsUrl.value = result.data.wsUrl
+  try {
+    const result = await invoke('ws:generateQrForIp', ip)
+    if (result?.success && result.data?.qrDataUrl) {
+      qrDataUrl.value = result.data.qrDataUrl
+      wsUrl.value = result.data.wsUrl
+      selectedIp.value = ip
+      error.value = null
+    } else {
+      error.value = result?.error || 'Could not generate QR code for the selected IP.'
+    }
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Unknown error'
   }
 }
 

@@ -12,7 +12,7 @@ import MessageSkeleton from './components/MessageSkeleton.vue'
 import QrPairModal from './components/QrPairModal.vue'
 
 const store = useChatStore()
-const { invoke } = useIpc()
+const { invoke, on } = useIpc()
 const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, DEFAULT_THEME } = useTheme()
 const { t, locale, setLocale, localeOptions } = useI18n()
 
@@ -260,6 +260,7 @@ const showStartupSplash = ref(true)
 const appReady = ref(false)
 const startupAnimDone = ref(false)
 let startupSplashTimer: number | null = null
+let removeMobileChatListener: (() => void) | null = null
 const THEME_STORAGE_KEY = 'syntax-senpai-theme'
 const API_TELEMETRY_HISTORY_STORAGE_KEY = 'syntax-senpai-api-telemetry-history'
 const KEYLESS_PROVIDERS = new Set(['lmstudio'])
@@ -277,7 +278,7 @@ const messagesEndRef = ref<HTMLDivElement>()
 const inputRef = ref<HTMLTextAreaElement>()
 
 const filteredConversations = computed(() => {
-  let convs = store.conversations
+  let convs = [...store.conversations]
   if (store.sidebarFilter === 'favorites') {
     convs = convs.filter((c: any) => c.favorited)
   }
@@ -285,7 +286,11 @@ const filteredConversations = computed(() => {
     const q = convSearch.value.toLowerCase()
     convs = convs.filter((c: any) => (c.title || '').toLowerCase().includes(q))
   }
-  return convs
+  return convs.sort((a: any, b: any) => {
+    const favoriteDelta = Number(!!b.favorited) - Number(!!a.favorited)
+    if (favoriteDelta !== 0) return favoriteDelta
+    return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''))
+  })
 })
 
 const currentProviderMeta = computed(() =>
@@ -494,6 +499,14 @@ onMounted(() => {
     }
   })()
 
+  removeMobileChatListener = on('mobile-chat:event', async (payload: any) => {
+    store.handleExternalConversationEvent(payload)
+
+    if (payload?.type === 'user_message' || payload?.type === 'assistant_end' || payload?.type === 'assistant_error') {
+      await store.loadConversations()
+    }
+  })
+
   startupSplashTimer = window.setTimeout(() => {
     showStartupSplash.value = false
     nextTick(() => { appReady.value = true })
@@ -503,6 +516,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  removeMobileChatListener?.()
   if (startupSplashTimer !== null) {
     window.clearTimeout(startupSplashTimer)
   }

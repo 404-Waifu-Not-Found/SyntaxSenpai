@@ -91,6 +91,25 @@ function clampAffection(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)))
 }
 
+function extractExplicitTerminalCommand(text: string): string | null {
+  const trimmed = String(text || '').trim()
+  if (!trimmed) return null
+
+  const slashMatch = trimmed.match(/^\/(?:cmd|terminal)\s+([\s\S]+)$/i)
+  if (slashMatch?.[1]?.trim()) return slashMatch[1].trim()
+
+  const dollarMatch = trimmed.match(/^\$\s+([\s\S]+)$/)
+  if (dollarMatch?.[1]?.trim()) return dollarMatch[1].trim()
+
+  const fencedMatch = trimmed.match(/^```(?:bash|sh|zsh|shell)?\n([\s\S]+?)\n```$/i)
+  if (fencedMatch?.[1]?.trim()) return fencedMatch[1].trim()
+
+  const imperativeMatch = trimmed.match(/^(?:run|execute)\s+(?:this\s+)?command\s*:\s*([\s\S]+)$/i)
+  if (imperativeMatch?.[1]?.trim()) return imperativeMatch[1].trim()
+
+  return null
+}
+
 function createWaifuSystemPrompt(waifu: any, provider: string, model: string, affection: number) {
   return buildSystemPrompt(
     waifu,
@@ -216,6 +235,7 @@ export const useChatStore = defineStore('chat', () => {
   const conversationId = ref<string | null>(null)
   const conversations = ref<any[]>([])
   const recentMessageId = ref<string | null>(null)
+  const pendingClearVerification = ref(false)
   const agentMode = ref<AgentMode>(
     (localStorage.getItem('syntax-senpai-agent-mode') as AgentMode) || 'ask',
   )
@@ -661,6 +681,119 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       return
     }
 
+    const clearMatch = /^\/clear$/i.test(trimmedText)
+    const verifyClearMatch = /^\/(?:verify|vierfy)\s+deletion$/i.test(trimmedText)
+
+    if (clearMatch) {
+      pendingClearVerification.value = true
+      inputValue.value = ''
+
+      const assistantId = `assistant-${Date.now()}`
+      messages.value.push({
+        id: assistantId,
+        role: 'assistant',
+        content: 'Type /verify deletion to clear this chat history. (Conversation ID will stay the same.)',
+        timestamp: now(),
+      })
+      recentMessageId.value = assistantId
+      setTimeout(() => { recentMessageId.value = null }, 1100)
+      return
+    }
+
+    if (pendingClearVerification.value) {
+      if (verifyClearMatch) {
+        pendingClearVerification.value = false
+        inputValue.value = ''
+
+        const convId = conversationId.value
+        messages.value = []
+
+        if (convId) {
+          try { await invoke('store:clearMessages', convId) } catch (e) { console.warn('Failed to clear conversation messages:', e) }
+          await loadConversations()
+        }
+        return
+      } else {
+        pendingClearVerification.value = false
+        inputValue.value = ''
+        const assistantId = `assistant-${Date.now()}`
+        messages.value.push({
+          id: assistantId,
+          role: 'assistant',
+          content: 'Clear request canceled. Continuing chat.',
+          timestamp: now(),
+        })
+        recentMessageId.value = assistantId
+        setTimeout(() => { recentMessageId.value = null }, 1100)
+      }
+    }
+
+    const explicitTerminalCommand = extractExplicitTerminalCommand(trimmedText)
+    if (explicitTerminalCommand) {
+      const userMsg: Message = {
+        id: `user-${Date.now()}`,
+        role: 'user',
+        content: trimmedText,
+        timestamp: now(),
+      }
+
+      messages.value.push(userMsg)
+      recentMessageId.value = userMsg.id
+      inputValue.value = ''
+      isLoading.value = true
+
+      try {
+        let convId = conversationId.value
+        const isNewConversation = !convId
+        if (!convId) {
+          convId = await createConversation()
+          if (convId) conversationId.value = convId
+        }
+
+        if (convId) {
+          try { await invoke('store:addMessage', convId, userMsg) } catch (e) { console.warn('Failed to save user message:', e) }
+        }
+        if (isNewConversation) await loadConversations()
+
+        const result = await invoke('terminal:exec', explicitTerminalCommand)
+        const stdout = result?.stdout || ''
+        const stderr = result?.stderr || ''
+        const code = result?.code ?? 0
+        let output = stdout
+        if (stderr) output += (output ? '\n' : '') + `STDERR: ${stderr}`
+        if (!String(output).trim()) output = `(exit code ${code})`
+
+        const assistantId = `assistant-${Date.now()}`
+        const assistantContent = `Executed:\n$ ${explicitTerminalCommand}\n\n${output}`
+        const assistantMsg: Message = {
+          id: assistantId,
+          role: 'assistant',
+          content: assistantContent,
+          timestamp: now(),
+        }
+
+        messages.value.push(assistantMsg)
+        recentMessageId.value = assistantId
+
+        if (convId) {
+          try { await invoke('store:addMessage', convId, assistantMsg) } catch (e) { console.warn('Failed to save assistant message:', e) }
+          if (isNewConversation) autoNameConversation(convId, trimmedText)
+        }
+      } catch (err: any) {
+        messages.value.push({
+          id: `error-${Date.now()}`,
+          role: 'assistant',
+          content: `Error: ${err?.message || 'Unknown error'}`,
+          timestamp: now(),
+        })
+      } finally {
+        isLoading.value = false
+        setTimeout(() => { recentMessageId.value = null }, 1100)
+      }
+
+      return
+    }
+
     const userMsg: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
@@ -717,7 +850,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         if (sys && sys.homedir) {
           systemPrompt += `\n\n[System Environment]\nOS: ${sys.platform}\nUsername: ${sys.username}\nHome directory: ${sys.homedir}`
         }
-        systemPrompt += `\n\n[Agent Behavior]\nYou have access to a terminal tool to run commands on the user's computer and a web_search tool that uses DuckDuckGo for free public web search. Prefer web_search for current facts, news, documentation, or anything you should verify online. Use terminal for local machine tasks. You MUST stay fully in character as ${waifu?.displayName || 'your waifu persona'} at all times — even when executing commands or reporting results. Never sound like a generic AI assistant. Use your personality, catchphrases, emojis, and communication style. When you call stop_response, write your final_message entirely in character. Be concise — give the answer the user asked for, wrapped in your personality.`
+        systemPrompt += `\n\n[Agent Behavior]\nYou have access to a terminal tool to run commands on the user's computer and a web_search tool that uses DuckDuckGo for free public web search. Prefer web_search for current facts, news, documentation, or anything you should verify online. Use terminal for local machine tasks. If the user asks you to run, execute, inspect, list, read, or modify anything on their machine, you MUST call terminal tool(s) before your final answer instead of describing hypothetical steps. You MUST stay fully in character as ${waifu?.displayName || 'your waifu persona'} at all times — even when executing commands or reporting results. Never sound like a generic AI assistant. Use your personality, catchphrases, emojis, and communication style. When you call stop_response, write your final_message entirely in character. Be concise — give the answer the user asked for, wrapped in your personality.`
       }
 
       const runtime = new AIChatRuntime({
@@ -940,6 +1073,88 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     }
   }
 
+  function handleExternalConversationEvent(event: any) {
+    if (!event?.conversationId || conversationId.value !== event.conversationId) return
+
+    if (event.type === 'user_message' && event.message) {
+      const exists = messages.value.some((message) => message.id === event.message.id)
+      if (!exists) {
+        messages.value.push({
+          id: event.message.id,
+          role: event.message.role || 'user',
+          content: event.message.content || '',
+          timestamp: event.message.timestamp || '',
+        })
+      }
+      recentMessageId.value = event.message.id
+      return
+    }
+
+    if (event.type === 'assistant_start' && event.messageId) {
+      const exists = messages.value.some((message) => message.id === event.messageId)
+      if (!exists) {
+        messages.value.push({
+          id: event.messageId,
+          role: 'assistant',
+          content: '',
+          timestamp: event.timestamp || '',
+        })
+      }
+      recentMessageId.value = event.messageId
+      return
+    }
+
+    if (event.type === 'assistant_chunk' && event.messageId) {
+      const existing = messages.value.find((message) => message.id === event.messageId)
+      if (existing) {
+        existing.content = `${existing.content || ''}${event.chunk || ''}`
+      } else {
+        messages.value.push({
+          id: event.messageId,
+          role: 'assistant',
+          content: event.chunk || '',
+          timestamp: event.timestamp || '',
+        })
+      }
+      recentMessageId.value = event.messageId
+      return
+    }
+
+    if (event.type === 'assistant_end' && event.messageId) {
+      const existing = messages.value.find((message) => message.id === event.messageId)
+      if (existing) {
+        existing.content = event.finalMessage || existing.content
+        existing.timestamp = event.timestamp || existing.timestamp
+      } else {
+        messages.value.push({
+          id: event.messageId,
+          role: 'assistant',
+          content: event.finalMessage || '',
+          timestamp: event.timestamp || '',
+        })
+      }
+      recentMessageId.value = event.messageId
+      return
+    }
+
+    if (event.type === 'assistant_error' && event.messageId) {
+      const errorContent = `Error: ${event.error || 'Unknown mobile chat error'}`
+      const existing = messages.value.find((message) => message.id === event.messageId)
+      if (existing) {
+        existing.content = errorContent
+        existing.timestamp = event.timestamp || existing.timestamp
+      } else {
+        messages.value.push({
+          id: event.messageId,
+          role: 'assistant',
+          content: errorContent,
+          timestamp: event.timestamp || '',
+        })
+      }
+      recentMessageId.value = event.messageId
+    }
+  }
+
   function extractMemoryFromAIResponse(responseText: string): string {
     // Parse <memory category="..." key="...">value</memory> tags
     const memoryTagRegex = /<memory\s+category="([^"]+)"\s+key="([^"]+)">([^<]+)<\/memory>/gi
@@ -1080,5 +1295,6 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     deleteMemory,
     clearMemories,
     sendMessage,
+    handleExternalConversationEvent,
   }
 })

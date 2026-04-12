@@ -64,6 +64,18 @@ export function registerChatIpc() {
     }
   })
 
+  ipcMain.handle('store:clearMessages', async (event: any, conversationId: string) => {
+    try {
+      await store.deleteMessages(conversationId)
+      if (typeof store.updateConversation === 'function') {
+        await store.updateConversation(conversationId, { messageCount: 0 })
+      }
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
   ipcMain.handle('store:deleteConversation', async (event: any, conversationId: string) => {
     try {
       await store.deleteConversation(conversationId)

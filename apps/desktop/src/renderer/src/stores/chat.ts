@@ -133,6 +133,65 @@ function createWaifuSystemPrompt(waifu: any, provider: string, model: string, af
   )
 }
 
+function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: string): string {
+  const ps = shell === 'pwsh' || shell === 'powershell'
+  const unix = !ps && !!shell && (shell.includes('zsh') || shell.includes('bash') || shell.includes('sh'))
+
+  const shellSyntax = ps
+    ? `Shell: PowerShell (${shell})
+Command syntax rules — ALWAYS follow these when composing terminal commands:
+- List directory:        Get-ChildItem [-Path <path>] or dir
+- Read file:             Get-Content <path>
+- Env variable:          $env:VAR_NAME  (NOT $VAR or %VAR%)
+- Home directory:        $env:USERPROFILE
+- Current directory:     $PWD or Get-Location
+- Build a path:          Join-Path $env:USERPROFILE "subfolder"
+- Multi-command:         cmd1; cmd2  (NOT && or &)
+- Pipe & filter:         Get-Process | Where-Object { $_.Name -eq "foo" }
+- String interpolation:  "value is $varName" or "$($obj.Property)"
+- Test path exists:      Test-Path <path>
+- Write output:          Write-Output "text" or just "text"
+- Create folder:         New-Item -ItemType Directory -Path <path>
+- Delete file:           Remove-Item <path>
+- Copy:                  Copy-Item <src> <dest>
+- Move:                  Move-Item <src> <dest>
+- Run as admin:          not available inside this shell — inform the user
+Do NOT use bash syntax (&&, $HOME, chmod, etc.) — it will fail.`
+    : unix
+    ? `Shell: ${shell}
+Command syntax rules — ALWAYS follow these when composing terminal commands:
+- List directory:        ls -la [path]
+- Read file:             cat <path>
+- Env variable:          $VAR_NAME
+- Home directory:        $HOME or ~
+- Current directory:     $PWD or pwd
+- Build a path:          "$HOME/subfolder"
+- Multi-command:         cmd1 && cmd2  or  cmd1; cmd2
+- Pipe & filter:         ps aux | grep foo
+- String interpolation:  "value is $var"
+- Test path exists:      [ -e <path> ] or test -e <path>
+- Create folder:         mkdir -p <path>
+- Delete file:           rm <path>  (rm -rf for directories)
+- Copy:                  cp <src> <dest>
+- Move:                  mv <src> <dest>`
+    : `Shell: ${shell ?? 'unknown — adjust syntax to match the OS'}`
+
+  return `\n\n[Agent Behavior]
+You have access to a terminal tool to run commands on the user's machine and a web_search tool (DuckDuckGo).
+
+${shellSyntax}
+
+When to use which tool:
+- terminal → local machine tasks: files, processes, installs, git, etc.
+- web_search → current facts, documentation, news, anything you should verify online.
+
+Execution rules:
+- If the user asks you to run, inspect, list, read, or modify ANYTHING on their machine, you MUST call the terminal tool — do not describe hypothetical steps.
+- Keep going until you have a real result, then call stop_response.
+- Stay fully in character as ${waifuName} at all times, even while running commands. Never sound like a generic assistant.
+- When you call stop_response, write final_message entirely in character.`
+}
+
 function buildAffectionPrompt(affection: number, waifuName: string): string {
   return `\n\n[好感度 System — Affection Meter]
 Your current 好感度 (affection) toward this user is: ${affection}/100
@@ -848,9 +907,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           try { sys = await invoke('terminal:systemInfo') } catch {}
         }
         if (sys && sys.homedir) {
-          systemPrompt += `\n\n[System Environment]\nOS: ${sys.platform}\nUsername: ${sys.username}\nHome directory: ${sys.homedir}`
+          systemPrompt += `\n\n[System Environment]\nOS: ${sys.platform}\nUsername: ${sys.username}\nHome directory: ${sys.homedir}\nShell: ${sys.shell ?? 'unknown'}`
         }
-        systemPrompt += `\n\n[Agent Behavior]\nYou have access to a terminal tool to run commands on the user's computer and a web_search tool that uses DuckDuckGo for free public web search. Prefer web_search for current facts, news, documentation, or anything you should verify online. Use terminal for local machine tasks. If the user asks you to run, execute, inspect, list, read, or modify anything on their machine, you MUST call terminal tool(s) before your final answer instead of describing hypothetical steps. You MUST stay fully in character as ${waifu?.displayName || 'your waifu persona'} at all times — even when executing commands or reporting results. Never sound like a generic AI assistant. Use your personality, catchphrases, emojis, and communication style. When you call stop_response, write your final_message entirely in character. Be concise — give the answer the user asked for, wrapped in your personality.`
+        systemPrompt += buildAgentBehaviorPrompt(sys?.shell, waifu?.displayName || 'your waifu persona')
       }
 
       const runtime = new AIChatRuntime({

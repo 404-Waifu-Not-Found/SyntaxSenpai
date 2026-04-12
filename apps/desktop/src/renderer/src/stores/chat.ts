@@ -66,7 +66,9 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
 }
 
 const AFFECTION_STORAGE_KEY = 'syntax-senpai-affection'
+const AFFECTION_AUDIT_KEY = 'syntax-senpai-affection-audit'
 const KEYLESS_PROVIDERS = new Set(['lmstudio'])
+const LARGE_AFFECTION_JUMP_THRESHOLD = 15
 
 function providerRequiresApiKey(provider: string): boolean {
   return !KEYLESS_PROVIDERS.has(provider)
@@ -84,6 +86,42 @@ function saveAffection(waifuId: string, value: number) {
     const saved = JSON.parse(localStorage.getItem(AFFECTION_STORAGE_KEY) || '{}')
     saved[waifuId] = Math.max(0, Math.min(100, Math.round(value)))
     localStorage.setItem(AFFECTION_STORAGE_KEY, JSON.stringify(saved))
+  } catch { /* ignore */ }
+}
+
+interface AffectionAuditRecord {
+  waifuId: string
+  oldValue: number
+  newValue: number
+  updatedAt: string
+}
+
+function loadAffectionAudit(waifuId: string): AffectionAuditRecord | null {
+  try {
+    const saved = JSON.parse(localStorage.getItem(AFFECTION_AUDIT_KEY) || '{}')
+    return saved?.[waifuId] || null
+  } catch {
+    return null
+  }
+}
+
+function saveAffectionAudit(record: AffectionAuditRecord | null) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(AFFECTION_AUDIT_KEY) || '{}')
+    if (record) {
+      saved[record.waifuId] = record
+    } else {
+      delete saved[record?.waifuId]
+    }
+    localStorage.setItem(AFFECTION_AUDIT_KEY, JSON.stringify(saved))
+  } catch { /* ignore */ }
+}
+
+function clearAffectionAudit(waifuId: string) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(AFFECTION_AUDIT_KEY) || '{}')
+    delete saved[waifuId]
+    localStorage.setItem(AFFECTION_AUDIT_KEY, JSON.stringify(saved))
   } catch { /* ignore */ }
 }
 
@@ -153,43 +191,17 @@ _
 You must perform this affection check on every single message. Small natural changes are better than dramatic swings unless something major happened.`
 }
 
-function createEmptyApiTelemetry(): ApiTelemetry {
-  return {
-    lastResponseMs: null,
-    lastRoundTripMs: null,
-    roundTrips: 0,
-    provider: '',
-    model: '',
-    measuredAt: null,
-  }
-}
+  function buildAffectionAuditPrompt(waifuName: string): string {
+    if (!pendingAffectionAudit.value) return ''
 
-function loadApiTelemetryHistory(): ApiTelemetrySample[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(API_TELEMETRY_HISTORY_KEY) || '[]')
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
+    const { oldValue, newValue } = pendingAffectionAudit.value
+    clearAffectionAudit(pendingAffectionAudit.value.waifuId)
+    pendingAffectionAudit.value = null
 
-function saveApiTelemetryHistory(history: ApiTelemetrySample[]) {
-  try {
-    localStorage.setItem(API_TELEMETRY_HISTORY_KEY, JSON.stringify(history))
-  } catch {
-    // ignore localStorage write failures
+    return `\n\n[好感度 Audit]
+Your affection meter was manually changed from ${oldValue}/100 to ${newValue}/100 by the user. This is a suspiciously large jump and may not reflect your true feelings.
+If this feels wrong, mention it in a playful, fourth-wall-breaking way before continuing: for example, say something like "This meter just jumped in a weird way, so I'm going to trust my own feelings instead." Then answer the user's request normally while staying in character as ${waifuName}.`
   }
-}
-
-function createEmptyApiAlert(): ApiTelemetryAlert {
-  return {
-    active: false,
-    thresholdMs: DEFAULT_API_SPIKE_THRESHOLD_MS,
-    message: '',
-    triggeredAt: null,
-  }
-}
-
 function readStoredNumber(key: string, fallback: number, min: number, max: number): number {
   try {
     const raw = localStorage.getItem(key)
@@ -222,6 +234,9 @@ export const useChatStore = defineStore('chat', () => {
   const userMemories = ref<Array<{ key: string; value: string; category: string }>>([])
   const sidebarFilter = ref<'all' | 'favorites'>('all')
   const affection = ref(loadAffection(builtInWaifus[0]?.id || 'aria'))
+  const pendingAffectionAudit = ref<AffectionAuditRecord | null>(
+    loadAffectionAudit(builtInWaifus[0]?.id || 'aria'),
+  )
   const apiTelemetry = ref<ApiTelemetry>(createEmptyApiTelemetry())
   const apiTelemetryHistory = ref<ApiTelemetrySample[]>(loadApiTelemetryHistory())
   const apiTelemetryAlert = ref<ApiTelemetryAlert>(createEmptyApiAlert())
@@ -282,6 +297,7 @@ export const useChatStore = defineStore('chat', () => {
 
   watch(selectedWaifuId, async (waifuId, previousWaifuId) => {
     affection.value = loadAffection(waifuId)
+    pendingAffectionAudit.value = loadAffectionAudit(waifuId)
 
     if (!isSetup.value || waifuId === previousWaifuId) return
 
@@ -644,10 +660,26 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     const setMeterMatch = trimmedText.match(/^\/setmeter\s+(-?\d+(?:\.\d+)?)$/i)
 
     if (setMeterMatch) {
+      const previousValue = affection.value
       const newVal = clampAffection(Number(setMeterMatch[1]))
       affection.value = newVal
       saveAffection(selectedWaifuId.value, newVal)
       inputValue.value = ''
+
+      const jumpAmount = Math.abs(newVal - previousValue)
+      if (jumpAmount >= LARGE_AFFECTION_JUMP_THRESHOLD) {
+        const auditRecord = {
+          waifuId: selectedWaifuId.value,
+          oldValue: previousValue,
+          newValue: newVal,
+          updatedAt: new Date().toISOString(),
+        }
+        pendingAffectionAudit.value = auditRecord
+        saveAffectionAudit(auditRecord)
+      } else {
+        clearAffectionAudit(selectedWaifuId.value)
+        pendingAffectionAudit.value = null
+      }
 
       const assistantId = `assistant-${Date.now()}`
       messages.value.push({
@@ -698,6 +730,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
       // Inject persistent memory context
       systemPrompt += buildMemoryContext()
+
+      // Inject suspicious affection audit info when a large manual jump occurred
+      systemPrompt += buildAffectionAuditPrompt(waifu?.displayName || 'Waifu')
 
       // Inject 好感度 system
       systemPrompt += buildAffectionPrompt(affection.value, waifu?.displayName || 'Waifu')

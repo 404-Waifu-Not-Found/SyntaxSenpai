@@ -11,8 +11,8 @@
   ],
   "scripts": {
     "desktop:quick": "pnpm --filter syntax-senpai-desktop run dev:quick",
-    "dev:mobile": "turbo run dev --filter=mobile",
-    "dev:desktop": "turbo run dev --filter=desktop",
+    "dev:mobile": "turbo run dev --filter=syntax-senpai-mobile",
+    "dev:desktop": "turbo run dev --filter=syntax-senpai-desktop",
     "dev:runtime": "pnpm --filter syntax-senpai-runtime run dev",
     "build": "turbo run build",
     "test": "turbo run test",

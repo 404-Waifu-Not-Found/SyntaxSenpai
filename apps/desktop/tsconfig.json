@@ -15,7 +15,9 @@
     "moduleResolution": "bundler",
     "allowSyntheticDefaultImports": true,
     "paths": {
-      "@/*": ["./src/renderer/src/*"]
+      "@/*": ["./src/renderer/src/*"],
+      "@syntax-senpai/ws-protocol": ["../../packages/ws-protocol/src"],
+      "@syntax-senpai/ws-protocol/*": ["../../packages/ws-protocol/src/*"]
     }
   },
   "include": ["src", "electron.vite.config.mjs", "../../packages/ws-protocol/src"],

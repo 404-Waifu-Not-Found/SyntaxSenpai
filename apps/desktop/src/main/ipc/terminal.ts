@@ -1,57 +1,29 @@
 /**
- * Terminal IPC – gives the AI a real shell to execute commands in.
- *
- * Uses child_process.exec so every command runs in a proper login shell
- * with full expansion (~, $ENV, pipes, redirects, etc.).
+ * Terminal IPC – exposes shell command execution to the renderer via Electron IPC.
  */
 
 const { ipcMain } = require('electron')
-const { exec } = require('child_process')
 const os = require('os')
+import { runTerminalCommand, getActiveShellName } from '../terminal-shell'
 
 let registered = false
-
-function runShell(
-  command: string,
-  cwd?: string,
-): Promise<{ stdout: string; stderr: string; code: number }> {
-  return new Promise((resolve) => {
-    exec(
-      command,
-      {
-        cwd: cwd || os.homedir(),
-        timeout: 30_000,
-        maxBuffer: 2 * 1024 * 1024, // 2 MB
-        shell: process.env.SHELL || '/bin/zsh',
-      },
-      (error: any, stdout: string, stderr: string) => {
-        resolve({
-          stdout: stdout || '',
-          stderr: stderr || '',
-          code: error ? error.code ?? 1 : 0,
-        })
-      },
-    )
-  })
-}
 
 export function registerTerminalIpc() {
   if (registered) return
   registered = true
 
-  ipcMain.handle('terminal:systemInfo', async () => {
-    return {
-      platform: process.platform,
-      homedir: os.homedir(),
-      username: os.userInfo().username,
-    }
-  })
+  ipcMain.handle('terminal:systemInfo', async () => ({
+    platform: process.platform,
+    homedir: os.homedir(),
+    username: os.userInfo().username,
+    shell: getActiveShellName(),
+  }))
 
   ipcMain.handle(
     'terminal:exec',
     async (_event: any, command: string, cwd?: string) => {
       try {
-        const result = await runShell(command, cwd)
+        const result = await runTerminalCommand(command, { cwd: cwd || os.homedir() })
         return { success: true, ...result }
       } catch (err: any) {
         return {

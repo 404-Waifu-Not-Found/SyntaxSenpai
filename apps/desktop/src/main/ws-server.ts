@@ -2,7 +2,7 @@ import WebSocket, { WebSocketServer } from 'ws'
 import { randomUUID } from 'crypto'
 import os from 'os'
 import qrcode from 'qrcode'
-const { exec } = require('child_process')
+import { runTerminalCommand } from './terminal-shell'
 const electronModule = require('electron')
 const { BrowserWindow } = electronModule
 import { AIChatRuntime } from '@syntax-senpai/ai-core'
@@ -178,27 +178,24 @@ async function runDesktopTerminalCommand(command: string): Promise<string> {
   const trimmed = String(command || '').trim()
   if (!trimmed) return 'Error: Command cannot be empty.'
 
-  return await new Promise((resolve) => {
-    exec(
-      trimmed,
-      {
-        cwd: os.homedir(),
-        timeout: 30_000,
-        maxBuffer: 2 * 1024 * 1024,
-        shell: process.env.SHELL || '/bin/zsh',
-      },
-      (error: any, stdout: string, stderr: string) => {
-        let output = stdout || ''
-        if (stderr) {
-          output += `${output ? '\n' : ''}STDERR: ${stderr}`
-        }
-        if (!output.trim()) {
-          output = `(exit code ${error ? error.code ?? 1 : 0})`
-        }
-        resolve(output)
-      },
-    )
-  })
+  try {
+    const result = await runTerminalCommand(trimmed, {
+      cwd: os.homedir(),
+      timeout: 30_000,
+      maxBuffer: 2 * 1024 * 1024,
+    })
+
+    let output = result.stdout || ''
+    if (result.stderr) {
+      output += `${output ? '\n' : ''}STDERR: ${result.stderr}`
+    }
+    if (!output.trim()) {
+      output = `(exit code ${result.code ?? 0})`
+    }
+    return output
+  } catch (err: any) {
+    return `Error: ${err instanceof Error ? err.message : String(err)}`
+  }
 }
 
 async function executeMobileToolCall(toolCall: { name: string; arguments?: Record<string, unknown> }) {

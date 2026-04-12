@@ -329,10 +329,12 @@ function send(socket: WebSocket, type: string, payload: unknown) {
 }
 
 async function handleAgentRequest(socket: WebSocket, msg: WSMessage<AgentRequestPayload>) {
-  const { conversationId, messages, waifuId, providerConfig, relationshipSnapshot } = msg.payload
-  const type = desktopRuntimeConfig?.provider || providerConfig.type
-  const apiKey = desktopRuntimeConfig?.apiKey || providerConfig.apiKey
-  const model = desktopRuntimeConfig?.model || providerConfig.model
+  const payload = msg.payload as AgentRequestPayload
+  const { conversationId, messages, waifuId, relationshipSnapshot } = payload
+  const providerCfg = (payload as any).providerConfig as { type?: string; apiKey?: string; model?: string } | undefined
+  const type = desktopRuntimeConfig?.provider || providerCfg?.type
+  const apiKey = desktopRuntimeConfig?.apiKey || providerCfg?.apiKey
+  const model = desktopRuntimeConfig?.model || providerCfg?.model
 
   const waifu = builtInWaifus.find((w: any) => w.id === waifuId) || builtInWaifus[0]
   const activePair = pairedSession?.socket === socket ? pairedSession : null

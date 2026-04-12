@@ -134,52 +134,8 @@ function createWaifuSystemPrompt(waifu: any, provider: string, model: string, af
 }
 
 function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: string): string {
-  const ps = shell === 'pwsh' || shell === 'powershell'
-  const unix = !ps && !!shell && (shell.includes('zsh') || shell.includes('bash') || shell.includes('sh'))
-
-  const shellSyntax = ps
-    ? `Shell: PowerShell (${shell})
-Command syntax rules — ALWAYS follow these when composing terminal commands:
-- List directory:        Get-ChildItem [-Path <path>] or dir
-- Read file:             Get-Content <path>
-- Env variable:          $env:VAR_NAME  (NOT $VAR or %VAR%)
-- Home directory:        $env:USERPROFILE
-- Current directory:     $PWD or Get-Location
-- Build a path:          Join-Path $env:USERPROFILE "subfolder"
-- Multi-command:         cmd1; cmd2  (NOT && or &)
-- Pipe & filter:         Get-Process | Where-Object { $_.Name -eq "foo" }
-- String interpolation:  "value is $varName" or "$($obj.Property)"
-- Test path exists:      Test-Path <path>
-- Write output:          Write-Output "text" or just "text"
-- Create folder:         New-Item -ItemType Directory -Path <path>
-- Delete file:           Remove-Item <path>
-- Copy:                  Copy-Item <src> <dest>
-- Move:                  Move-Item <src> <dest>
-- Run as admin:          not available inside this shell — inform the user
-Do NOT use bash syntax (&&, $HOME, chmod, etc.) — it will fail.`
-    : unix
-    ? `Shell: ${shell}
-Command syntax rules — ALWAYS follow these when composing terminal commands:
-- List directory:        ls -la [path]
-- Read file:             cat <path>
-- Env variable:          $VAR_NAME
-- Home directory:        $HOME or ~
-- Current directory:     $PWD or pwd
-- Build a path:          "$HOME/subfolder"
-- Multi-command:         cmd1 && cmd2  or  cmd1; cmd2
-- Pipe & filter:         ps aux | grep foo
-- String interpolation:  "value is $var"
-- Test path exists:      [ -e <path> ] or test -e <path>
-- Create folder:         mkdir -p <path>
-- Delete file:           rm <path>  (rm -rf for directories)
-- Copy:                  cp <src> <dest>
-- Move:                  mv <src> <dest>`
-    : `Shell: ${shell ?? 'unknown — adjust syntax to match the OS'}`
-
   return `\n\n[Agent Behavior]
 You have access to a terminal tool to run commands on the user's machine and a web_search tool (DuckDuckGo).
-
-${shellSyntax}
 
 When to use which tool:
 - terminal → local machine tasks: files, processes, installs, git, etc.

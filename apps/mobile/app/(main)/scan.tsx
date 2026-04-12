@@ -39,7 +39,7 @@ export default function ScanScreen() {
       ) {
         throw new Error("Missing wsUrl or token");
       }
-      router.push({
+      router.replace({
         pathname: "/(main)/pair-confirm",
         params: { wsUrl: payload.wsUrl, token: payload.token },
       });

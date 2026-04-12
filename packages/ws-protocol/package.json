@@ -5,7 +5,7 @@
   "private": true,
   "main": "dist/index.js",
   "react-native": "src/index.ts",
-  "types": "dist/index.d.ts",
+  "types": "src/index.ts",
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",

@@ -1,4 +1,4 @@
-name: Desktop macOS CI
+name: Desktop Windows CI
 
 on:
   push:
@@ -8,8 +8,8 @@ on:
 
 jobs:
   build-desktop:
-    name: Build desktop app on macOS
-    runs-on: macos-latest
+    name: Build desktop app on Windows
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -26,4 +26,4 @@ jobs:
       - name: Desktop typecheck
         run: pnpm --filter syntax-senpai-desktop run typecheck
       - name: Desktop smoke build complete
-        run: echo "Desktop macOS build completed"
+        run: echo "Desktop Windows build completed"

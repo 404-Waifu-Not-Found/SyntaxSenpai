@@ -92,7 +92,7 @@ export async function runTerminalCommand(
       resolve({
         stdout: stdout || '',
         stderr: stderr || '',
-        code: error ? error.code ?? 1 : 0,
+        code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
       })
     })
   })

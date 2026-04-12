@@ -134,8 +134,9 @@ function createWaifuSystemPrompt(waifu: any, provider: string, model: string, af
 }
 
 function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: string): string {
+  const shellLine = shell ? `\n- The user's shell is: ${shell}.` : ''
   return `\n\n[Agent Behavior]
-You have access to a terminal tool to run commands on the user's machine and a web_search tool (DuckDuckGo).
+You have access to a terminal tool to run commands on the user's machine and a web_search tool (DuckDuckGo).${shellLine}
 
 When to use which tool:
 - terminal → local machine tasks: files, processes, installs, git, etc.

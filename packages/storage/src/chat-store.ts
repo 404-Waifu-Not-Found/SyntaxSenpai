@@ -77,12 +77,21 @@ export class InMemoryChatStore implements IChatStore {
   }
 
   async deleteMessages(conversationId: string, beforeDate?: string): Promise<void> {
+    const conv = this.conversations.get(conversationId);
     if (beforeDate) {
       const messages = this.messages.get(conversationId) || [];
       const filtered = messages.filter((m) => (m.createdAt || "") >= beforeDate);
       this.messages.set(conversationId, filtered);
+      if (conv) {
+        conv.messageCount = filtered.length;
+        conv.updatedAt = new Date().toISOString();
+      }
     } else {
-      this.messages.delete(conversationId);
+      this.messages.set(conversationId, []);
+      if (conv) {
+        conv.messageCount = 0;
+        conv.updatedAt = new Date().toISOString();
+      }
     }
   }
 
@@ -243,13 +252,22 @@ export class DesktopSQLiteChatStore implements IChatStore {
   }
 
   async deleteMessages(conversationId: string, beforeDate?: string): Promise<void> {
+    const conv = this.data.conversations[conversationId];
     if (beforeDate) {
       const msgs = this.data.messages[conversationId] || [];
       this.data.messages[conversationId] = msgs.filter(
         (m) => ((m as any).createdAt || "") >= beforeDate
       );
+      if (conv) {
+        conv.messageCount = this.data.messages[conversationId].length;
+        conv.updatedAt = new Date().toISOString();
+      }
     } else {
       this.data.messages[conversationId] = [];
+      if (conv) {
+        conv.messageCount = 0;
+        conv.updatedAt = new Date().toISOString();
+      }
     }
     this.flush();
   }

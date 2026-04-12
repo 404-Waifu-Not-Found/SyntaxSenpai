@@ -58,7 +58,7 @@ export function createKeystore(
 class MobileKeystoreAdapter implements KeystoreAdapter {
   async set(service: string, account: string, secret: string): Promise<void> {
     try {
-      // @ts-expect-error - expo-secure-store is only available on mobile
+      // @ts-ignore - expo-secure-store is only available on mobile
       const store = await import("expo-secure-store");
       await store.setItemAsync(`${service}:${account}`, secret);
     } catch (error) {
@@ -69,7 +69,7 @@ class MobileKeystoreAdapter implements KeystoreAdapter {
 
   async get(service: string, account: string): Promise<string | null> {
     try {
-      // @ts-expect-error - expo-secure-store is only available on mobile
+      // @ts-ignore - expo-secure-store is only available on mobile
       const store = await import("expo-secure-store");
       return (await store.getItemAsync(`${service}:${account}`)) || null;
     } catch (error) {
@@ -79,7 +79,7 @@ class MobileKeystoreAdapter implements KeystoreAdapter {
 
   async delete(service: string, account: string): Promise<void> {
     try {
-      // @ts-expect-error - expo-secure-store is only available on mobile
+      // @ts-ignore - expo-secure-store is only available on mobile
       const store = await import("expo-secure-store");
       await store.deleteItemAsync(`${service}:${account}`);
     } catch (error) {
@@ -104,7 +104,7 @@ class MobileKeystoreAdapter implements KeystoreAdapter {
 class DesktopKeystoreAdapter implements KeystoreAdapter {
   async set(service: string, account: string, secret: string): Promise<void> {
     try {
-      // @ts-expect-error - keytar is only available on desktop
+      // @ts-ignore - keytar is only available on desktop
       const keytar = await import("keytar");
       await keytar.setPassword(service, account, secret);
     } catch (error) {
@@ -114,7 +114,7 @@ class DesktopKeystoreAdapter implements KeystoreAdapter {
 
   async get(service: string, account: string): Promise<string | null> {
     try {
-      // @ts-expect-error - keytar is only available on desktop
+      // @ts-ignore - keytar is only available on desktop
       const keytar = await import("keytar");
       return await keytar.getPassword(service, account);
     } catch (error) {
@@ -124,7 +124,7 @@ class DesktopKeystoreAdapter implements KeystoreAdapter {
 
   async delete(service: string, account: string): Promise<void> {
     try {
-      // @ts-expect-error - keytar is only available on desktop
+      // @ts-ignore - keytar is only available on desktop
       const keytar = await import("keytar");
       await keytar.deletePassword(service, account);
     } catch (error) {
@@ -134,7 +134,7 @@ class DesktopKeystoreAdapter implements KeystoreAdapter {
 
   async list(service: string): Promise<string[]> {
     try {
-      // @ts-expect-error - keytar is only available on desktop
+      // @ts-ignore - keytar is only available on desktop
       const keytar = await import("keytar");
       const creds = await keytar.findCredentials(service);
       return creds.map((c: any) => c.account);

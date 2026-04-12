@@ -36,6 +36,8 @@ export default function ChatScreen() {
   const [selectedWaifuId, setSelectedWaifuId] = useState<string>(builtInWaifus[0]?.id || "aria");
   const scrollViewRef = useRef<ScrollView>(null);
   const pendingRemoteId = useRef<string | null>(null);
+  const conversationIdRef = useRef<string>(`conv-${Date.now()}`);
+  const pendingClearVerificationRef = useRef(false);
 
   const selectedWaifu = builtInWaifus.find((w) => w.id === selectedWaifuId) || builtInWaifus[0];
 
@@ -76,7 +78,29 @@ export default function ChatScreen() {
         return [...prev, { id, role: "assistant", content: chunk, timestamp: ts }];
       });
     }, []),
-    onStreamEnd: useCallback((_convId: string, _final: string) => {
+    onStreamEnd: useCallback((_convId: string, final: string) => {
+      const id = pendingRemoteId.current;
+      const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+      if (id) {
+        setMessages((prev) => {
+          const existingIndex = prev.findIndex((msg) => msg.id === id);
+          if (existingIndex >= 0) {
+            const next = [...prev];
+            next[existingIndex] = {
+              ...next[existingIndex],
+              content: final || next[existingIndex].content,
+              timestamp: next[existingIndex].timestamp || ts,
+            };
+            return next;
+          }
+
+          if (!final) return prev;
+
+          return [...prev, { id, role: "assistant", content: final, timestamp: ts }];
+        });
+      }
+
       pendingRemoteId.current = null;
       setIsLoading(false);
     }, []),
@@ -94,10 +118,41 @@ export default function ChatScreen() {
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isLoading || !isPaired) return;
 
+    const trimmedInput = inputValue.trim();
+    const isClearCommand = /^\/clear$/i.test(trimmedInput);
+    const isVerifyDeletionCommand = /^\/(?:verify|vierfy)\s+deletion$/i.test(trimmedInput);
+
+    if (isClearCommand) {
+      pendingClearVerificationRef.current = true;
+      setInputValue("");
+      const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          content: "Type /verify deletion to clear this chat history. (Conversation ID will stay the same.)",
+          timestamp: ts,
+        },
+      ]);
+      return;
+    }
+
+    if (pendingClearVerificationRef.current) {
+      if (isVerifyDeletionCommand) {
+        pendingClearVerificationRef.current = false;
+        setInputValue("");
+        setMessages([]);
+      } else {
+        pendingClearVerificationRef.current = false;
+      }
+      return;
+    }
+
     const userMessage: Message = {
       id: `user-${Date.now()}`,
       role: "user",
-      content: inputValue,
+      content: trimmedInput,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
 
@@ -106,7 +161,7 @@ export default function ChatScreen() {
     setIsLoading(true);
 
     try {
-      const conversationId = `conv-${Date.now()}`;
+      const conversationId = conversationIdRef.current;
       const assistantId = `assistant-remote-${Date.now()}`;
       pendingRemoteId.current = assistantId;
 
@@ -300,7 +355,7 @@ export default function ChatScreen() {
               >
                 <TextInput
                   style={{ flex: 1, color: colors.fg, paddingVertical: 12, fontSize: 14 }}
-                  placeholder="Say something..."
+                  placeholder="Say something or /cmd ls"
                   placeholderTextColor={colors.fg + "40"}
                   value={inputValue}
                   onChangeText={setInputValue}

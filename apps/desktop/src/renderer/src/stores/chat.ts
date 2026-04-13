@@ -133,6 +133,22 @@ function createWaifuSystemPrompt(waifu: any, provider: string, model: string, af
   )
 }
 
+function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: string): string {
+  const shellLine = shell ? `\n- The user's shell is: ${shell}.` : ''
+  return `\n\n[Agent Behavior]
+You have access to a terminal tool to run commands on the user's machine and a web_search tool (DuckDuckGo).${shellLine}
+
+When to use which tool:
+- terminal → local machine tasks: files, processes, installs, git, etc.
+- web_search → current facts, documentation, news, anything you should verify online.
+
+Execution rules:
+- If the user asks you to run, inspect, list, read, or modify ANYTHING on their machine, you MUST call the terminal tool — do not describe hypothetical steps.
+- Keep going until you have a real result, then call stop_response.
+- Stay fully in character as ${waifuName} at all times, even while running commands. Never sound like a generic assistant.
+- When you call stop_response, write final_message entirely in character.`
+}
+
 function buildAffectionPrompt(affection: number, waifuName: string): string {
   return `\n\n[好感度 System — Affection Meter]
 Your current 好感度 (affection) toward this user is: ${affection}/100
@@ -848,9 +864,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           try { sys = await invoke('terminal:systemInfo') } catch {}
         }
         if (sys && sys.homedir) {
-          systemPrompt += `\n\n[System Environment]\nOS: ${sys.platform}\nUsername: ${sys.username}\nHome directory: ${sys.homedir}`
+          systemPrompt += `\n\n[System Environment]\nOS: ${sys.platform}\nUsername: ${sys.username}\nHome directory: ${sys.homedir}\nShell: ${sys.shell ?? 'unknown'}`
         }
-        systemPrompt += `\n\n[Agent Behavior]\nYou have access to a terminal tool to run commands on the user's computer and a web_search tool that uses DuckDuckGo for free public web search. Prefer web_search for current facts, news, documentation, or anything you should verify online. Use terminal for local machine tasks. If the user asks you to run, execute, inspect, list, read, or modify anything on their machine, you MUST call terminal tool(s) before your final answer instead of describing hypothetical steps. You MUST stay fully in character as ${waifu?.displayName || 'your waifu persona'} at all times — even when executing commands or reporting results. Never sound like a generic AI assistant. Use your personality, catchphrases, emojis, and communication style. When you call stop_response, write your final_message entirely in character. Be concise — give the answer the user asked for, wrapped in your personality.`
+        systemPrompt += buildAgentBehaviorPrompt(sys?.shell, waifu?.displayName || 'your waifu persona')
       }
 
       const runtime = new AIChatRuntime({

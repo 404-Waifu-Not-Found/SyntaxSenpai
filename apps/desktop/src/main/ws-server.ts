@@ -2,7 +2,7 @@ import WebSocket, { WebSocketServer } from 'ws'
 import { randomUUID } from 'crypto'
 import os from 'os'
 import qrcode from 'qrcode'
-const { exec } = require('child_process')
+import { runTerminalCommand } from './terminal-shell'
 const electronModule = require('electron')
 const { BrowserWindow } = electronModule
 import { AIChatRuntime } from '@syntax-senpai/ai-core'
@@ -178,27 +178,24 @@ async function runDesktopTerminalCommand(command: string): Promise<string> {
   const trimmed = String(command || '').trim()
   if (!trimmed) return 'Error: Command cannot be empty.'
 
-  return await new Promise((resolve) => {
-    exec(
-      trimmed,
-      {
-        cwd: os.homedir(),
-        timeout: 30_000,
-        maxBuffer: 2 * 1024 * 1024,
-        shell: process.env.SHELL || '/bin/zsh',
-      },
-      (error: any, stdout: string, stderr: string) => {
-        let output = stdout || ''
-        if (stderr) {
-          output += `${output ? '\n' : ''}STDERR: ${stderr}`
-        }
-        if (!output.trim()) {
-          output = `(exit code ${error ? error.code ?? 1 : 0})`
-        }
-        resolve(output)
-      },
-    )
-  })
+  try {
+    const result = await runTerminalCommand(trimmed, {
+      cwd: os.homedir(),
+      timeout: 30_000,
+      maxBuffer: 2 * 1024 * 1024,
+    })
+
+    let output = result.stdout || ''
+    if (result.stderr) {
+      output += `${output ? '\n' : ''}STDERR: ${result.stderr}`
+    }
+    if (!output.trim()) {
+      output = `(exit code ${result.code ?? 0})`
+    }
+    return output
+  } catch (err: any) {
+    return `Error: ${err instanceof Error ? err.message : String(err)}`
+  }
 }
 
 async function executeMobileToolCall(toolCall: { name: string; arguments?: Record<string, unknown> }) {
@@ -305,17 +302,23 @@ async function persistMobileMessage(conversationId: string, message: { id: strin
 }
 
 function getLanIp(): string {
+  const ips = getLanIps()
+  return ips[0]?.address ?? '127.0.0.1'
+}
+
+export function getLanIps(): Array<{ name: string; address: string }> {
   const interfaces = os.networkInterfaces()
+  const result: Array<{ name: string; address: string }> = []
   for (const name of Object.keys(interfaces)) {
     const iface = interfaces[name]
     if (!iface) continue
     for (const info of iface) {
       if (info.family === 'IPv4' && !info.internal) {
-        return info.address
+        result.push({ name, address: info.address })
       }
     }
   }
-  return '127.0.0.1'
+  return result
 }
 
 function send(socket: WebSocket, type: string, payload: unknown) {
@@ -638,13 +641,21 @@ export function stopWsServer(): void {
   }
 }
 
-export async function getQrData(): Promise<{ qrDataUrl: string; wsUrl: string; token: string } | null> {
+export async function getQrData(): Promise<{ qrDataUrl: string; wsUrl: string; token: string; availableIps: Array<{ name: string; address: string }> } | null> {
   if (!wss || !serverToken || !serverPort) return null
   const ip = getLanIp()
   const wsUrl = `ws://${ip}:${serverPort}`
   const payload = JSON.stringify({ wsUrl, token: serverToken })
   const qrDataUrl = await qrcode.toDataURL(payload, { width: 256, margin: 2 })
-  return { qrDataUrl, wsUrl, token: serverToken }
+  return { qrDataUrl, wsUrl, token: serverToken, availableIps: getLanIps() }
+}
+
+export async function generateQrForIp(ip: string): Promise<{ qrDataUrl: string; wsUrl: string } | null> {
+  if (!wss || !serverToken || !serverPort) return null
+  const wsUrl = `ws://${ip}:${serverPort}`
+  const payload = JSON.stringify({ wsUrl, token: serverToken })
+  const qrDataUrl = await qrcode.toDataURL(payload, { width: 256, margin: 2 })
+  return { qrDataUrl, wsUrl }
 }
 
 export function getPairingStatus(): { paired: boolean; deviceName?: string; sessionId?: string } {

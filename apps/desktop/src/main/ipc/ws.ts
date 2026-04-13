@@ -1,5 +1,5 @@
 const { ipcMain } = require('electron')
-import { startWsServer, stopWsServer, getQrData, getPairingStatus, setDesktopRuntimeConfig } from '../ws-server'
+import { startWsServer, stopWsServer, getQrData, generateQrForIp, getPairingStatus, setDesktopRuntimeConfig } from '../ws-server'
 
 let registered = false
 
@@ -28,6 +28,18 @@ export function registerWsIpc() {
   ipcMain.handle('ws:getQrData', async () => {
     try {
       const data = await getQrData()
+      return { success: true, data }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('ws:generateQrForIp', async (_event: unknown, ip: string) => {
+    try {
+      const data = await generateQrForIp(ip)
+      if (data === null) {
+        return { success: false, error: 'QR code generation failed: WebSocket server is not running.' }
+      }
       return { success: true, data }
     } catch (err: any) {
       return { success: false, error: err instanceof Error ? err.message : String(err) }

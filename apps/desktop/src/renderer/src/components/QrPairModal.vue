@@ -11,8 +11,26 @@ const paired = ref(false)
 const deviceName = ref('')
 const loading = ref(true)
 const error = ref<string | null>(null)
+const availableIps = ref<Array<{ name: string; address: string }>>([])
+const selectedIp = ref<string | null>(null)
 
 let pollInterval: ReturnType<typeof setInterval> | null = null
+
+async function loadQrForIp(ip: string) {
+  try {
+    const result = await invoke('ws:generateQrForIp', ip)
+    if (result?.success && result.data?.qrDataUrl) {
+      qrDataUrl.value = result.data.qrDataUrl
+      wsUrl.value = result.data.wsUrl
+      selectedIp.value = ip
+      error.value = null
+    } else {
+      error.value = result?.error || 'Could not generate QR code for the selected IP.'
+    }
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Unknown error'
+  }
+}
 
 onMounted(async () => {
   try {
@@ -20,6 +38,8 @@ onMounted(async () => {
     if (result?.success && result.data?.qrDataUrl) {
       qrDataUrl.value = result.data.qrDataUrl
       wsUrl.value = result.data.wsUrl
+      availableIps.value = result.data.availableIps ?? []
+      selectedIp.value = availableIps.value[0]?.address ?? null
     } else {
       error.value = 'Could not generate QR code. Make sure the desktop app is running.'
     }
@@ -101,6 +121,25 @@ onUnmounted(() => {
         </div>
 
         <p v-if="wsUrl" class="text-[10px] font-mono text-neutral-600 break-all">{{ wsUrl }}</p>
+
+        <!-- IP selector -->
+        <div v-if="availableIps.length > 1" class="mt-4 text-left">
+          <p class="text-[10px] text-neutral-500 mb-1">Network interface</p>
+          <div class="flex flex-col gap-1">
+            <button
+              v-for="ip in availableIps"
+              :key="ip.address"
+              class="flex items-center justify-between px-3 py-1.5 rounded-lg text-xs transition-colors"
+              :class="selectedIp === ip.address
+                ? 'bg-primary-500/20 text-primary-300 ring-1 ring-primary-500/40'
+                : 'bg-white/5 text-neutral-400 hover:bg-white/10'"
+              @click="loadQrForIp(ip.address)"
+            >
+              <span class="font-mono">{{ ip.address }}</span>
+              <span class="text-neutral-600 ml-2 truncate max-w-[100px]">{{ ip.name }}</span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>

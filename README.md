@@ -37,22 +37,21 @@ Every interaction is delivered in-character, blending emotional engagement with 
 ```
 syntax-senpai/
 ├── apps/
-│   ├── desktop/          # Electron + Vue 3 + Vite
-│   ├── mobile/           # Mobile target
-│   └── runtime/          # Container-friendly runtime service
+│   ├── desktop/          # Electron + Vite desktop application
+│   ├── mobile/           # React Native mobile app (Expo)
+│   └── runtime/          # Node.js runtime service for health, metrics, backups, plugins
 ├── packages/
-│   ├── ai-core/          # Provider adapters & chat logic
-│   ├── waifu-core/       # Waifu definitions & personalities
-│   ├── agent-tools/      # Tool execution for agent mode
+│   ├── ai-core/          # AI provider abstraction (Anthropic, OpenAI, DeepSeek, etc.)
+│   ├── waifu-core/       # Waifu personalities, system prompts, expressions
+│   ├── agent-tools/      # Tool execution framework for agents
 │   ├── storage/          # Persistent storage layer
-│   ├── ui/               # Shared UI styles
-│   ├── ui-transitions/   # Reusable Vue transition components
+│   ├── ui/               # Shared UI components and styles
+│   ├── ui-transitions/   # Reusable transition components
 │   ├── ui-loading-screens/ # Loading screen components
 │   └── ws-protocol/      # WebSocket protocol definitions
-├── infra/k8s/            # Kubernetes base + overlays
-├── ops/                  # Prometheus/Grafana provisioning
-├── plugins/              # External tool plugins
-└── ...
+├── ops/                  # Prometheus & Grafana configuration
+├── plugins/              # External tool plugins directory
+└── docker-compose.yml    # Local dev environment setup
 ```
 
 ## Quickstart

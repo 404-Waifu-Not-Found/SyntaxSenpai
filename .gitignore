@@ -72,6 +72,8 @@ Thumbs.db
 *.swo
 *~
 .eslintcache
+.claude/
+claude-code/
 
 # Database
 *.db
@@ -89,3 +91,27 @@ temp/
 
 # Rust (if applicable)
 target/
+
+# Monorepo specifics
+.pnpm-store/
+*.lock
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# Runtime/Monitoring
+prometheus/data/
+grafana/data/
+loki/data/
+
+# Chat & memory artifacts
+*.chat
+*.memory
+chat_backups/
+
+# Plugin cache
+plugins/.cache/
+
+# macOS
+.DS_Store

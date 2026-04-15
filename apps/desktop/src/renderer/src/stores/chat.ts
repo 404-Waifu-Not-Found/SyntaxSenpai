@@ -11,6 +11,8 @@ export interface Message {
   role: 'user' | 'assistant'
   content: string
   timestamp: string
+  waifuId?: string
+  waifuDisplayName?: string
 }
 
 interface ApiTelemetry {
@@ -257,6 +259,8 @@ export const useChatStore = defineStore('chat', () => {
   )
   const userMemories = ref<Array<{ key: string; value: string; category: string }>>([])
   const sidebarFilter = ref<'all' | 'favorites'>('all')
+  const isGroupChat = ref(false)
+  const groupWaifuIds = ref<string[]>([])
   const affection = ref(loadAffection(builtInWaifus[0]?.id || 'aria'))
   const apiTelemetry = ref<ApiTelemetry>(createEmptyApiTelemetry())
   const apiTelemetryHistory = ref<ApiTelemetrySample[]>(loadApiTelemetryHistory())
@@ -434,10 +438,42 @@ export const useChatStore = defineStore('chat', () => {
   async function newChat() {
     messages.value = []
     conversationId.value = null
-    // Don't eagerly create — sendMessage creates it lazily on first message.
-    // Only refresh sidebar so the user sees all existing conversations.
+
+    // Eagerly create a new conversation so it appears in the sidebar immediately.
+    const newId = await createConversation()
+    if (newId) {
+      conversationId.value = newId
+    }
     await loadConversations()
   }
+
+  function setGroupChat(enabled: boolean) {
+    isGroupChat.value = enabled
+    if (enabled && groupWaifuIds.value.length === 0) {
+      groupWaifuIds.value = [selectedWaifuId.value]
+    }
+    if (!enabled) {
+      groupWaifuIds.value = []
+    }
+  }
+
+  function toggleGroupWaifu(waifuId: string) {
+    const idx = groupWaifuIds.value.indexOf(waifuId)
+    if (idx >= 0) {
+      if (groupWaifuIds.value.length > 1) {
+        groupWaifuIds.value = groupWaifuIds.value.filter((id) => id !== waifuId)
+      }
+    } else {
+      groupWaifuIds.value = [...groupWaifuIds.value, waifuId]
+    }
+  }
+
+  const activeWaifus = computed(() => {
+    if (!isGroupChat.value) return [selectedWaifu.value]
+    return groupWaifuIds.value
+      .map((id) => builtInWaifus.find((w) => w.id === id))
+      .filter(Boolean) as typeof builtInWaifus
+  })
 
   async function loadConversations() {
     try {
@@ -672,7 +708,140 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         }
   }
 
+  async function sendGroupMessage(text: string) {
+    if (!text.trim() || isLoading.value) return
+
+    const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const trimmedText = text.trim()
+
+    const userMsg: Message = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: trimmedText,
+      timestamp: now(),
+    }
+
+    messages.value.push(userMsg)
+    recentMessageId.value = userMsg.id
+    inputValue.value = ''
+    isLoading.value = true
+
+    try {
+      let convId = conversationId.value
+      const isNewConversation = !convId
+      if (!convId) {
+        convId = await createConversation()
+        if (convId) conversationId.value = convId
+      }
+      if (convId) {
+        try { await invoke('store:addMessage', convId, userMsg) } catch (e) { console.warn('Failed to save user message:', e) }
+      }
+      if (isNewConversation) await loadConversations()
+
+      const key = await keyManager.getKey(selectedProvider.value)
+      if (providerRequiresApiKey(selectedProvider.value) && (!key || key === '')) {
+        throw new Error(`No API key configured for ${selectedProvider.value}.`)
+      }
+      const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
+
+      const waifus = activeWaifus.value
+
+      for (const waifu of waifus) {
+        let systemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, loadAffection(waifu.id))
+        systemPrompt += buildMemoryContext()
+        systemPrompt += buildAffectionPrompt(loadAffection(waifu.id), waifu.displayName || 'Waifu')
+
+        // Add group context so the waifu knows who else is in the chat
+        const otherNames = waifus.filter((w) => w.id !== waifu.id).map((w) => w.displayName).join(', ')
+        if (otherNames) {
+          systemPrompt += `\n\n[Group Chat]\nYou are in a group chat with: ${otherNames}. Each waifu takes turns responding. Stay in character and be aware of what the other waifus said. You may react to their messages or add your own perspective. Keep responses concise so every waifu gets a chance to speak.`
+        }
+
+        const runtime = new AIChatRuntime({
+          provider: providerRequiresApiKey(selectedProvider.value)
+            ? ({ type: selectedProvider.value as any, apiKey: key } as any)
+            : ({ type: selectedProvider.value as any } as any),
+          model,
+          systemPrompt,
+        })
+
+        const aiMessages = messages.value.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.waifuDisplayName && m.role === 'assistant'
+            ? `[${m.waifuDisplayName}]: ${m.content}`
+            : m.content,
+        }))
+
+        let assistantContent = ''
+        const assistantId = `assistant-${waifu.id}-${Date.now()}`
+        let added = false
+        const streamStartedAt = performance.now()
+
+        for await (const chunk of runtime.streamMessage({ text: trimmedText, history: aiMessages })) {
+          if (chunk.type === 'text_delta' && chunk.delta) {
+            assistantContent += chunk.delta
+            if (!added) {
+              messages.value.push({
+                id: assistantId,
+                role: 'assistant',
+                content: assistantContent,
+                timestamp: now(),
+                waifuId: waifu.id,
+                waifuDisplayName: waifu.displayName,
+              })
+              added = true
+              recentMessageId.value = assistantId
+            } else {
+              const last = messages.value.find((m) => m.id === assistantId)
+              if (last) last.content = assistantContent
+            }
+          }
+        }
+
+        if (assistantContent) {
+          const streamDurationMs = performance.now() - streamStartedAt
+          recordApiTelemetry(streamDurationMs, [streamDurationMs], selectedProvider.value, model)
+
+          const cleanContent = extractMemoryFromAIResponse(assistantContent)
+          const msg = messages.value.find((m) => m.id === assistantId)
+          if (msg) msg.content = cleanContent
+
+          if (convId) {
+            try {
+              await invoke('store:addMessage', convId, {
+                id: assistantId,
+                role: 'assistant',
+                content: cleanContent,
+                timestamp: now(),
+                waifuId: waifu.id,
+                waifuDisplayName: waifu.displayName,
+              })
+            } catch (e) { console.warn('Failed to save assistant message:', e) }
+          }
+        }
+      }
+
+      if (isNewConversation && convId) autoNameConversation(convId, text)
+      extractAndSaveMemory(trimmedText)
+    } catch (err: any) {
+      messages.value.push({
+        id: `error-${Date.now()}`,
+        role: 'assistant',
+        content: `Error: ${err?.message || 'Unknown error'}`,
+        timestamp: now(),
+      })
+    } finally {
+      isLoading.value = false
+      setTimeout(() => { recentMessageId.value = null }, 1100)
+    }
+  }
+
   async function sendMessage(text: string) {
+    if (isGroupChat.value && groupWaifuIds.value.length > 0) {
+      return sendGroupMessage(text)
+    }
+
     if (!text.trim() || isLoading.value) return
 
     const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -1292,6 +1461,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     apiSpikeThresholdMs,
     userMemories,
     sidebarFilter,
+    isGroupChat,
+    groupWaifuIds,
+    activeWaifus,
     loadSetup,
     hydrateProviderConfig,
     saveApiKey,
@@ -1300,6 +1472,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     setMaxToolIterations,
     setApiSpikeThresholdMs,
     newChat,
+    setGroupChat,
+    toggleGroupWaifu,
     createConversation,
     loadConversations,
     selectConversation,

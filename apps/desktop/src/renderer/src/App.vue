@@ -1761,11 +1761,48 @@ async function handleImportData() {
               {{ t('sidebar.waifu') }}
             </p>
             <p class="text-sm font-semibold">
-              {{ store.selectedWaifu?.displayName }}
+              {{ store.isGroupChat ? t('sidebar.groupChat') : store.selectedWaifu?.displayName }}
             </p>
           </div>
           <div class="flex items-center gap-1">
+            <button
+              :class="[
+                'text-[10px] font-medium px-1.5 py-0.5 rounded-full border transition-all duration-150 cursor-pointer',
+                store.isGroupChat
+                  ? 'text-violet-400 bg-violet-500/10 border-violet-500/20'
+                  : 'text-neutral-400 bg-neutral-500/10 border-neutral-500/20 hover:text-violet-400 hover:bg-violet-500/10',
+              ]"
+              @click="store.setGroupChat(!store.isGroupChat)"
+            >
+              {{ t('sidebar.groupToggle') }}
+            </button>
             <span class="text-[10px] text-emerald-400 font-medium px-1.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">{{ t('sidebar.autoSaved') }}</span>
+          </div>
+        </div>
+
+        <!-- Group chat waifu selector -->
+        <div
+          v-if="store.isGroupChat"
+          :class="['mb-3 p-2 rounded-lg border border-neutral-700/40 bg-neutral-800/30', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-3' : '']"
+        >
+          <p class="text-xs text-neutral-500 mb-2">{{ t('sidebar.selectWaifus') }}</p>
+          <div class="space-y-1">
+            <label
+              v-for="w in builtInWaifus"
+              :key="w.id"
+              :class="[
+                'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-all duration-150',
+                store.groupWaifuIds.includes(w.id) ? 'bg-violet-500/15 border border-violet-500/30' : 'hover:bg-white/5 border border-transparent',
+              ]"
+            >
+              <input
+                type="checkbox"
+                :checked="store.groupWaifuIds.includes(w.id)"
+                class="accent-violet-500"
+                @change="store.toggleGroupWaifu(w.id)"
+              >
+              <span class="text-sm">{{ w.displayName }}</span>
+            </label>
           </div>
         </div>
 
@@ -1896,10 +1933,10 @@ async function handleImportData() {
           <div class="flex items-center gap-4 min-w-0">
             <div class="min-w-0">
               <div class="text-lg font-semibold truncate">
-                {{ store.selectedWaifu?.displayName }}
+                {{ store.isGroupChat ? store.activeWaifus.map(w => w.displayName).join(' & ') : store.selectedWaifu?.displayName }}
               </div>
               <div class="text-xs text-neutral-400 truncate">
-                {{ store.selectedWaifu?.backstory?.slice(0, 60) }}
+                {{ store.isGroupChat ? t('sidebar.groupChat') : store.selectedWaifu?.backstory?.slice(0, 60) }}
               </div>
             </div>
             <div :class="[affectionMeterClass, 'shrink-0 rounded-xl border px-3 py-2']" :style="affectionBoxStyle">
@@ -1933,7 +1970,10 @@ async function handleImportData() {
             💬
           </div>
           <h3 class="text-lg font-semibold text-white mb-2 font-display" :style="emptyStateGlowStyle">
-            {{ t('chat.emptyTitle', { name: store.selectedWaifu?.displayName || '' }) }}
+            {{ store.isGroupChat
+              ? t('chat.emptyTitleGroup', { names: store.activeWaifus.map(w => w.displayName).join(', ') })
+              : t('chat.emptyTitle', { name: store.selectedWaifu?.displayName || '' })
+            }}
           </h3>
           <p class="text-sm" :style="emptyStateGlowStyle">
             {{ t('chat.emptySubtitle') }}
@@ -1957,18 +1997,27 @@ async function handleImportData() {
             <div v-if="msg.role !== 'user'" class="mr-3 shrink-0">
               <div
                 class="themed-assistant-avatar w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white"
+                :title="msg.waifuDisplayName || store.selectedWaifu?.displayName"
               >
-                {{ store.selectedWaifu?.displayName?.[0] || 'A' }}
+                {{ msg.waifuDisplayName?.[0] || store.selectedWaifu?.displayName?.[0] || 'A' }}
               </div>
             </div>
 
-            <ChatBubble
-              :role="msg.role"
-              :content="msg.content"
-              :timestamp="msg.timestamp"
-              :recent="msg.id === store.recentMessageId"
-              :show-copy="msg.role === 'assistant'"
-            />
+            <div :class="msg.role !== 'user' ? 'flex flex-col' : ''">
+              <span
+                v-if="msg.role !== 'user' && store.isGroupChat && msg.waifuDisplayName"
+                class="text-[11px] text-neutral-400 mb-0.5 ml-1 font-semibold"
+              >
+                {{ msg.waifuDisplayName }}
+              </span>
+              <ChatBubble
+                :role="msg.role"
+                :content="msg.content"
+                :timestamp="msg.timestamp"
+                :recent="msg.id === store.recentMessageId"
+                :show-copy="msg.role === 'assistant'"
+              />
+            </div>
 
             <div v-if="msg.role === 'user'" class="ml-3 shrink-0">
               <div class="themed-user-avatar w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white">

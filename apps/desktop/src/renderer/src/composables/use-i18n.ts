@@ -28,6 +28,9 @@ const messages: Record<Locale, Record<string, string>> = {
     'sidebar.agent': 'Agent',
     'sidebar.settings': 'Settings',
     'sidebar.collapse': 'Collapse',
+    'sidebar.groupChat': 'Group Chat',
+    'sidebar.groupToggle': 'Group',
+    'sidebar.selectWaifus': 'Select waifus for group chat:',
 
     // Header
     'header.affection': 'Affection',
@@ -44,6 +47,7 @@ const messages: Record<Locale, Record<string, string>> = {
     // Chat
     'chat.emptyIcon': '💬',
     'chat.emptyTitle': 'Chat with {name}',
+    'chat.emptyTitleGroup': 'Group chat with {names}',
     'chat.emptySubtitle': 'Start a conversation!',
     'chat.inputPlaceholder': 'Say something... (Press / to focus)',
     'chat.send': '➤ Send',
@@ -172,6 +176,9 @@ const messages: Record<Locale, Record<string, string>> = {
     'sidebar.agent': '代理',
     'sidebar.settings': '设置',
     'sidebar.collapse': '收起',
+    'sidebar.groupChat': '群聊',
+    'sidebar.groupToggle': '群聊',
+    'sidebar.selectWaifus': '选择群聊角色：',
 
     // Header
     'header.affection': '好感度',
@@ -188,6 +195,7 @@ const messages: Record<Locale, Record<string, string>> = {
     // Chat
     'chat.emptyIcon': '💬',
     'chat.emptyTitle': '和 {name} 聊天',
+    'chat.emptyTitleGroup': '和 {names} 群聊',
     'chat.emptySubtitle': '开始对话吧！',
     'chat.inputPlaceholder': '说点什么... （按 / 聚焦）',
     'chat.send': '➤ 发送',

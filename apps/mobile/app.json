@@ -13,7 +13,7 @@
     },
     "platforms": ["ios", "android", "web"],
     "ios": {
-      "supportsTabletMode": true,
+      "supportsTablet": true,
       "bundleIdentifier": "com.syntaxsenpai.app"
     },
     "android": {

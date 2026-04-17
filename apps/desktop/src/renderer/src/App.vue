@@ -685,6 +685,7 @@ async function handleExportData() {
         locale: locale.value,
         theme: theme.value,
         setup: readLocalStorageJson('syntax-senpai-setup'),
+        groupChat: readLocalStorageJson('syntax-senpai-group-chat'),
         providerPreferences: readLocalStorageJson('syntax-senpai-provider-preferences'),
         agentMode: localStorage.getItem('syntax-senpai-agent-mode') || store.agentMode,
         affection: readLocalStorageJson('syntax-senpai-affection'),
@@ -762,6 +763,13 @@ async function handleImportData() {
 
     if (payload?.settings?.setup) {
       localStorage.setItem('syntax-senpai-setup', JSON.stringify(payload.settings.setup))
+    }
+    if (payload?.settings?.groupChat) {
+      localStorage.setItem('syntax-senpai-group-chat', JSON.stringify(payload.settings.groupChat))
+      store.isGroupChat = !!payload.settings.groupChat.enabled
+      store.groupWaifuIds = Array.isArray(payload.settings.groupChat.waifuIds)
+        ? payload.settings.groupChat.waifuIds
+        : []
     }
     if (payload?.settings?.providerPreferences) {
       localStorage.setItem('syntax-senpai-provider-preferences', JSON.stringify(payload.settings.providerPreferences))
@@ -1024,6 +1032,55 @@ async function handleImportData() {
                   {{ w.displayName }}
                 </option>
               </select>
+            </div>
+
+            <div class="mb-4 rounded-xl border border-neutral-700/40 bg-neutral-800/30 p-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-sm font-semibold text-neutral-200">{{ t('settings.groupChat') }}</div>
+                  <p class="mt-1 text-xs text-neutral-400">
+                    {{ t('settings.groupChatDescription') }}
+                  </p>
+                </div>
+                <label class="flex items-center gap-2 text-sm text-neutral-300">
+                  <input
+                    type="checkbox"
+                    :checked="store.isGroupChat"
+                    class="accent-violet-500"
+                    @change="store.setGroupChat(($event.target as HTMLInputElement).checked)"
+                  >
+                  <span>{{ t('sidebar.groupToggle') }}</span>
+                </label>
+              </div>
+
+              <div class="mt-4">
+                <div class="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                  {{ t('settings.groupChatParticipants') }}
+                </div>
+                <p class="mb-3 text-[11px] text-neutral-500">
+                  {{ t('settings.groupChatHint') }}
+                </p>
+                <div class="space-y-2">
+                  <label
+                    v-for="w in builtInWaifus"
+                    :key="`settings-group-${w.id}`"
+                    :class="[
+                      'flex items-center gap-2 rounded-lg border px-3 py-2 transition-all duration-150',
+                      store.groupWaifuIds.includes(w.id)
+                        ? 'border-violet-500/30 bg-violet-500/10'
+                        : 'border-neutral-700/40 bg-neutral-900/40 hover:bg-white/5',
+                    ]"
+                  >
+                    <input
+                      type="checkbox"
+                      :checked="store.groupWaifuIds.includes(w.id)"
+                      class="accent-violet-500"
+                      @change="store.toggleGroupWaifu(w.id)"
+                    >
+                    <span class="text-sm text-neutral-200">{{ w.displayName }}</span>
+                  </label>
+                </div>
+              </div>
             </div>
 
             <div class="mb-4">

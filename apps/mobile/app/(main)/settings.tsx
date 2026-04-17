@@ -8,12 +8,15 @@ import {
   StyleSheet,
   Alert,
   TextInput,
+  Switch,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { APIKeyManager } from "@syntax-senpai/storage";
+import { builtInWaifus } from "@syntax-senpai/waifu-core";
 import { PROVIDERS_WITH_MODELS } from "../../src/constants/providers";
 import { useTheme, THEME_PRESETS } from "../../src/hooks/useTheme";
 import { useWsConnection, disconnectFromDesktop } from "../../src/hooks/useWsConnection";
+import { DEFAULT_APP_STATE, loadAppState, saveAppState, type AppState } from "../../src/hooks/useAppState";
 
 const KEY_PROVIDERS = PROVIDERS_WITH_MODELS.slice(0, 6);
 
@@ -24,6 +27,7 @@ export default function SettingsScreen() {
   const [editingProvider, setEditingProvider] = useState<string | null>(null);
   const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
   const [savedKeys, setSavedKeys] = useState<Record<string, boolean>>({});
+  const [appState, setAppState] = useState<AppState>(DEFAULT_APP_STATE);
 
   const isPaired = connectionState === "paired";
   const isConnecting = connectionState === "connecting";
@@ -45,6 +49,38 @@ export default function SettingsScreen() {
     };
     checkKeys();
   }, []);
+
+  useEffect(() => {
+    loadAppState().then(setAppState).catch(() => {});
+  }, []);
+
+  const updateAppState = async (updates: Partial<AppState>) => {
+    const nextState = await saveAppState({ ...appState, ...updates });
+    setAppState(nextState);
+  };
+
+  const toggleGroupChat = async (enabled: boolean) => {
+    await updateAppState({ groupChatEnabled: enabled });
+  };
+
+  const toggleGroupParticipant = async (waifuId: string) => {
+    const currentIds = new Set(appState.groupChatWaifuIds);
+    if (currentIds.has(waifuId)) {
+      if (currentIds.size <= 2) {
+        Alert.alert("Group chat needs at least two waifus");
+        return;
+      }
+      currentIds.delete(waifuId);
+    } else {
+      if (currentIds.size >= 4) {
+        Alert.alert("Group chat supports up to four waifus");
+        return;
+      }
+      currentIds.add(waifuId);
+    }
+
+    await updateAppState({ groupChatWaifuIds: Array.from(currentIds) });
+  };
 
   const saveApiKey = async (providerId: string) => {
     const key = keyInputs[providerId]?.trim();
@@ -101,6 +137,62 @@ export default function SettingsScreen() {
                     numberOfLines={1}
                   >
                     {preset.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        <Text style={[styles.sectionTitle, { color: colors.fg + "80", marginTop: 24 }]}>
+          GROUP CHAT
+        </Text>
+        <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <View style={styles.toggleRow}>
+            <View style={styles.toggleCopy}>
+              <Text style={[styles.toggleTitle, { color: colors.fg }]}>Enable Group Chat</Text>
+              <Text style={[styles.cardDesc, { color: colors.fg + "70", marginBottom: 0 }]}>
+                Send one message to multiple waifus. They can react to each other and hand tasks across the group.
+              </Text>
+            </View>
+            <Switch
+              value={appState.groupChatEnabled}
+              onValueChange={toggleGroupChat}
+              trackColor={{ false: colors.surface2, true: colors.primary + "88" }}
+              thumbColor={appState.groupChatEnabled ? colors.primary : "#f3f4f6"}
+            />
+          </View>
+
+          <Text style={[styles.helperText, { color: colors.fg + "65" }]}>
+            Pick who joins the room. Minimum 2, maximum 4.
+          </Text>
+
+          <View style={styles.groupRoster}>
+            {builtInWaifus.map((waifu) => {
+              const selected = appState.groupChatWaifuIds.includes(waifu.id);
+              return (
+                <TouchableOpacity
+                  key={waifu.id}
+                  style={[
+                    styles.waifuChip,
+                    {
+                      backgroundColor: selected ? colors.primary + "20" : colors.surface2,
+                      borderColor: selected ? colors.primary : colors.surface2,
+                    },
+                  ]}
+                  onPress={() => toggleGroupParticipant(waifu.id)}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.waifuChipText,
+                      { color: selected ? colors.primary : colors.fg },
+                    ]}
+                  >
+                    {waifu.displayName}
+                  </Text>
+                  <Text style={[styles.waifuChipState, { color: selected ? colors.primary : colors.fg + "50" }]}>
+                    {selected ? "IN" : "OUT"}
                   </Text>
                 </TouchableOpacity>
               );
@@ -237,7 +329,28 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   card: { borderRadius: 14, padding: 14 },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  toggleCopy: { flex: 1 },
+  toggleTitle: { fontSize: 15, fontWeight: "700", marginBottom: 6 },
+  helperText: { fontSize: 12, lineHeight: 18, marginTop: 12, marginBottom: 12 },
   themeGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  groupRoster: { gap: 10 },
+  waifuChip: {
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  waifuChipText: { fontSize: 14, fontWeight: "600", flex: 1, paddingRight: 12 },
+  waifuChipState: { fontSize: 11, fontWeight: "700", letterSpacing: 0.8 },
   presetCard: { width: "46%", borderRadius: 10, padding: 12, borderWidth: 2 },
   swatches: { flexDirection: "row", gap: 6, marginBottom: 8 },
   swatch: {

@@ -10,17 +10,24 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { builtInWaifus } from "@syntax-senpai/waifu-core";
+import type {
+  StreamChunkPayload,
+  StreamEndPayload,
+  StreamErrorPayload,
+} from "@syntax-senpai/ws-protocol";
 import { useTheme } from "../../src/hooks/useTheme";
 import { useWsConnection, sendAgentRequest } from "../../src/hooks/useWsConnection";
+import { DEFAULT_APP_STATE, loadAppState, type AppState } from "../../src/hooks/useAppState";
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: string;
+  waifuId?: string;
+  authorName?: string;
 }
 
 export default function ChatScreen() {
@@ -33,28 +40,27 @@ export default function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedWaifuId, setSelectedWaifuId] = useState<string>(builtInWaifus[0]?.id || "aria");
+  const [appState, setAppState] = useState<AppState>(DEFAULT_APP_STATE);
   const scrollViewRef = useRef<ScrollView>(null);
-  const pendingRemoteId = useRef<string | null>(null);
   const conversationIdRef = useRef<string>(`conv-${Date.now()}`);
   const pendingClearVerificationRef = useRef(false);
 
-  const selectedWaifu = builtInWaifus.find((w) => w.id === selectedWaifuId) || builtInWaifus[0];
+  const selectedWaifu =
+    builtInWaifus.find((waifu) => waifu.id === appState.selectedWaifuId) || builtInWaifus[0];
+  const groupChatWaifus = appState.groupChatWaifuIds
+    .map((waifuId) => builtInWaifus.find((waifu) => waifu.id === waifuId))
+    .filter((waifu): waifu is (typeof builtInWaifus)[number] => !!waifu);
+  const isGroupChat = appState.groupChatEnabled && groupChatWaifus.length > 1;
+  const activeWaifus = isGroupChat ? groupChatWaifus : [selectedWaifu];
+  const headerTitle = isGroupChat
+    ? activeWaifus.map((waifu) => waifu.displayName).join(" · ")
+    : selectedWaifu.displayName;
 
-  useEffect(() => {
-    const loadAppState = async () => {
-      try {
-        const state = await AsyncStorage.getItem("syntax-senpai-app-state");
-        if (state) {
-          const parsed = JSON.parse(state);
-          setSelectedWaifuId(parsed.selectedWaifuId || builtInWaifus[0]?.id);
-        }
-      } catch (err) {
-        console.error("Failed to load app state:", err);
-      }
-    };
-    loadAppState();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadAppState().then(setAppState).catch(() => {});
+    }, [])
+  );
 
   const scrollToBottom = () => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -66,51 +72,96 @@ export default function ChatScreen() {
 
   // Handle stream chunks from remote desktop
   useWsConnection({
-    onStreamChunk: useCallback((_convId: string, chunk: string) => {
+    onStreamChunk: useCallback(
+      (_convId: string, chunk: string, meta: Pick<StreamChunkPayload, "messageId" | "waifuId" | "authorName" | "turnComplete">) => {
+      const id = meta.messageId || `assistant-${meta.waifuId || "unknown"}`;
+      const authorName =
+        meta.authorName ||
+        builtInWaifus.find((waifu) => waifu.id === meta.waifuId)?.displayName ||
+        "Assistant";
+
       setMessages((prev) => {
-        const id = pendingRemoteId.current;
-        if (!id) return prev;
-        const last = prev[prev.length - 1];
-        if (last?.id === id) {
-          return [...prev.slice(0, -1), { ...last, content: last.content + chunk }];
+        const existingIndex = prev.findIndex((msg) => msg.id === id);
+        if (existingIndex >= 0) {
+          const next = [...prev];
+          next[existingIndex] = {
+            ...next[existingIndex],
+            content: next[existingIndex].content + chunk,
+          };
+          return next;
         }
+
         const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-        return [...prev, { id, role: "assistant", content: chunk, timestamp: ts }];
+        return [
+          ...prev,
+          {
+            id,
+            role: "assistant",
+            content: chunk,
+            timestamp: ts,
+            waifuId: meta.waifuId,
+            authorName,
+          },
+        ];
       });
     }, []),
-    onStreamEnd: useCallback((_convId: string, final: string) => {
-      const id = pendingRemoteId.current;
+    onStreamEnd: useCallback((_convId: string, final: string, payload: StreamEndPayload) => {
+      const id = payload.messageId || `assistant-${payload.waifuId || "unknown"}`;
       const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-      if (id) {
-        setMessages((prev) => {
-          const existingIndex = prev.findIndex((msg) => msg.id === id);
-          if (existingIndex >= 0) {
-            const next = [...prev];
-            next[existingIndex] = {
-              ...next[existingIndex],
-              content: final || next[existingIndex].content,
-              timestamp: next[existingIndex].timestamp || ts,
-            };
-            return next;
-          }
+      setMessages((prev) => {
+        const existingIndex = prev.findIndex((msg) => msg.id === id);
+        if (existingIndex >= 0) {
+          const next = [...prev];
+          next[existingIndex] = {
+            ...next[existingIndex],
+            content: final || next[existingIndex].content,
+            timestamp: next[existingIndex].timestamp || ts,
+            waifuId: payload.waifuId || next[existingIndex].waifuId,
+            authorName:
+              payload.authorName ||
+              next[existingIndex].authorName ||
+              builtInWaifus.find((waifu) => waifu.id === payload.waifuId)?.displayName,
+          };
+          return next;
+        }
 
-          if (!final) return prev;
+        if (!final) return prev;
 
-          return [...prev, { id, role: "assistant", content: final, timestamp: ts }];
-        });
+        return [
+          ...prev,
+          {
+            id,
+            role: "assistant",
+            content: final,
+            timestamp: ts,
+            waifuId: payload.waifuId,
+            authorName:
+              payload.authorName ||
+              builtInWaifus.find((waifu) => waifu.id === payload.waifuId)?.displayName,
+          },
+        ];
+      });
+
+      if (payload.turnComplete) {
+        setIsLoading(false);
       }
-
-      pendingRemoteId.current = null;
-      setIsLoading(false);
     }, []),
-    onStreamError: useCallback((_convId: string, error: string) => {
-      pendingRemoteId.current = null;
-      setIsLoading(false);
+    onStreamError: useCallback((_convId: string, error: string, payload: StreamErrorPayload) => {
+      if (payload.turnComplete ?? true) {
+        setIsLoading(false);
+      }
       const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       setMessages((prev) => [
         ...prev,
-        { id: `err-${Date.now()}`, role: "assistant", content: `Error: ${error}`, timestamp: ts },
+        {
+          id: payload.messageId || `err-${Date.now()}`,
+          role: "assistant",
+          content: `Error: ${error}`,
+          timestamp: ts,
+          waifuId: payload.waifuId,
+          authorName: payload.authorName,
+        },
       ]);
     }, []),
   });
@@ -162,20 +213,24 @@ export default function ChatScreen() {
 
     try {
       const conversationId = conversationIdRef.current;
-      const assistantId = `assistant-remote-${Date.now()}`;
-      pendingRemoteId.current = assistantId;
-
       const aiMessages = [...messages, userMessage].map((m) => ({
         id: m.id,
         role: m.role as "user" | "assistant",
         content: m.content,
+        waifuId: m.waifuId,
+        authorName: m.authorName,
       }));
 
       sendAgentRequest({
         conversationId,
         messages: aiMessages,
-        waifuId: selectedWaifuId,
+        waifuId: selectedWaifu.id,
         providerConfig: { type: "", apiKey: "", model: "" },
+        groupChat: {
+          enabled: isGroupChat,
+          waifuIds: activeWaifus.map((waifu) => waifu.id),
+          maxRounds: 2,
+        },
       });
     } catch (error) {
       setIsLoading(false);
@@ -216,7 +271,7 @@ export default function ChatScreen() {
                 }}
               />
               <Text style={{ fontSize: 13, fontWeight: "600", color: colors.fg }}>
-                {selectedWaifu.displayName}
+                {headerTitle}
               </Text>
               <Text style={{ fontSize: 12, color: colors.fg + "60" }}>
                 {isPaired
@@ -288,10 +343,14 @@ export default function ChatScreen() {
               {messages.length === 0 && (
                 <View style={{ flex: 1, justifyContent: "center", alignItems: "center", paddingVertical: 40 }}>
                   <Text style={{ fontSize: 24, marginBottom: 8, textAlign: "center", color: "#ffffff" }}>
-                    Chat with {selectedWaifu.displayName}
+                    {isGroupChat
+                      ? `Group Chat with ${activeWaifus.map((waifu) => waifu.displayName).join(", ")}`
+                      : `Chat with ${selectedWaifu.displayName}`}
                   </Text>
                   <Text style={{ fontSize: 14, color: "#606060", textAlign: "center" }}>
-                    Running on Desktop · Start a conversation!
+                    {isGroupChat
+                      ? "Running on Desktop · The waifus can collaborate and hand tasks to each other."
+                      : "Running on Desktop · Start a conversation!"}
                   </Text>
                 </View>
               )}
@@ -306,7 +365,19 @@ export default function ChatScreen() {
                       padding: 12,
                     }}
                   >
-                    <Text style={{ color: "#ffffff", fontSize: 14, lineHeight: 20 }}>{msg.content}</Text>
+                    {msg.role === "assistant" && msg.authorName && (
+                      <Text
+                        style={{
+                          color: colors.primary,
+                          fontSize: 12,
+                          fontWeight: "700",
+                          marginBottom: 6,
+                        }}
+                      >
+                        {msg.authorName}
+                      </Text>
+                    )}
+                    <Text style={{ color: colors.fg, fontSize: 14, lineHeight: 20 }}>{msg.content}</Text>
                     <Text
                       style={{
                         fontSize: 12,
@@ -324,7 +395,7 @@ export default function ChatScreen() {
                 <View style={{ flexDirection: "row", gap: 8, alignItems: "flex-end" }}>
                   <ActivityIndicator color={colors.primary} size="small" />
                   <Text style={{ color: "#a0a0a0", fontSize: 12 }}>
-                    {selectedWaifu.displayName} is typing...
+                    {isGroupChat ? "Group chat is replying..." : `${selectedWaifu.displayName} is typing...`}
                   </Text>
                 </View>
               )}
@@ -355,7 +426,7 @@ export default function ChatScreen() {
               >
                 <TextInput
                   style={{ flex: 1, color: colors.fg, paddingVertical: 12, fontSize: 14 }}
-                  placeholder="Say something or /cmd ls"
+                  placeholder={isGroupChat ? "Message the group or /cmd ls" : "Say something or /cmd ls"}
                   placeholderTextColor={colors.fg + "40"}
                   value={inputValue}
                   onChangeText={setInputValue}

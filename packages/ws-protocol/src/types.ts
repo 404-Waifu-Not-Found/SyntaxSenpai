@@ -66,7 +66,7 @@ export interface PairRejectedPayload {
  */
 export interface AgentRequestPayload {
   conversationId: string;
-  messages: Message[];
+  messages: MobileChatMessage[];
   waifuId: string;
   relationshipSnapshot: WaifuRelationship;
   providerConfig: {
@@ -74,6 +74,16 @@ export interface AgentRequestPayload {
     apiKey: string;
     model: string;
   };
+  groupChat?: {
+    enabled: boolean;
+    waifuIds: string[];
+    maxRounds?: number;
+  };
+}
+
+export interface MobileChatMessage extends Message {
+  waifuId?: string;
+  authorName?: string;
 }
 
 /**
@@ -82,6 +92,10 @@ export interface AgentRequestPayload {
 export interface StreamChunkPayload {
   conversationId: string;
   chunk: StreamChunk;
+  messageId?: string;
+  waifuId?: string;
+  authorName?: string;
+  turnComplete?: boolean;
 }
 
 /**
@@ -90,6 +104,10 @@ export interface StreamChunkPayload {
 export interface StreamEndPayload {
   conversationId: string;
   finalMessage: string;
+  messageId?: string;
+  waifuId?: string;
+  authorName?: string;
+  turnComplete?: boolean;
 }
 
 /**
@@ -98,6 +116,10 @@ export interface StreamEndPayload {
 export interface StreamErrorPayload {
   conversationId: string;
   error: string;
+  messageId?: string;
+  waifuId?: string;
+  authorName?: string;
+  turnComplete?: boolean;
 }
 
 /**

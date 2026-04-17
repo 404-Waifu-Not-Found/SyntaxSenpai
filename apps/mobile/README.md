@@ -115,13 +115,13 @@ Uses Tailwind CSS via NativeWind v4. All standard Tailwind classes work:
 ### iOS
 
 ```bash
-eas build --platform ios
+npx eas build --platform ios
 ```
 
 ### Android
 
 ```bash
-eas build --platform android
+npx eas build --platform android
 ```
 
 ## Testing
@@ -136,10 +136,19 @@ npm run test
 
 1. Set up EAS account
 2. Update app version in `app.json`
-3. Run `eas build --platform ios --platform android`
+3. Run `npx eas build --platform ios --platform android`
 4. Submit to App Store / Play Store
 
 ## Troubleshooting
+
+### iOS provisioning profile error
+
+If Xcode fails with a message like `No profiles for 'com.syntaxsenpai.app' were found`, local
+device builds are using a bundle identifier or Apple team that does not match your developer
+account. Open `ios/SyntaxSenpai.xcworkspace` in Xcode, enable automatic signing for your team, and
+use a bundle identifier that exists under that team.
+
+If `eas` is not installed globally, run it with `npx eas ...`.
 
 ### Port already in use
 ```bash

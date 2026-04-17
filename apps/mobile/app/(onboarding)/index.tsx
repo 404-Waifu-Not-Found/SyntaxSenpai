@@ -8,7 +8,6 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { APIKeyManager } from "@syntax-senpai/storage";
 import { builtInWaifus } from "@syntax-senpai/waifu-core";
@@ -17,6 +16,7 @@ import {
   getProviderById,
   PROVIDERS_WITH_MODELS,
 } from "../../src/constants/providers";
+import { saveAppState } from "../../src/hooks/useAppState";
 
 type OnboardingStep = "welcome" | "select-waifu" | "setup-api" | "done";
 
@@ -55,15 +55,14 @@ export default function OnboardingScreen() {
       await keyManager.setKey(selectedProvider, apiKey);
 
       // Persist app state
-      await AsyncStorage.setItem(
-        "syntax-senpai-app-state",
-        JSON.stringify({
-          selectedWaifuId: selectedWaifu,
-          selectedProvider,
-          selectedModel,
-          hasCompletedOnboarding: true,
-        })
-      );
+      await saveAppState({
+        selectedWaifuId: selectedWaifu,
+        selectedProvider,
+        selectedModel,
+        hasCompletedOnboarding: true,
+        groupChatEnabled: false,
+        groupChatWaifuIds: builtInWaifus.slice(0, 2).map((waifu) => waifu.id),
+      });
 
       setStep("done");
     } catch (err) {

@@ -68,6 +68,7 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
 }
 
 const AFFECTION_STORAGE_KEY = 'syntax-senpai-affection'
+const GROUP_CHAT_SETTINGS_KEY = 'syntax-senpai-group-chat'
 const KEYLESS_PROVIDERS = new Set(['lmstudio'])
 
 function providerRequiresApiKey(provider: string): boolean {
@@ -238,6 +239,63 @@ function readStoredNumber(key: string, fallback: number, min: number, max: numbe
   }
 }
 
+function loadGroupChatSettings() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(GROUP_CHAT_SETTINGS_KEY) || '{}')
+    return {
+      enabled: !!parsed.enabled,
+      waifuIds: Array.isArray(parsed.waifuIds) ? parsed.waifuIds.filter((value: unknown): value is string => typeof value === 'string') : [],
+    }
+  } catch {
+    return { enabled: false, waifuIds: [] as string[] }
+  }
+}
+
+function persistGroupChatSettings(enabled: boolean, waifuIds: string[]) {
+  try {
+    localStorage.setItem(GROUP_CHAT_SETTINGS_KEY, JSON.stringify({
+      enabled,
+      waifuIds,
+    }))
+  } catch {
+    // ignore localStorage write failures
+  }
+}
+
+function buildGroupChatPromptBlock(currentWaifu: any, waifus: any[], assignedTasks: string[], round: number) {
+  const peers = waifus
+    .filter((waifu) => waifu.id !== currentWaifu.id)
+    .map((waifu) => `- ${waifu.displayName} (${waifu.id})`)
+    .join('\n')
+
+  const taskBlock = assignedTasks.length > 0
+    ? `Tasks assigned to you by other waifus for this round:\n${assignedTasks.map((task) => `- ${task}`).join('\n')}`
+    : 'No explicit tasks were assigned to you this round.'
+
+  return `\n\n[Group Chat Coordination]\nYou are participating in a multi-waifu group chat round ${round}.\nCurrent speakers in this room:\n- ${currentWaifu.displayName} (${currentWaifu.id})\n${peers}\n\n${taskBlock}\n\nYou can respond to what the user said and also react to the other waifus naturally.\nIf you want to assign a follow-up task to another waifu, append one or more lines at the END of your reply using exactly this format:\n[TASK_FOR:waifu-id] short task request\n\nOnly assign a task when another waifu is better suited for that part. Keep task lines concise. Do not explain the tag syntax to the user.`
+}
+
+function extractDelegatedTasks(text: string) {
+  const taskRegex = /^\[TASK_FOR:([a-z0-9_-]+)\]\s*(.+)$/gim
+  const tasks: Array<{ targetWaifuId: string; instruction: string }> = []
+  let match: RegExpExecArray | null
+
+  while ((match = taskRegex.exec(text)) !== null) {
+    const targetWaifuId = match[1]?.trim()
+    const instruction = match[2]?.trim()
+    if (targetWaifuId && instruction) {
+      tasks.push({ targetWaifuId, instruction })
+    }
+  }
+
+  const cleanedText = text
+    .replace(taskRegex, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  return { cleanedText, tasks }
+}
+
 export const useChatStore = defineStore('chat', () => {
   const { invoke } = useIpc()
   const keyManager = useKeyManager()
@@ -254,13 +312,18 @@ export const useChatStore = defineStore('chat', () => {
   const conversations = ref<any[]>([])
   const recentMessageId = ref<string | null>(null)
   const pendingClearVerification = ref(false)
+  const initialGroupChatSettings = loadGroupChatSettings()
   const agentMode = ref<AgentMode>(
     (localStorage.getItem('syntax-senpai-agent-mode') as AgentMode) || 'ask',
   )
   const userMemories = ref<Array<{ key: string; value: string; category: string }>>([])
   const sidebarFilter = ref<'all' | 'favorites'>('all')
-  const isGroupChat = ref(false)
-  const groupWaifuIds = ref<string[]>([])
+  const isGroupChat = ref(initialGroupChatSettings.enabled)
+  const groupWaifuIds = ref<string[]>(
+    initialGroupChatSettings.waifuIds.length > 0
+      ? initialGroupChatSettings.waifuIds
+      : builtInWaifus.slice(0, 2).map((waifu) => waifu.id),
+  )
   const affection = ref(loadAffection(builtInWaifus[0]?.id || 'aria'))
   const apiTelemetry = ref<ApiTelemetry>(createEmptyApiTelemetry())
   const apiTelemetryHistory = ref<ApiTelemetrySample[]>(loadApiTelemetryHistory())
@@ -380,6 +443,12 @@ export const useChatStore = defineStore('chat', () => {
         isSetup.value = true
       }
     }
+
+    const groupChatSettings = loadGroupChatSettings()
+    isGroupChat.value = groupChatSettings.enabled
+    if (groupChatSettings.waifuIds.length > 0) {
+      groupWaifuIds.value = groupChatSettings.waifuIds
+    }
   }
 
   async function setup(apiKeyValue: string, modelValue?: string) {
@@ -450,22 +519,30 @@ export const useChatStore = defineStore('chat', () => {
   function setGroupChat(enabled: boolean) {
     isGroupChat.value = enabled
     if (enabled && groupWaifuIds.value.length === 0) {
-      groupWaifuIds.value = [selectedWaifuId.value]
+      groupWaifuIds.value = builtInWaifus.slice(0, 2).map((waifu) => waifu.id)
     }
-    if (!enabled) {
-      groupWaifuIds.value = []
+    if (enabled && groupWaifuIds.value.length < 2) {
+      groupWaifuIds.value = Array.from(new Set([
+        selectedWaifuId.value,
+        builtInWaifus.find((waifu) => waifu.id !== selectedWaifuId.value)?.id || selectedWaifuId.value,
+      ])).slice(0, 4)
     }
+    persistGroupChatSettings(isGroupChat.value, groupWaifuIds.value)
   }
 
   function toggleGroupWaifu(waifuId: string) {
     const idx = groupWaifuIds.value.indexOf(waifuId)
     if (idx >= 0) {
-      if (groupWaifuIds.value.length > 1) {
+      if (groupWaifuIds.value.length > 2) {
         groupWaifuIds.value = groupWaifuIds.value.filter((id) => id !== waifuId)
       }
     } else {
+      if (groupWaifuIds.value.length >= 4) {
+        return
+      }
       groupWaifuIds.value = [...groupWaifuIds.value, waifuId]
     }
+    persistGroupChatSettings(isGroupChat.value, groupWaifuIds.value)
   }
 
   const activeWaifus = computed(() => {
@@ -743,82 +820,225 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         throw new Error(`No API key configured for ${selectedProvider.value}.`)
       }
       const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
-
       const waifus = activeWaifus.value
 
-      for (const waifu of waifus) {
-        let systemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, loadAffection(waifu.id))
-        systemPrompt += buildMemoryContext()
-        systemPrompt += buildAffectionPrompt(loadAffection(waifu.id), waifu.displayName || 'Waifu')
+      const tools = getToolsForMode(agentMode.value)
+      const hasTools = tools.length > 0
+      let systemInfo: any = null
 
-        // Add group context so the waifu knows who else is in the chat
-        const otherNames = waifus.filter((w) => w.id !== waifu.id).map((w) => w.displayName).join(', ')
-        if (otherNames) {
-          systemPrompt += `\n\n[Group Chat]\nYou are in a group chat with: ${otherNames}. Each waifu takes turns responding. Stay in character and be aware of what the other waifus said. You may react to their messages or add your own perspective. Keep responses concise so every waifu gets a chance to speak.`
+      if (hasTools) {
+        systemInfo = (window as any).systemInfo
+        if (!systemInfo || !systemInfo.homedir) {
+          try { systemInfo = await invoke('terminal:systemInfo') } catch {}
         }
+      }
 
-        const runtime = new AIChatRuntime({
-          provider: providerRequiresApiKey(selectedProvider.value)
-            ? ({ type: selectedProvider.value as any, apiKey: key } as any)
-            : ({ type: selectedProvider.value as any } as any),
-          model,
-          systemPrompt,
-        })
-
-        const aiMessages = messages.value.map((m) => ({
-          id: m.id,
-          role: m.role,
-          content: m.waifuDisplayName && m.role === 'assistant'
-            ? `[${m.waifuDisplayName}]: ${m.content}`
-            : m.content,
+      const sharedHistory: any[] = messages.value
+        .filter((message) => message.role === 'user' || message.role === 'assistant')
+        .map((message) => ({
+          id: message.id,
+          role: message.role,
+          content:
+            message.waifuDisplayName && message.role === 'assistant'
+              ? `${message.waifuDisplayName}: ${message.content}`
+              : message.content,
         }))
 
-        let assistantContent = ''
-        const assistantId = `assistant-${waifu.id}-${Date.now()}`
-        let added = false
-        const streamStartedAt = performance.now()
+      const apiRoundTrips: number[] = []
+      const assistantTurns: Array<{ waifu: any; content: string }> = []
+      const maxRounds = 3
+      let pendingTasks = new Map<string, string[]>()
 
-        for await (const chunk of runtime.streamMessage({ text: trimmedText, history: aiMessages })) {
-          if (chunk.type === 'text_delta' && chunk.delta) {
-            assistantContent += chunk.delta
-            if (!added) {
-              messages.value.push({
-                id: assistantId,
-                role: 'assistant',
-                content: assistantContent,
-                timestamp: now(),
-                waifuId: waifu.id,
-                waifuDisplayName: waifu.displayName,
-              })
-              added = true
-              recentMessageId.value = assistantId
-            } else {
-              const last = messages.value.find((m) => m.id === assistantId)
-              if (last) last.content = assistantContent
+      for (let round = 1; round <= maxRounds; round++) {
+        const waifusForRound = round === 1
+          ? waifus
+          : waifus.filter((waifu) => (pendingTasks.get(waifu.id) || []).length > 0)
+
+        if (waifusForRound.length === 0) {
+          break
+        }
+
+        const nextRoundTasks = new Map<string, string[]>()
+
+        for (const waifu of waifusForRound) {
+          const affectionValue = loadAffection(waifu.id)
+          let systemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, affectionValue)
+          systemPrompt += buildMemoryContext()
+          systemPrompt += buildAffectionPrompt(affectionValue, waifu.displayName || 'Waifu')
+          systemPrompt += buildApiTelemetryPrompt()
+          systemPrompt += buildGroupChatPromptBlock(waifu, waifus, pendingTasks.get(waifu.id) || [], round)
+
+          if (hasTools) {
+            if (systemInfo && systemInfo.homedir) {
+              systemPrompt += `\n\n[System Environment]\nOS: ${systemInfo.platform}\nUsername: ${systemInfo.username}\nHome directory: ${systemInfo.homedir}\nShell: ${systemInfo.shell ?? 'unknown'}`
             }
+            systemPrompt += buildAgentBehaviorPrompt(systemInfo?.shell, waifu.displayName || 'your waifu persona')
+          }
+
+          const runtime = new AIChatRuntime({
+            provider: providerRequiresApiKey(selectedProvider.value)
+              ? ({ type: selectedProvider.value as any, apiKey: key } as any)
+              : ({ type: selectedProvider.value as any } as any),
+            model,
+            systemPrompt,
+          })
+
+          let finalContent = ''
+
+          if (hasTools) {
+            const provider = runtime.getProvider()
+            const aiHistory = [...sharedHistory]
+            const maxIterations = maxToolIterations.value
+            let stopped = false
+            const toolMsgIds: string[] = []
+
+            for (let iteration = 0; iteration <= maxIterations; iteration++) {
+              const requestStartedAt = performance.now()
+              const response = await provider.chat({
+                model,
+                messages: aiHistory,
+                tools,
+                systemPrompt,
+              })
+              apiRoundTrips.push(performance.now() - requestStartedAt)
+
+              if (!response.toolCalls || response.toolCalls.length === 0) {
+                finalContent = response.content || ''
+                break
+              }
+
+              aiHistory.push({
+                id: response.id || `assistant-tc-${waifu.id}-${Date.now()}`,
+                role: 'assistant',
+                content: response.content || '',
+                toolCalls: response.toolCalls,
+              })
+
+              for (const toolCall of response.toolCalls) {
+                if (toolCall.name === STOP_TOOL_NAME) {
+                  finalContent = (toolCall.arguments as any).final_message || response.content || ''
+                  aiHistory.push({
+                    id: `tool-result-${Date.now()}-${toolCall.id}`,
+                    role: 'tool',
+                    content: 'ok',
+                    toolCallId: toolCall.id,
+                  })
+                  stopped = true
+                  break
+                }
+
+                if (toolCall.name === SET_AFFECTION_TOOL_NAME) {
+                  const newVal = clampAffection(Number((toolCall.arguments as any).value ?? affectionValue))
+                  saveAffection(waifu.id, newVal)
+                  if (selectedWaifuId.value === waifu.id) {
+                    affection.value = newVal
+                  }
+
+                  aiHistory.push({
+                    id: `tool-result-${Date.now()}-${toolCall.id}`,
+                    role: 'tool',
+                    content: `好感度 updated to ${newVal}`,
+                    toolCallId: toolCall.id,
+                  })
+                  continue
+                }
+
+                const cmd = String((toolCall.arguments as any).command || '')
+                const toolMsgId = `tool-${waifu.id}-${Date.now()}-${toolCall.id}`
+                toolMsgIds.push(toolMsgId)
+
+                messages.value.push({
+                  id: toolMsgId,
+                  role: 'assistant',
+                  content: `${waifu.displayName} is running \`$ ${cmd}\``,
+                  timestamp: now(),
+                  waifuId: waifu.id,
+                  waifuDisplayName: waifu.displayName,
+                })
+
+                const result = await executeToolCall(toolCall)
+                const preview = result.length > 500 ? result.slice(0, 500) + '\u2026' : result
+                const toolMsg = messages.value.find((message) => message.id === toolMsgId)
+                if (toolMsg) {
+                  toolMsg.content = `${waifu.displayName} ran \`$ ${cmd}\`\n\`\`\`\n${preview}\n\`\`\``
+                }
+
+                aiHistory.push({
+                  id: `tool-result-${Date.now()}-${toolCall.id}`,
+                  role: 'tool',
+                  content: result,
+                  toolCallId: toolCall.id,
+                })
+              }
+
+              if (stopped) break
+
+              if (iteration === maxIterations) {
+                finalContent = '(Reached maximum iterations — stopping.)'
+              }
+            }
+
+            if (finalContent && toolMsgIds.length > 0) {
+              const idsToRemove = new Set(toolMsgIds)
+              messages.value = messages.value.filter((message) => !idsToRemove.has(message.id))
+            }
+          } else {
+            const streamStartedAt = performance.now()
+            for await (const chunk of runtime.streamMessage({ text: trimmedText, history: sharedHistory })) {
+              if (chunk.type === 'text_delta' && chunk.delta) {
+                finalContent += chunk.delta
+              }
+            }
+            apiRoundTrips.push(performance.now() - streamStartedAt)
+          }
+
+          const { cleanedText, tasks } = extractDelegatedTasks(finalContent || 'Done.')
+          const cleanContent = extractMemoryFromAIResponse(cleanedText || 'Done.')
+          assistantTurns.push({ waifu, content: cleanContent })
+          sharedHistory.push({
+            id: `assistant-${waifu.id}-${round}-${assistantTurns.length}`,
+            role: 'assistant',
+            content: `${waifu.displayName}: ${cleanContent}`,
+          })
+
+          for (const task of tasks) {
+            if (!waifus.some((candidate) => candidate.id === task.targetWaifuId)) {
+              continue
+            }
+            const currentTasks = nextRoundTasks.get(task.targetWaifuId) || []
+            currentTasks.push(`${waifu.displayName}: ${task.instruction}`)
+            nextRoundTasks.set(task.targetWaifuId, currentTasks)
           }
         }
 
-        if (assistantContent) {
-          const streamDurationMs = performance.now() - streamStartedAt
-          recordApiTelemetry(streamDurationMs, [streamDurationMs], selectedProvider.value, model)
+        pendingTasks = nextRoundTasks
+      }
 
-          const cleanContent = extractMemoryFromAIResponse(assistantContent)
-          const msg = messages.value.find((m) => m.id === assistantId)
-          if (msg) msg.content = cleanContent
+      if (apiRoundTrips.length > 0) {
+        recordApiTelemetry(
+          apiRoundTrips.reduce((sum, value) => sum + value, 0),
+          apiRoundTrips,
+          selectedProvider.value,
+          model,
+        )
+      }
 
-          if (convId) {
-            try {
-              await invoke('store:addMessage', convId, {
-                id: assistantId,
-                role: 'assistant',
-                content: cleanContent,
-                timestamp: now(),
-                waifuId: waifu.id,
-                waifuDisplayName: waifu.displayName,
-              })
-            } catch (e) { console.warn('Failed to save assistant message:', e) }
-          }
+      for (const turn of assistantTurns) {
+        const assistantId = `assistant-${turn.waifu.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const assistantMsg: Message = {
+          id: assistantId,
+          role: 'assistant',
+          content: turn.content,
+          timestamp: now(),
+          waifuId: turn.waifu.id,
+          waifuDisplayName: turn.waifu.displayName,
+        }
+
+        messages.value.push(assistantMsg)
+        recentMessageId.value = assistantId
+
+        if (convId) {
+          try { await invoke('store:addMessage', convId, assistantMsg) } catch (e) { console.warn('Failed to save assistant message:', e) }
         }
       }
 

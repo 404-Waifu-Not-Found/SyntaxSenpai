@@ -1,50 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
+import { Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as SplashScreen from "expo-splash-screen";
-import { Stack, useRouter } from "expo-router";
-import { loadThemeFromStorage } from "../src/hooks/useTheme";
-
-SplashScreen.preventAutoHideAsync();
+import { Stack } from "expo-router";
 
 export default function RootLayout() {
-  const router = useRouter();
-  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    const checkOnboarding = async () => {
-      await loadThemeFromStorage().catch(() => {});
-      try {
-        const state = await AsyncStorage.getItem("syntax-senpai-app-state");
-        if (state) {
-          const parsed = JSON.parse(state);
-          setHasCompletedOnboarding(parsed.hasCompletedOnboarding || false);
-        } else {
-          setHasCompletedOnboarding(false);
-        }
-      } catch (err) {
-        console.error("Failed to check onboarding:", err);
-        setHasCompletedOnboarding(false);
-      } finally {
-        await SplashScreen.hideAsync();
-      }
-    };
-
-    checkOnboarding();
-  }, []);
-
-  useEffect(() => {
-    if (hasCompletedOnboarding === true) {
-      router.replace("/(main)/chat");
-    } else if (hasCompletedOnboarding === false) {
-      router.replace("/(onboarding)");
-    }
-  }, [hasCompletedOnboarding, router]);
-
-  if (hasCompletedOnboarding === null) {
-    return null;
-  }
-
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <Stack
@@ -52,9 +11,38 @@ export default function RootLayout() {
           headerShown: false,
         }}
       >
+        <Stack.Screen name="index" />
         <Stack.Screen name="(onboarding)" />
         <Stack.Screen name="(main)" />
       </Stack>
+    </GestureHandlerRootView>
+  );
+}
+
+export function ErrorBoundary(props: { error: Error; retry: () => void }) {
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: "#0f0f0f",
+          justifyContent: "center",
+          padding: 24,
+        }}
+      >
+        <Text style={{ color: "#ffffff", fontSize: 22, fontWeight: "700", marginBottom: 12 }}>
+          App failed to load
+        </Text>
+        <Text style={{ color: "#d4d4d8", lineHeight: 22, marginBottom: 20 }}>
+          {props.error.message || "Unknown startup error"}
+        </Text>
+        <Text
+          onPress={props.retry}
+          style={{ color: "#818cf8", fontSize: 16, fontWeight: "600" }}
+        >
+          Try again
+        </Text>
+      </View>
     </GestureHandlerRootView>
   );
 }

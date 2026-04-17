@@ -23,6 +23,59 @@ pnpm dev:desktop
 
 API keys are configured in-app through the Settings panel.
 
+## Build the iOS app
+
+Requirements:
+
+- macOS
+- Xcode and Xcode Command Line Tools
+- CocoaPods
+- An iOS Simulator or physical iPhone
+
+Development build commands:
+
+```bash
+# Install dependencies
+pnpm install
+
+# Start the Expo dev server for mobile
+pnpm dev:mobile
+
+# In a second terminal, build and run the iOS app locally
+cd apps/mobile
+pnpm ios
+```
+
+Build locally for a physical iPhone with Expo:
+
+```bash
+cd apps/mobile
+npx expo run:ios --device
+```
+
+If Xcode reports a provisioning profile error for `com.syntaxsenpai.app`, open the workspace at
+`apps/mobile/ios/SyntaxSenpai.xcworkspace` in Xcode and configure a valid Apple Developer team and
+bundle identifier for your machine. The generated Xcode project currently includes a default team
+ID, which may not match your local Apple account.
+
+If native dependencies are out of sync, regenerate the iOS native project and pods:
+
+```bash
+cd apps/mobile
+npx expo prebuild -p ios
+npx pod-install ios
+pnpm ios
+```
+
+Production build command with EAS:
+
+```bash
+cd apps/mobile
+npx eas build --platform ios
+```
+
+If `eas` is not installed globally, use `npx eas ...` instead of `eas ...`.
+
 ## Project structure
 
 This is a **pnpm monorepo** managed with [Turborepo](https://turbo.build/repo). Key directories:

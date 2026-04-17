@@ -22,6 +22,7 @@ import type {
 let wss: WebSocketServer | null = null
 let serverToken: string | null = null
 let serverPort: number | null = null
+const PREFERRED_WS_PORT = 43123
 
 interface PairedSession {
   sessionId: string
@@ -122,6 +123,14 @@ function getMobileConversationTitle(deviceName: string, waifuName: string): stri
   return `📱 ${deviceName} · ${waifuName}`
 }
 
+function getGroupConversationSummary(deviceId: string, waifuIds: string[]): string {
+  return `mobile:${deviceId}:group:${[...waifuIds].sort().join(',')}`
+}
+
+function getGroupConversationTitle(deviceName: string, waifuNames: string[]): string {
+  return `📱 ${deviceName} · Group Chat (${waifuNames.join(', ')})`
+}
+
 function broadcastMobileChatEvent(payload: Record<string, unknown>) {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
@@ -132,6 +141,86 @@ function broadcastMobileChatEvent(payload: Record<string, unknown>) {
 
 function getLatestUserMessage(messages: Array<{ id?: string; role?: string; content?: unknown }>) {
   return [...messages].reverse().find((message) => message.role === 'user' && typeof message.content === 'string' && message.content.trim()) || null
+}
+
+function buildRequestedWaifuList(primaryWaifuId: string, groupChat?: { enabled?: boolean; waifuIds?: string[] }) {
+  const requestedIds = groupChat?.enabled && Array.isArray(groupChat.waifuIds)
+    ? groupChat.waifuIds
+    : [primaryWaifuId]
+
+  const uniqueIds = Array.from(
+    new Set(requestedIds.filter((waifuId): waifuId is string => typeof waifuId === 'string' && !!waifuId)),
+  )
+
+  const waifus = uniqueIds
+    .map((waifuId) => builtInWaifus.find((waifu: any) => waifu.id === waifuId))
+    .filter(Boolean) as any[]
+
+  if (waifus.length > 0) {
+    return waifus
+  }
+
+  return [builtInWaifus.find((waifu: any) => waifu.id === primaryWaifuId) || builtInWaifus[0]]
+}
+
+function normalizeHistoryForAi(
+  messages: Array<{ id?: string; role?: string; content?: unknown; waifuId?: string; authorName?: string }>,
+) {
+  return messages
+    .filter((message) => (message.role === 'user' || message.role === 'assistant') && typeof message.content === 'string')
+    .map((message) => {
+      if (message.role === 'assistant') {
+        const authorName = typeof message.authorName === 'string' && message.authorName.trim()
+          ? message.authorName.trim()
+          : builtInWaifus.find((waifu: any) => waifu.id === message.waifuId)?.displayName
+
+        return {
+          id: message.id || `assistant-${Date.now()}`,
+          role: 'assistant' as const,
+          content: authorName ? `${authorName}: ${message.content}` : message.content,
+        }
+      }
+
+      return {
+        id: message.id || `user-${Date.now()}`,
+        role: 'user' as const,
+        content: message.content,
+      }
+    })
+}
+
+function buildGroupChatPromptBlock(currentWaifu: any, waifus: any[], assignedTasks: string[], round: number) {
+  const peers = waifus
+    .filter((waifu) => waifu.id !== currentWaifu.id)
+    .map((waifu) => `- ${waifu.displayName} (${waifu.id})`)
+    .join('\n')
+
+  const taskBlock = assignedTasks.length > 0
+    ? `Tasks assigned to you by other waifus for this round:\n${assignedTasks.map((task) => `- ${task}`).join('\n')}`
+    : 'No explicit tasks were assigned to you this round.'
+
+  return `\n\n[Group Chat Coordination]\nYou are participating in a multi-waifu group chat round ${round}.\nCurrent speakers in this room:\n- ${currentWaifu.displayName} (${currentWaifu.id})\n${peers}\n\n${taskBlock}\n\nYou can respond to what the user said and also react to the other waifus naturally.\nIf you want to assign a follow-up task to another waifu, append one or more lines at the END of your reply using exactly this format:\n[TASK_FOR:waifu-id] short task request\n\nOnly assign a task when another waifu is better suited for that part. Keep task lines concise. Do not explain the tag syntax to the user.`
+}
+
+function extractDelegatedTasks(text: string) {
+  const taskRegex = /^\[TASK_FOR:([a-z0-9_-]+)\]\s*(.+)$/gim
+  const tasks: Array<{ targetWaifuId: string; instruction: string }> = []
+  let match: RegExpExecArray | null
+
+  while ((match = taskRegex.exec(text)) !== null) {
+    const targetWaifuId = match[1]?.trim()
+    const instruction = match[2]?.trim()
+    if (targetWaifuId && instruction) {
+      tasks.push({ targetWaifuId, instruction })
+    }
+  }
+
+  const cleanedText = text
+    .replace(taskRegex, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  return { cleanedText, tasks }
 }
 
 function extractExplicitTerminalCommand(text: string): string | null {
@@ -213,12 +302,78 @@ async function executeMobileToolCall(toolCall: { name: string; arguments?: Recor
   }
 }
 
+async function runMobileWaifuTurn(options: {
+  runtime: AIChatRuntime
+  model: string
+  systemPrompt: string
+  aiHistory: any[]
+}) {
+  const provider = options.runtime.getProvider()
+  const localHistory = [...options.aiHistory]
+  let fullContent = ''
+
+  for (let iteration = 0; iteration <= MOBILE_MAX_TOOL_ITERATIONS; iteration++) {
+    const response = await provider.chat({
+      model: options.model,
+      messages: localHistory,
+      tools: MOBILE_AGENT_TOOLS as any,
+      systemPrompt: options.systemPrompt,
+    })
+
+    if (!response.toolCalls || response.toolCalls.length === 0) {
+      fullContent = response.content || ''
+      break
+    }
+
+    localHistory.push({
+      id: response.id || `mobile-assistant-${Date.now()}-${iteration}`,
+      role: 'assistant',
+      content: response.content || '',
+      toolCalls: response.toolCalls,
+    })
+
+    let stopped = false
+
+    for (const toolCall of response.toolCalls as Array<{ id: string; name: string; arguments?: Record<string, unknown> }>) {
+      if (toolCall.name === MOBILE_STOP_TOOL_NAME) {
+        fullContent = String(toolCall.arguments?.final_message || response.content || '')
+        localHistory.push({
+          id: `tool-result-${Date.now()}-${toolCall.id}`,
+          role: 'tool',
+          content: 'ok',
+          toolCallId: toolCall.id,
+        })
+        stopped = true
+        break
+      }
+
+      const result = await executeMobileToolCall(toolCall)
+      localHistory.push({
+        id: `tool-result-${Date.now()}-${toolCall.id}`,
+        role: 'tool',
+        content: result,
+        toolCallId: toolCall.id,
+      })
+    }
+
+    if (stopped) break
+
+    if (iteration === MOBILE_MAX_TOOL_ITERATIONS) {
+      fullContent = '(Reached maximum command iterations — stopping.)'
+    }
+  }
+
+  return extractDelegatedTasks(fullContent.trim() || 'Done.')
+}
+
 async function finalizeMobileAssistantResponse(
   socket: WebSocket,
   conversationId: string,
   mobileConversation: { id: string },
   waifuId: string,
+  authorName: string,
   finalMessage: string,
+  turnComplete = true,
 ) {
   const assistantId = `mobile-assistant-${Date.now()}`
   const assistantTimestamp = formatUiTimestamp()
@@ -227,6 +382,7 @@ async function finalizeMobileAssistantResponse(
     type: 'assistant_start',
     conversationId: mobileConversation.id,
     waifuId,
+    authorName,
     messageId: assistantId,
     timestamp: assistantTimestamp,
   })
@@ -235,12 +391,17 @@ async function finalizeMobileAssistantResponse(
     const chunkPayload: StreamChunkPayload = {
       conversationId,
       chunk: { type: 'text_delta', delta } as any,
+      messageId: assistantId,
+      waifuId,
+      authorName,
+      turnComplete: false,
     }
     send(socket, 'stream_chunk', chunkPayload)
     broadcastMobileChatEvent({
       type: 'assistant_chunk',
       conversationId: mobileConversation.id,
       waifuId,
+      authorName,
       messageId: assistantId,
       chunk: delta,
     })
@@ -253,22 +414,29 @@ async function finalizeMobileAssistantResponse(
     timestamp: assistantTimestamp,
   })
 
-  const endPayload: StreamEndPayload = { conversationId, finalMessage }
+  const endPayload: StreamEndPayload = {
+    conversationId,
+    finalMessage,
+    messageId: assistantId,
+    waifuId,
+    authorName,
+    turnComplete,
+  }
   send(socket, 'stream_end', endPayload)
   broadcastMobileChatEvent({
     type: 'assistant_end',
     conversationId: mobileConversation.id,
     waifuId,
+    authorName,
     messageId: assistantId,
     finalMessage,
     timestamp: assistantTimestamp,
+    turnComplete,
   })
 }
 
-async function ensureMobileConversation(deviceId: string, deviceName: string, waifuId: string, waifuName: string) {
+async function ensureMobileConversation(summary: string, title: string, waifuId: string) {
   const store = getChatStore()
-  const summary = getMobileConversationSummary(deviceId, waifuId)
-  const title = getMobileConversationTitle(deviceName, waifuName)
   const conversations = await store.listConversations()
   let conversation = conversations.find((item: any) => item.summary === summary)
 
@@ -306,6 +474,43 @@ function getLanIp(): string {
   return ips[0]?.address ?? '127.0.0.1'
 }
 
+function getWsUrlForHost(host: string): string {
+  return `ws://${host}:${serverPort}`
+}
+
+function getHostnameCandidates(): string[] {
+  const hosts = new Set<string>()
+
+  try {
+    const hostname = os.hostname().trim()
+    if (hostname) {
+      hosts.add(hostname)
+      if (!hostname.endsWith('.local')) {
+        hosts.add(`${hostname}.local`)
+      }
+    }
+  } catch {
+    // ignore hostname lookup failures
+  }
+
+  hosts.add('127.0.0.1')
+  return Array.from(hosts)
+}
+
+function getReconnectCandidates(): string[] {
+  if (!serverPort) return []
+
+  const urls = new Set<string>()
+  for (const host of getHostnameCandidates()) {
+    urls.add(getWsUrlForHost(host))
+  }
+  for (const ip of getLanIps()) {
+    urls.add(getWsUrlForHost(ip.address))
+  }
+
+  return Array.from(urls)
+}
+
 export function getLanIps(): Array<{ name: string; address: string }> {
   const interfaces = os.networkInterfaces()
   const result: Array<{ name: string; address: string }> = []
@@ -339,17 +544,28 @@ async function handleAgentRequest(socket: WebSocket, msg: WSMessage<AgentRequest
   const apiKey = desktopRuntimeConfig?.apiKey || providerCfg?.apiKey
   const model = desktopRuntimeConfig?.model || providerCfg?.model
 
-  const waifu = builtInWaifus.find((w: any) => w.id === waifuId) || builtInWaifus[0]
+  const requestedWaifus = buildRequestedWaifuList(waifuId, payload.groupChat)
+  const primaryWaifu = requestedWaifus[0]
+  const isGroupChat = requestedWaifus.length > 1
   const activePair = pairedSession?.socket === socket ? pairedSession : null
   const deviceId = activePair?.deviceId || 'mobile-device'
   const deviceName = activePair?.deviceName || 'Mobile Device'
-  const mobileConversation = await ensureMobileConversation(deviceId, deviceName, waifu.id, waifu.displayName)
+  const mobileConversation = await ensureMobileConversation(
+    isGroupChat
+      ? getGroupConversationSummary(deviceId, requestedWaifus.map((waifu: any) => waifu.id))
+      : getMobileConversationSummary(deviceId, primaryWaifu.id),
+    isGroupChat
+      ? getGroupConversationTitle(deviceName, requestedWaifus.map((waifu: any) => waifu.displayName))
+      : getMobileConversationTitle(deviceName, primaryWaifu.displayName),
+    isGroupChat ? 'group-chat' : primaryWaifu.id,
+  )
   const userMessage = getLatestUserMessage(messages as Array<{ id?: string; role?: string; content?: unknown }>)
 
   if (!userMessage || typeof userMessage.content !== 'string' || !userMessage.content.trim()) {
     const errorPayload: StreamErrorPayload = {
       conversationId,
       error: 'Missing user message in mobile request.',
+      turnComplete: true,
     }
     send(socket, 'stream_error', errorPayload)
     return
@@ -368,7 +584,7 @@ async function handleAgentRequest(socket: WebSocket, msg: WSMessage<AgentRequest
     broadcastMobileChatEvent({
       type: 'user_message',
       conversationId: mobileConversation.id,
-      waifuId: waifu.id,
+      waifuId: primaryWaifu.id,
       message: persistedUserMessage,
     })
   }
@@ -381,7 +597,8 @@ async function handleAgentRequest(socket: WebSocket, msg: WSMessage<AgentRequest
         socket,
         conversationId,
         mobileConversation,
-        waifu.id,
+        primaryWaifu.id,
+        primaryWaifu.displayName,
         formatTerminalCommandResult(explicitTerminalCommand, commandOutput),
       )
     } catch (err) {
@@ -389,6 +606,7 @@ async function handleAgentRequest(socket: WebSocket, msg: WSMessage<AgentRequest
       const errorPayload: StreamErrorPayload = {
         conversationId,
         error: errorMessage,
+        turnComplete: true,
       }
       send(socket, 'stream_error', errorPayload)
     }
@@ -399,121 +617,133 @@ async function handleAgentRequest(socket: WebSocket, msg: WSMessage<AgentRequest
     const errorPayload: StreamErrorPayload = {
       conversationId,
       error: 'Desktop AI provider is not configured. Open desktop settings and set a provider, model, and API key. You can still run direct terminal commands with /cmd <command>.',
+      turnComplete: true,
     }
     send(socket, 'stream_error', errorPayload)
     return
   }
 
-  const storedMessages = await getChatStore().getMessages(mobileConversation.id)
-  const normalizedRelationship = relationshipSnapshot && relationshipSnapshot.waifuId === waifu.id
-    ? {
-        ...relationshipSnapshot,
-        userId: relationshipSnapshot.userId || deviceId,
-        affectionLevel: relationshipSnapshot.affectionLevel ?? 40,
-        selectedAIProvider: type,
-        selectedModel: model,
-        createdAt: relationshipSnapshot.createdAt || new Date().toISOString(),
-        lastInteractedAt: new Date().toISOString(),
-      }
-    : {
-        waifuId: waifu.id,
-        userId: deviceId,
-        affectionLevel: 40,
-        selectedAIProvider: type,
-        selectedModel: model,
-        createdAt: new Date().toISOString(),
-        lastInteractedAt: new Date().toISOString(),
-      }
-
-  const systemPrompt = buildSystemPrompt(
-    waifu,
-    normalizedRelationship,
-    {
-      userId: normalizedRelationship.userId,
-      affectionLevel: normalizedRelationship.affectionLevel,
-      platform: 'mobile',
-      availableTools: MOBILE_AGENT_TOOLS.map((tool) => tool.name),
-    }
-  ) + getDesktopSystemPromptBlock()
-
-  const runtime = new AIChatRuntime({
-    provider: providerRequiresApiKey(type)
-      ? ({ type, apiKey } as any)
-      : ({ type } as any),
-    model,
-    systemPrompt,
-  })
-
-  let fullContent = ''
-  const aiHistory: any[] = storedMessages
-    .filter((message: any) => message.role === 'user' || message.role === 'assistant')
-    .map((message: any) => ({
-      id: message.id,
-      role: message.role,
-      content: typeof message.content === 'string' ? message.content : String(message.content ?? ''),
-    }))
+  const sharedHistory: any[] = normalizeHistoryForAi(messages as Array<{
+    id?: string
+    role?: string
+    content?: unknown
+    waifuId?: string
+    authorName?: string
+  }>)
+  const maxRounds = isGroupChat ? Math.max(1, Math.min(Number(payload.groupChat?.maxRounds) || 2, 3)) : 1
+  const assistantTurns: Array<{ waifuId: string; authorName: string; finalMessage: string }> = []
 
   try {
-    const provider = runtime.getProvider()
-    let stopped = false
+    let pendingTasks = new Map<string, string[]>()
 
-    for (let iteration = 0; iteration <= MOBILE_MAX_TOOL_ITERATIONS; iteration++) {
-      const response = await provider.chat({
-        model,
-        messages: aiHistory,
-        tools: MOBILE_AGENT_TOOLS as any,
-        systemPrompt,
-      })
+    for (let round = 1; round <= maxRounds; round++) {
+      const waifusForRound = round === 1
+        ? requestedWaifus
+        : requestedWaifus.filter((waifu: any) => (pendingTasks.get(waifu.id) || []).length > 0)
 
-      if (!response.toolCalls || response.toolCalls.length === 0) {
-        fullContent = response.content || ''
+      if (waifusForRound.length === 0) {
         break
       }
 
-      aiHistory.push({
-        id: response.id || `mobile-assistant-${Date.now()}-${iteration}`,
-        role: 'assistant',
-        content: response.content || '',
-        toolCalls: response.toolCalls,
-      })
+      const nextRoundTasks = new Map<string, string[]>()
 
-      for (const toolCall of response.toolCalls as Array<{ id: string; name: string; arguments?: Record<string, unknown> }>) {
-        if (toolCall.name === MOBILE_STOP_TOOL_NAME) {
-          fullContent = String(toolCall.arguments?.final_message || response.content || '')
-          aiHistory.push({
-            id: `tool-result-${Date.now()}-${toolCall.id}`,
-            role: 'tool',
-            content: 'ok',
-            toolCallId: toolCall.id,
-          })
-          stopped = true
-          break
-        }
+      for (const waifu of waifusForRound) {
+        const normalizedRelationship = relationshipSnapshot && relationshipSnapshot.waifuId === waifu.id
+          ? {
+              ...relationshipSnapshot,
+              userId: relationshipSnapshot.userId || deviceId,
+              affectionLevel: relationshipSnapshot.affectionLevel ?? 40,
+              selectedAIProvider: type,
+              selectedModel: model,
+              createdAt: relationshipSnapshot.createdAt || new Date().toISOString(),
+              lastInteractedAt: new Date().toISOString(),
+            }
+          : {
+              waifuId: waifu.id,
+              userId: deviceId,
+              affectionLevel: 40,
+              selectedAIProvider: type,
+              selectedModel: model,
+              createdAt: new Date().toISOString(),
+              lastInteractedAt: new Date().toISOString(),
+            }
 
-        const result = await executeMobileToolCall(toolCall)
-        aiHistory.push({
-          id: `tool-result-${Date.now()}-${toolCall.id}`,
-          role: 'tool',
-          content: result,
-          toolCallId: toolCall.id,
+        const assignedTasks = pendingTasks.get(waifu.id) || []
+        const systemPrompt = buildSystemPrompt(
+          waifu,
+          normalizedRelationship,
+          {
+            userId: normalizedRelationship.userId,
+            affectionLevel: normalizedRelationship.affectionLevel,
+            platform: 'mobile',
+            availableTools: MOBILE_AGENT_TOOLS.map((tool) => tool.name),
+          },
+        )
+          + (isGroupChat ? buildGroupChatPromptBlock(waifu, requestedWaifus, assignedTasks, round) : '')
+          + getDesktopSystemPromptBlock()
+
+        const runtime = new AIChatRuntime({
+          provider: providerRequiresApiKey(type)
+            ? ({ type, apiKey } as any)
+            : ({ type } as any),
+          model,
+          systemPrompt,
         })
+
+        const { cleanedText, tasks } = await runMobileWaifuTurn({
+          runtime,
+          model,
+          systemPrompt,
+          aiHistory: sharedHistory,
+        })
+
+        const finalMessage = cleanedText || 'Done.'
+        assistantTurns.push({
+          waifuId: waifu.id,
+          authorName: waifu.displayName,
+          finalMessage,
+        })
+
+        sharedHistory.push({
+          id: `assistant-${waifu.id}-${round}-${assistantTurns.length}`,
+          role: 'assistant',
+          content: isGroupChat ? `${waifu.displayName}: ${finalMessage}` : finalMessage,
+        })
+
+        if (round < maxRounds) {
+          for (const task of tasks) {
+            if (!requestedWaifus.some((candidate: any) => candidate.id === task.targetWaifuId)) {
+              continue
+            }
+            const currentTasks = nextRoundTasks.get(task.targetWaifuId) || []
+            currentTasks.push(`${waifu.displayName}: ${task.instruction}`)
+            nextRoundTasks.set(task.targetWaifuId, currentTasks)
+          }
+        }
       }
 
-      if (stopped) break
-
-      if (iteration === MOBILE_MAX_TOOL_ITERATIONS) {
-        fullContent = '(Reached maximum command iterations — stopping.)'
-      }
+      pendingTasks = nextRoundTasks
     }
 
-    const finalMessage = fullContent.trim() || 'Done.'
-    await finalizeMobileAssistantResponse(
-      socket,
-      conversationId,
-      mobileConversation,
-      waifu.id,
-      finalMessage,
-    )
+    if (assistantTurns.length === 0) {
+      assistantTurns.push({
+        waifuId: primaryWaifu.id,
+        authorName: primaryWaifu.displayName,
+        finalMessage: 'Done.',
+      })
+    }
+
+    for (const [index, turn] of assistantTurns.entries()) {
+      await finalizeMobileAssistantResponse(
+        socket,
+        conversationId,
+        mobileConversation,
+        turn.waifuId,
+        turn.authorName,
+        turn.finalMessage,
+        index === assistantTurns.length - 1,
+      )
+    }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err)
     const errorTimestamp = formatUiTimestamp()
@@ -529,12 +759,17 @@ async function handleAgentRequest(socket: WebSocket, msg: WSMessage<AgentRequest
     const errorPayload: StreamErrorPayload = {
       conversationId,
       error: errorMessage,
+      waifuId: primaryWaifu.id,
+      authorName: primaryWaifu.displayName,
+      messageId: errorId,
+      turnComplete: true,
     }
     send(socket, 'stream_error', errorPayload)
     broadcastMobileChatEvent({
       type: 'assistant_error',
       conversationId: mobileConversation.id,
-      waifuId: waifu.id,
+      waifuId: primaryWaifu.id,
+      authorName: primaryWaifu.displayName,
       messageId: errorId,
       error: errorMessage,
       timestamp: errorTimestamp,
@@ -546,7 +781,7 @@ export async function startWsServer(): Promise<{ qrDataUrl: string; wsUrl: strin
   if (wss) {
     const ip = getLanIp()
     const wsUrl = `ws://${ip}:${serverPort}`
-    const payload = JSON.stringify({ wsUrl, token: serverToken })
+    const payload = JSON.stringify({ wsUrl, token: serverToken, reconnectCandidates: getReconnectCandidates() })
     const qrDataUrl = await qrcode.toDataURL(payload, { width: 256, margin: 2 })
     return { qrDataUrl, wsUrl }
   }
@@ -554,80 +789,90 @@ export async function startWsServer(): Promise<{ qrDataUrl: string; wsUrl: strin
   serverToken = randomUUID()
 
   return new Promise((resolve, reject) => {
-    const server = new WebSocketServer({ port: 0 })
+    const tryStart = (port: number) => {
+      const server = new WebSocketServer({ port })
 
-    server.on('listening', async () => {
-      const addr = server.address() as { port: number }
-      serverPort = addr.port
-      wss = server
+      server.on('listening', async () => {
+        const addr = server.address() as { port: number }
+        serverPort = addr.port
+        wss = server
 
-      const ip = getLanIp()
-      const wsUrl = `ws://${ip}:${serverPort}`
-      const payload = JSON.stringify({ wsUrl, token: serverToken })
+        const ip = getLanIp()
+        const wsUrl = `ws://${ip}:${serverPort}`
+        const payload = JSON.stringify({ wsUrl, token: serverToken, reconnectCandidates: getReconnectCandidates() })
 
-      try {
-        const qrDataUrl = await qrcode.toDataURL(payload, { width: 256, margin: 2 })
-        resolve({ qrDataUrl, wsUrl })
-      } catch (err) {
-        reject(err)
-      }
-    })
-
-    server.on('error', reject)
-
-    server.on('connection', (socket) => {
-      socket.on('message', async (raw) => {
-        let msg: WSMessage
         try {
-          msg = JSON.parse(raw.toString())
-        } catch {
+          const qrDataUrl = await qrcode.toDataURL(payload, { width: 256, margin: 2 })
+          resolve({ qrDataUrl, wsUrl })
+        } catch (err) {
+          reject(err)
+        }
+      })
+
+      server.on('error', (err: any) => {
+        if (port === PREFERRED_WS_PORT && (err?.code === 'EADDRINUSE' || err?.code === 'EACCES')) {
+          tryStart(0)
           return
         }
+        reject(err)
+      })
 
-        if (msg.type === 'ping') {
-          send(socket, 'pong', {})
-          return
-        }
-
-        if (msg.type === 'pair_request') {
-          const pr = msg as WSMessage<PairRequestPayload>
-          if (pr.payload.deviceId && serverToken) {
-            // Accept any device that knows the token (token is embedded in QR)
-            const sessionId = randomUUID()
-            pairedSession = {
-              sessionId,
-              deviceName: pr.payload.deviceName || 'Mobile Device',
-              deviceId: pr.payload.deviceId,
-              socket,
-            }
-            const accepted: PairAcceptedPayload = {
-              deviceId: pr.payload.deviceId,
-              sessionId,
-              publicKey: '',
-            }
-            send(socket, 'pair_accepted', accepted)
-          } else {
-            send(socket, 'pair_rejected', { reason: 'Invalid token' })
-          }
-          return
-        }
-
-        if (msg.type === 'agent_request') {
-          if (!pairedSession || pairedSession.socket !== socket) {
-            send(socket, 'error', { code: 'NOT_PAIRED', message: 'Not paired' })
+      server.on('connection', (socket) => {
+        socket.on('message', async (raw) => {
+          let msg: WSMessage
+          try {
+            msg = JSON.parse(raw.toString())
+          } catch {
             return
           }
-          await handleAgentRequest(socket, msg as WSMessage<AgentRequestPayload>)
-          return
-        }
-      })
 
-      socket.on('close', () => {
-        if (pairedSession?.socket === socket) {
-          pairedSession = null
-        }
+          if (msg.type === 'ping') {
+            send(socket, 'pong', {})
+            return
+          }
+
+          if (msg.type === 'pair_request') {
+            const pr = msg as WSMessage<PairRequestPayload>
+            if (pr.payload.deviceId && serverToken) {
+              // Accept any device that knows the token (token is embedded in QR)
+              const sessionId = randomUUID()
+              pairedSession = {
+                sessionId,
+                deviceName: pr.payload.deviceName || 'Mobile Device',
+                deviceId: pr.payload.deviceId,
+                socket,
+              }
+              const accepted: PairAcceptedPayload = {
+                deviceId: pr.payload.deviceId,
+                sessionId,
+                publicKey: '',
+              }
+              send(socket, 'pair_accepted', accepted)
+            } else {
+              send(socket, 'pair_rejected', { reason: 'Invalid token' })
+            }
+            return
+          }
+
+          if (msg.type === 'agent_request') {
+            if (!pairedSession || pairedSession.socket !== socket) {
+              send(socket, 'error', { code: 'NOT_PAIRED', message: 'Not paired' })
+              return
+            }
+            await handleAgentRequest(socket, msg as WSMessage<AgentRequestPayload>)
+            return
+          }
+        })
+
+        socket.on('close', () => {
+          if (pairedSession?.socket === socket) {
+            pairedSession = null
+          }
+        })
       })
-    })
+    }
+
+    tryStart(PREFERRED_WS_PORT)
   })
 }
 
@@ -645,7 +890,7 @@ export async function getQrData(): Promise<{ qrDataUrl: string; wsUrl: string; t
   if (!wss || !serverToken || !serverPort) return null
   const ip = getLanIp()
   const wsUrl = `ws://${ip}:${serverPort}`
-  const payload = JSON.stringify({ wsUrl, token: serverToken })
+  const payload = JSON.stringify({ wsUrl, token: serverToken, reconnectCandidates: getReconnectCandidates() })
   const qrDataUrl = await qrcode.toDataURL(payload, { width: 256, margin: 2 })
   return { qrDataUrl, wsUrl, token: serverToken, availableIps: getLanIps() }
 }
@@ -653,7 +898,7 @@ export async function getQrData(): Promise<{ qrDataUrl: string; wsUrl: string; t
 export async function generateQrForIp(ip: string): Promise<{ qrDataUrl: string; wsUrl: string } | null> {
   if (!wss || !serverToken || !serverPort) return null
   const wsUrl = `ws://${ip}:${serverPort}`
-  const payload = JSON.stringify({ wsUrl, token: serverToken })
+  const payload = JSON.stringify({ wsUrl, token: serverToken, reconnectCandidates: getReconnectCandidates() })
   const qrDataUrl = await qrcode.toDataURL(payload, { width: 256, margin: 2 })
   return { qrDataUrl, wsUrl }
 }

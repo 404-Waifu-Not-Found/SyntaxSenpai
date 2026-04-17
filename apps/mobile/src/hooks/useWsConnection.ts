@@ -7,6 +7,7 @@ import type {
   StreamChunkPayload,
   StreamEndPayload,
   StreamErrorPayload,
+  MobileChatMessage,
 } from "@syntax-senpai/ws-protocol";
 
 export type ConnectionState = "disconnected" | "connecting" | "paired" | "error";
@@ -14,6 +15,7 @@ export type ConnectionState = "disconnected" | "connecting" | "paired" | "error"
 interface PersistedConnection {
   wsUrl: string;
   sessionId: string;
+  reconnectCandidates?: string[];
 }
 
 const STORAGE_KEY = "syntax-senpai-ws-connection";
@@ -41,13 +43,17 @@ let wsState: WsState = {
 let ws: WebSocket | null = null;
 let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectCandidates: string[] = [];
+let currentReconnectIndex = 0;
+let hasAttemptedRestore = false;
 
 const stateListeners = new Set<() => void>();
-type StreamChunkHandler = (requestId: string, chunk: string) => void;
-type StreamEndHandler = (requestId: string, finalMessage: string) => void;
-type StreamErrorHandler = (requestId: string, error: string) => void;
+type StreamEndHandler = (requestId: string, finalMessage: string, payload: StreamEndPayload) => void;
+type StreamErrorHandler = (requestId: string, error: string, payload: StreamErrorPayload) => void;
+type StreamMessageMeta = Pick<StreamChunkPayload, "messageId" | "waifuId" | "authorName" | "turnComplete">;
+type RichStreamChunkHandler = (requestId: string, chunk: string, meta: StreamMessageMeta) => void;
 
-let onStreamChunkCb: StreamChunkHandler | null = null;
+let onStreamChunkCb: RichStreamChunkHandler | null = null;
 let onStreamEndCb: StreamEndHandler | null = null;
 let onStreamErrorCb: StreamErrorHandler | null = null;
 
@@ -62,6 +68,31 @@ function notifyListeners() {
 function setState(updates: Partial<WsState>) {
   wsState = { ...wsState, ...updates };
   notifyListeners();
+}
+
+function normalizeReconnectCandidates(primaryUrl: string, extras: string[] = []) {
+  return Array.from(
+    new Set(
+      [primaryUrl, ...extras].filter(
+        (value): value is string => typeof value === "string" && value.startsWith("ws://")
+      )
+    )
+  );
+}
+
+function setReconnectTargets(primaryUrl: string, extras: string[] = []) {
+  reconnectCandidates = normalizeReconnectCandidates(primaryUrl, extras);
+  currentReconnectIndex = reconnectCandidates.findIndex((url) => url === primaryUrl);
+  if (currentReconnectIndex < 0) currentReconnectIndex = 0;
+}
+
+function getNextReconnectUrl() {
+  if (reconnectCandidates.length === 0) {
+    return wsState.wsUrl;
+  }
+  const nextUrl = reconnectCandidates[currentReconnectIndex % reconnectCandidates.length];
+  currentReconnectIndex = (currentReconnectIndex + 1) % reconnectCandidates.length;
+  return nextUrl;
 }
 
 async function getOrCreateDeviceId(): Promise<string> {
@@ -100,7 +131,11 @@ function handleWsMessage(raw: string) {
     if (wsState.wsUrl) {
       AsyncStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ wsUrl: wsState.wsUrl, sessionId: payload.sessionId } as PersistedConnection)
+        JSON.stringify({
+          wsUrl: wsState.wsUrl,
+          sessionId: payload.sessionId,
+          reconnectCandidates,
+        } as PersistedConnection)
       ).catch(() => {});
     }
     return;
@@ -115,20 +150,25 @@ function handleWsMessage(raw: string) {
   if (msg.type === "stream_chunk") {
     const payload = msg.payload as StreamChunkPayload;
     if (payload.chunk.type === "text_delta" && payload.chunk.delta) {
-      onStreamChunkCb?.(payload.conversationId, payload.chunk.delta);
+      onStreamChunkCb?.(payload.conversationId, payload.chunk.delta, {
+        messageId: payload.messageId,
+        waifuId: payload.waifuId,
+        authorName: payload.authorName,
+        turnComplete: payload.turnComplete,
+      });
     }
     return;
   }
 
   if (msg.type === "stream_end") {
     const payload = msg.payload as StreamEndPayload;
-    onStreamEndCb?.(payload.conversationId, payload.finalMessage);
+    onStreamEndCb?.(payload.conversationId, payload.finalMessage, payload);
     return;
   }
 
   if (msg.type === "stream_error") {
     const payload = msg.payload as StreamErrorPayload;
-    onStreamErrorCb?.(payload.conversationId, payload.error);
+    onStreamErrorCb?.(payload.conversationId, payload.error, payload);
     return;
   }
 
@@ -176,9 +216,10 @@ function openSocket(url: string, token: string, deviceId: string) {
       setState({ connectionState: "connecting" });
       reconnectAttempts++;
       reconnectTimer = setTimeout(() => {
-        if (wsState.wsUrl) {
+        const nextUrl = getNextReconnectUrl();
+        if (nextUrl) {
           getOrCreateDeviceId().then((id) => {
-            openSocket(wsState.wsUrl!, token, id);
+            openSocket(nextUrl, token, id);
           });
         }
       }, RECONNECT_DELAY_MS);
@@ -190,9 +231,14 @@ function openSocket(url: string, token: string, deviceId: string) {
   };
 }
 
-export async function connectToDesktop(wsUrl: string, token: string): Promise<void> {
+export async function connectToDesktop(
+  wsUrl: string,
+  token: string,
+  options?: { reconnectCandidates?: string[] }
+): Promise<void> {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   reconnectAttempts = 0;
+  setReconnectTargets(wsUrl, options?.reconnectCandidates || []);
   const deviceId = await getOrCreateDeviceId();
   openSocket(wsUrl, token, deviceId);
 }
@@ -202,15 +248,22 @@ export function disconnectFromDesktop(): void {
   reconnectAttempts = MAX_RECONNECT_ATTEMPTS; // prevent auto-reconnect
   ws?.close();
   ws = null;
+  reconnectCandidates = [];
+  currentReconnectIndex = 0;
   setState({ connectionState: "disconnected", sessionId: null, wsUrl: null, errorMessage: null });
   AsyncStorage.removeItem(STORAGE_KEY).catch(() => {});
 }
 
 export function sendAgentRequest(payload: {
   conversationId: string;
-  messages: Array<{ id: string; role: "user" | "assistant"; content: string }>;
+  messages: MobileChatMessage[];
   waifuId: string;
   providerConfig: { type: string; apiKey: string; model: string };
+  groupChat?: {
+    enabled: boolean;
+    waifuIds: string[];
+    maxRounds?: number;
+  };
 }): void {
   if (!ws || wsState.connectionState !== "paired") return;
 
@@ -235,7 +288,7 @@ export function sendAgentRequest(payload: {
 }
 
 export function useWsConnection(options?: {
-  onStreamChunk?: StreamChunkHandler;
+  onStreamChunk?: RichStreamChunkHandler;
   onStreamEnd?: StreamEndHandler;
   onStreamError?: StreamErrorHandler;
 }) {
@@ -253,8 +306,28 @@ export function useWsConnection(options?: {
     return () => { stateListeners.delete(update); };
   }, []);
 
-  const connect = useCallback((wsUrl: string, token: string) => {
-    return connectToDesktop(wsUrl, token);
+  useEffect(() => {
+    if (hasAttemptedRestore) return;
+    hasAttemptedRestore = true;
+
+    AsyncStorage.getItem(STORAGE_KEY)
+      .then((raw) => {
+        if (!raw || ws || wsState.connectionState === "paired" || wsState.connectionState === "connecting") {
+          return;
+        }
+
+        const parsed = JSON.parse(raw) as PersistedConnection;
+        if (!parsed?.wsUrl) return;
+
+        return connectToDesktop(parsed.wsUrl, "", {
+          reconnectCandidates: parsed.reconnectCandidates || [],
+        }).catch(() => {});
+      })
+      .catch(() => {});
+  }, []);
+
+  const connect = useCallback((wsUrl: string, token: string, options?: { reconnectCandidates?: string[] }) => {
+    return connectToDesktop(wsUrl, token, options);
   }, []);
 
   const disconnect = useCallback(() => {

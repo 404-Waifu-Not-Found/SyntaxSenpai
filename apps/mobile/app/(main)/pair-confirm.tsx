@@ -13,17 +13,29 @@ import { useTheme } from "../../src/hooks/useTheme";
 
 export default function PairConfirmScreen() {
   const router = useRouter();
-  const { wsUrl, token } = useLocalSearchParams<{ wsUrl: string; token: string }>();
+  const { wsUrl, token, reconnectCandidates } = useLocalSearchParams<{
+    wsUrl: string;
+    token: string;
+    reconnectCandidates?: string;
+  }>();
   const { colors } = useTheme();
   const { connectionState, errorMessage, connect } = useWsConnection();
   const [didConnect, setDidConnect] = useState(false);
 
+  const parsedReconnectCandidates = (() => {
+    try {
+      return reconnectCandidates ? JSON.parse(reconnectCandidates) : [];
+    } catch {
+      return [];
+    }
+  })();
+
   useEffect(() => {
     if (wsUrl && token && !didConnect) {
       setDidConnect(true);
-      connect(wsUrl, token);
+      connect(wsUrl, token, { reconnectCandidates: parsedReconnectCandidates });
     }
-  }, [wsUrl, token, didConnect, connect]);
+  }, [wsUrl, token, didConnect, connect, reconnectCandidates]);
 
   // Navigate back to chat once paired
   useEffect(() => {
@@ -76,7 +88,7 @@ export default function PairConfirmScreen() {
             <TouchableOpacity
               style={[styles.button, { backgroundColor: colors.primary }]}
               onPress={() => {
-                if (wsUrl && token) connect(wsUrl, token);
+                if (wsUrl && token) connect(wsUrl, token, { reconnectCandidates: parsedReconnectCandidates });
               }}
             >
               <Text style={styles.buttonText}>Retry</Text>

@@ -41,7 +41,13 @@ export default function ScanScreen() {
       }
       router.replace({
         pathname: "/(main)/pair-confirm",
-        params: { wsUrl: payload.wsUrl, token: payload.token },
+        params: {
+          wsUrl: payload.wsUrl,
+          token: payload.token,
+          reconnectCandidates: JSON.stringify(
+            Array.isArray(payload.reconnectCandidates) ? payload.reconnectCandidates : []
+          ),
+        },
       });
     } catch {
       Alert.alert(

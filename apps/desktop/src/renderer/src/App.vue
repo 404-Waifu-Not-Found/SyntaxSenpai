@@ -26,7 +26,16 @@ const rainbowToggleBg = computed(() => {
   const c3 = hslToHex((h + 120) % 360, s, l)
   return `linear-gradient(to right, ${c1}, ${c2}, ${c3})`
 })
-const settingsTab = ref<'general' | 'theme' | 'mobile'>('general')
+type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'mobile'
+const settingsTab = ref<SettingsTabId>('general')
+const settingsTabs: Array<{ id: SettingsTabId; label: string }> = [
+  { id: 'general', label: 'General' },
+  { id: 'ai', label: 'AI' },
+  { id: 'data', label: 'Data' },
+  { id: 'metrics', label: 'Metrics' },
+  { id: 'theme', label: 'Theme' },
+  { id: 'mobile', label: 'Mobile' },
+]
 const showQrPair = ref(false)
 const mobilePairedDevice = ref<string | null>(null)
 
@@ -971,43 +980,23 @@ async function handleImportData() {
           </h2>
 
           <!-- Tabs -->
-          <div class="flex gap-1 mb-5 p-1 rounded-lg bg-neutral-800/40">
+          <div class="flex flex-wrap gap-1 mb-5 p-1 rounded-lg bg-neutral-800/40">
             <button
+              v-for="tab in settingsTabs"
+              :key="tab.id"
               :class="[
-                'flex-1 text-sm font-semibold py-2 rounded-md transition-all duration-150',
-                settingsTab === 'general'
+                'flex-1 min-w-[72px] text-xs font-semibold py-2 px-2 rounded-md transition-colors duration-150',
+                settingsTab === tab.id
                   ? 'bg-neutral-700/60 text-white'
                   : 'text-neutral-400 hover:text-neutral-200',
               ]"
-              @click="settingsTab = 'general'"
+              @click="tab.id === 'mobile' ? (settingsTab = 'mobile', checkMobilePairingStatus()) : (settingsTab = tab.id)"
             >
-              {{ t('settings.general') }}
-            </button>
-            <button
-              :class="[
-                'flex-1 text-sm font-semibold py-2 rounded-md transition-all duration-150',
-                settingsTab === 'theme'
-                  ? 'bg-neutral-700/60 text-white'
-                  : 'text-neutral-400 hover:text-neutral-200',
-              ]"
-              @click="settingsTab = 'theme'"
-            >
-              {{ t('settings.theme') }}
-            </button>
-            <button
-              :class="[
-                'flex-1 text-sm font-semibold py-2 rounded-md transition-all duration-150',
-                settingsTab === 'mobile'
-                  ? 'bg-neutral-700/60 text-white'
-                  : 'text-neutral-400 hover:text-neutral-200',
-              ]"
-              @click="settingsTab = 'mobile'; checkMobilePairingStatus()"
-            >
-              Mobile
+              {{ tab.label }}
             </button>
           </div>
 
-          <!-- General Tab -->
+          <!-- General Tab: language, waifu, group chat -->
           <div v-if="settingsTab === 'general'">
             <div class="mb-4">
               <label class="block text-sm font-semibold text-neutral-200 mb-2">{{ t('settings.language') }}</label>
@@ -1082,7 +1071,10 @@ async function handleImportData() {
                 </div>
               </div>
             </div>
+          </div>
 
+          <!-- AI Tab: provider, API key -->
+          <div v-if="settingsTab === 'ai'">
             <div class="mb-4">
               <label class="block text-sm font-semibold text-neutral-200 mb-2">{{ t('settings.provider') }}</label>
               <select v-model="store.selectedProvider" class="input-field">
@@ -1101,7 +1093,10 @@ async function handleImportData() {
                 class="input-field"
               >
             </div>
+          </div>
 
+          <!-- Data Tab: export / import -->
+          <div v-if="settingsTab === 'data'">
             <div class="mb-6 rounded-xl border border-neutral-700/40 bg-neutral-800/30 p-4">
               <div class="mb-3">
                 <h3 class="text-sm font-bold text-white">{{ t('settings.exportData') }}</h3>
@@ -1121,7 +1116,10 @@ async function handleImportData() {
                 {{ t('settings.importDescription') }}
               </p>
             </div>
+          </div>
 
+          <!-- Metrics Tab: telemetry -->
+          <div v-if="settingsTab === 'metrics'">
             <div class="mb-6 rounded-xl border border-neutral-700/40 bg-neutral-800/30 p-4">
               <div class="mb-3">
                 <div class="flex items-center justify-between gap-3">
@@ -1229,21 +1227,25 @@ async function handleImportData() {
                 </div>
               </div>
             </div>
+          </div>
 
-            <div class="flex gap-2">
-              <button class="btn-secondary flex-1" @click="showSettings = false">
-                {{ t('settings.cancel') }}
-              </button>
-              <button
-                class="btn-primary flex-1"
-                @click="handleSetup(store.apiKey)"
-              >
-                {{ t('settings.save') }}
-              </button>
-              <button class="btn-ghost flex-1" @click="startDemoMode">
-                {{ t('settings.skipDemo') }}
-              </button>
-            </div>
+          <!-- Shared Save/Cancel footer for General/AI/Data/Metrics -->
+          <div
+            v-if="['general', 'ai', 'data', 'metrics'].includes(settingsTab)"
+            class="flex gap-2"
+          >
+            <button class="btn-secondary flex-1" @click="showSettings = false">
+              {{ t('settings.cancel') }}
+            </button>
+            <button
+              class="btn-primary flex-1"
+              @click="handleSetup(store.apiKey)"
+            >
+              {{ t('settings.save') }}
+            </button>
+            <button class="btn-ghost flex-1" @click="startDemoMode">
+              {{ t('settings.skipDemo') }}
+            </button>
           </div>
 
           <!-- Theme Tab -->
@@ -1946,23 +1948,7 @@ async function handleImportData() {
           </ul>
         </div>
 
-        <div :class="['mt-3 space-y-2', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-7' : '', !appReady ? 'opacity-0' : '']">
-          <button class="btn-primary themed-btn-primary w-full text-sm" :style="primaryButtonStyle" @click="showAgent = true">
-            {{ t('sidebar.agent') }}
-          </button>
-          <div class="flex gap-2">
-            <button class="btn-secondary flex-1 text-sm" :style="secondaryButtonStyle" @click="showSettings = true">
-              {{ t('sidebar.settings') }}
-            </button>
-            <button
-              class="btn-secondary text-sm px-3"
-              :style="secondaryButtonStyle"
-              title="AI Memory"
-              @click="showMemory = true"
-            >
-              🧠
-            </button>
-          </div>
+        <div :class="['mt-3', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-7' : '', !appReady ? 'opacity-0' : '']">
           <button class="btn-ghost w-full text-sm" :style="ghostButtonStyle" @click="sidebarOpen = false">
             {{ t('sidebar.collapse') }}
           </button>
@@ -2007,12 +1993,30 @@ async function handleImportData() {
             </div>
           </div>
         </div>
-        <div class="flex items-center gap-2">
-          <button class="btn-ghost p-2" :style="ghostButtonStyle" @click="showSettings = true">
-            ⚙️
-          </button>
-          <button class="btn-ghost p-2" :style="ghostButtonStyle" @click="showAgent = true">
+        <div class="flex items-center gap-1">
+          <button
+            class="btn-ghost p-2"
+            :style="ghostButtonStyle"
+            :title="t('sidebar.agent')"
+            @click="showAgent = true"
+          >
             🤖
+          </button>
+          <button
+            class="btn-ghost p-2"
+            :style="ghostButtonStyle"
+            title="AI Memory"
+            @click="showMemory = true"
+          >
+            🧠
+          </button>
+          <button
+            class="btn-ghost p-2"
+            :style="ghostButtonStyle"
+            :title="t('sidebar.settings')"
+            @click="showSettings = true"
+          >
+            ⚙️
           </button>
         </div>
       </div>

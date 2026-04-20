@@ -36,6 +36,41 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string }> = [
   { id: 'theme', label: 'Theme' },
   { id: 'mobile', label: 'Mobile' },
 ]
+
+// Height-animate the settings tab body on switch. Capture the outgoing
+// height before leave, measure the incoming child on enter, transition
+// the wrapper from old→new px. Restored to `auto` after the transition
+// so natural resizes (form fields, dynamic metrics) don't fight it.
+const tabInnerRef = ref<HTMLDivElement | null>(null)
+const tabHeight = ref<string>('auto')
+
+function onTabBeforeLeave(el: Element) {
+  void el
+  if (tabInnerRef.value) {
+    tabHeight.value = tabInnerRef.value.offsetHeight + 'px'
+  }
+}
+
+function onTabEnter(el: Element, done: () => void) {
+  const target = el as HTMLElement
+  requestAnimationFrame(() => {
+    const h = target.scrollHeight
+    tabHeight.value = h + 'px'
+    const timer = setTimeout(() => {
+      tabHeight.value = 'auto'
+      done()
+    }, 320)
+    target.addEventListener(
+      'transitionend',
+      () => {
+        clearTimeout(timer)
+        tabHeight.value = 'auto'
+        done()
+      },
+      { once: true }
+    )
+  })
+}
 const showQrPair = ref(false)
 const mobilePairedDevice = ref<string | null>(null)
 
@@ -477,6 +512,17 @@ const telemetryStats = computed(() => {
 
 function telemetryBarHeight(totalMs: number) {
   return `${Math.max(18, Math.round((totalMs / telemetryStats.value.maxMs) * 100))}%`
+}
+
+function formatDuration(ms: number | null | undefined): { value: string; unit: string } {
+  if (ms === null || ms === undefined || Number.isNaN(ms)) return { value: '—', unit: '' }
+  const abs = Math.abs(ms)
+  if (abs < 1) return { value: (ms * 1000).toFixed(0), unit: 'μs' }
+  if (abs < 1000) return { value: Math.round(ms).toString(), unit: 'ms' }
+  if (abs < 60000) return { value: (ms / 1000).toFixed(ms < 10000 ? 2 : 1), unit: 's' }
+  const mins = Math.floor(ms / 60000)
+  const secs = Math.round((ms % 60000) / 1000)
+  return { value: secs ? `${mins}m ${secs}s` : `${mins}m`, unit: '' }
 }
 
 const startupAccentStyle = computed(() => {
@@ -963,31 +1009,31 @@ async function handleImportData() {
 
   <!-- Settings Modal -->
   <Teleport to="body">
-    <Transition
-      enter-active-class="transition-opacity duration-200"
-      leave-active-class="transition-opacity duration-200"
-      enter-from-class="opacity-0"
-      leave-to-class="opacity-0"
-    >
+    <Transition name="modal-backdrop">
       <div
         v-if="showSettings"
-        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50"
+        class="fixed inset-0 bg-black/50 backdrop-blur-md flex items-end sm:items-center justify-center z-50"
         @click.self="showSettings = false"
       >
-        <div class="glass-surface rounded-2xl p-6 max-w-lg w-full mx-4 animate-content-show max-h-[85vh] overflow-y-auto">
+          <div
+            class="settings-glass relative rounded-t-3xl sm:rounded-3xl max-w-lg w-full mx-0 sm:mx-4 max-h-[88vh] overflow-hidden flex flex-col"
+          >
+            <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+            <div class="pointer-events-none absolute inset-0 rounded-t-3xl sm:rounded-3xl ring-1 ring-inset ring-white/5" />
+            <div class="relative overflow-y-auto p-6">
           <h2 class="text-xl font-bold text-white mb-4">
             {{ t('settings.title') }}
           </h2>
 
           <!-- Tabs -->
-          <div class="flex flex-wrap gap-1 mb-5 p-1 rounded-lg bg-neutral-800/40">
+          <div class="flex flex-nowrap gap-0.5 mb-5 p-1 rounded-lg settings-tabs">
             <button
               v-for="tab in settingsTabs"
               :key="tab.id"
               :class="[
-                'flex-1 min-w-[72px] text-xs font-semibold py-2 px-2 rounded-md transition-colors duration-150',
+                'flex-1 basis-0 min-w-0 text-[11px] font-semibold py-2 px-1 rounded-md transition-colors duration-150 whitespace-nowrap',
                 settingsTab === tab.id
-                  ? 'bg-neutral-700/60 text-white'
+                  ? 'settings-tab-active'
                   : 'text-neutral-400 hover:text-neutral-200',
               ]"
               @click="tab.id === 'mobile' ? (settingsTab = 'mobile', checkMobilePairingStatus()) : (settingsTab = tab.id)"
@@ -996,6 +1042,18 @@ async function handleImportData() {
             </button>
           </div>
 
+          <div
+            ref="tabInnerRef"
+            class="tab-wrapper"
+            :style="{ height: tabHeight }"
+          >
+          <Transition
+            name="tab-slide"
+            mode="out-in"
+            @before-leave="onTabBeforeLeave"
+            @enter="onTabEnter"
+          >
+          <div :key="settingsTab">
           <!-- General Tab: language, waifu, group chat -->
           <div v-if="settingsTab === 'general'">
             <div class="mb-4">
@@ -1133,7 +1191,7 @@ async function handleImportData() {
                     class="rounded-full px-2.5 py-1 text-[11px] font-semibold"
                     :class="store.apiTelemetryAlert.active ? 'bg-red-500/20 text-red-200' : 'bg-emerald-500/20 text-emerald-200'"
                   >
-                    {{ t('settings.metricsThreshold') }}: {{ store.apiSpikeThresholdMs }} ms
+                    {{ t('settings.metricsThreshold') }}: {{ formatDuration(store.apiSpikeThresholdMs).value }} {{ formatDuration(store.apiSpikeThresholdMs).unit }}
                   </span>
                 </div>
               </div>
@@ -1169,15 +1227,15 @@ async function handleImportData() {
               <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
                 <div class="rounded-xl bg-neutral-900/55 p-3">
                   <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsLatest') }}</div>
-                  <div class="mt-2 text-xl font-bold text-white">{{ telemetryStats.latest ?? '—' }}<span v-if="telemetryStats.latest !== null" class="ml-1 text-xs text-neutral-400">ms</span></div>
+                  <div class="mt-2 text-xl font-bold text-white">{{ formatDuration(telemetryStats.latest).value }}<span v-if="telemetryStats.latest !== null" class="ml-1 text-xs text-neutral-400">{{ formatDuration(telemetryStats.latest).unit }}</span></div>
                 </div>
                 <div class="rounded-xl bg-neutral-900/55 p-3">
                   <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsAverage') }}</div>
-                  <div class="mt-2 text-xl font-bold text-white">{{ telemetryStats.average ?? '—' }}<span v-if="telemetryStats.average !== null" class="ml-1 text-xs text-neutral-400">ms</span></div>
+                  <div class="mt-2 text-xl font-bold text-white">{{ formatDuration(telemetryStats.average).value }}<span v-if="telemetryStats.average !== null" class="ml-1 text-xs text-neutral-400">{{ formatDuration(telemetryStats.average).unit }}</span></div>
                 </div>
                 <div class="rounded-xl bg-neutral-900/55 p-3">
                   <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsP95') }}</div>
-                  <div class="mt-2 text-xl font-bold text-white">{{ telemetryStats.p95 ?? '—' }}<span v-if="telemetryStats.p95 !== null" class="ml-1 text-xs text-neutral-400">ms</span></div>
+                  <div class="mt-2 text-xl font-bold text-white">{{ formatDuration(telemetryStats.p95).value }}<span v-if="telemetryStats.p95 !== null" class="ml-1 text-xs text-neutral-400">{{ formatDuration(telemetryStats.p95).unit }}</span></div>
                 </div>
                 <div class="rounded-xl bg-neutral-900/55 p-3">
                   <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsAlerts') }}</div>
@@ -1201,7 +1259,7 @@ async function handleImportData() {
                       class="flex-1 rounded-t-md transition-all"
                       :class="sample.alert ? 'bg-red-400/80' : 'bg-cyan-400/80'"
                       :style="{ height: telemetryBarHeight(sample.totalMs) }"
-                      :title="`${sample.provider} ${sample.model}: ${Math.round(sample.totalMs)} ms`"
+                      :title="`${sample.provider} ${sample.model}: ${formatDuration(sample.totalMs).value} ${formatDuration(sample.totalMs).unit}`"
                     />
                   </div>
                   <div class="max-h-36 space-y-2 overflow-y-auto pr-1">
@@ -1215,7 +1273,7 @@ async function handleImportData() {
                         <div class="text-neutral-500">{{ new Date(sample.measuredAt).toLocaleTimeString() }}</div>
                       </div>
                       <div class="ml-3 text-right">
-                        <div :class="sample.alert ? 'text-red-300' : 'text-cyan-200'">{{ Math.round(sample.totalMs) }} ms</div>
+                        <div :class="sample.alert ? 'text-red-300' : 'text-cyan-200'">{{ formatDuration(sample.totalMs).value }} {{ formatDuration(sample.totalMs).unit }}</div>
                         <div class="text-neutral-500">{{ sample.roundTrips }} calls</div>
                       </div>
                     </div>
@@ -1520,29 +1578,26 @@ async function handleImportData() {
               <button class="btn-primary flex-1" @click="showSettings = false">Done</button>
             </div>
           </div>
-        </div>
+          </div>
+          </Transition>
+          </div>
+            </div>
+          </div>
       </div>
     </Transition>
   </Teleport>
 
   <!-- QR Pair Modal -->
-  <Teleport to="body">
-    <QrPairModal v-if="showQrPair" @close="showQrPair = false; checkMobilePairingStatus()" />
-  </Teleport>
+  <QrPairModal :visible="showQrPair" @close="showQrPair = false; checkMobilePairingStatus()" />
 
   <Teleport to="body">
-    <Transition
-      enter-active-class="transition-opacity duration-200"
-      leave-active-class="transition-opacity duration-200"
-      enter-from-class="opacity-0"
-      leave-to-class="opacity-0"
-    >
+    <Transition name="modal-backdrop">
       <div
         v-if="showModelPicker"
-        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50"
         @click.self="showModelPicker = false"
       >
-        <div class="glass-surface rounded-2xl p-6 max-w-md w-full mx-4 animate-content-show">
+        <div class="modal-glass rounded-t-3xl sm:rounded-2xl p-6 max-w-md w-full mx-0 sm:mx-4">
           <h2 class="text-xl font-bold text-white mb-2">
             {{ t('model.title') }}
           </h2>
@@ -1574,18 +1629,13 @@ async function handleImportData() {
 
   <!-- Agent Modal -->
   <Teleport to="body">
-    <Transition
-      enter-active-class="transition-opacity duration-200"
-      leave-active-class="transition-opacity duration-200"
-      enter-from-class="opacity-0"
-      leave-to-class="opacity-0"
-    >
+    <Transition name="modal-backdrop">
       <div
         v-if="showAgent"
-        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50"
         @click.self="showAgent = false"
       >
-        <div class="glass-surface rounded-2xl p-6 max-w-md w-full mx-4 animate-content-show">
+        <div class="modal-glass rounded-t-3xl sm:rounded-2xl p-6 max-w-md w-full mx-0 sm:mx-4">
           <h2 class="text-xl font-bold text-white mb-1">
             {{ t('agent.title') }}
           </h2>
@@ -1677,18 +1727,13 @@ async function handleImportData() {
 
   <!-- Memory Modal -->
   <Teleport to="body">
-    <Transition
-      enter-active-class="transition-opacity duration-200"
-      leave-active-class="transition-opacity duration-200"
-      enter-from-class="opacity-0"
-      leave-to-class="opacity-0"
-    >
+    <Transition name="modal-backdrop">
       <div
         v-if="showMemory"
-        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50"
         @click.self="showMemory = false"
       >
-        <div class="glass-surface rounded-2xl p-6 max-w-lg w-full mx-4 animate-content-show max-h-[80vh] flex flex-col">
+        <div class="modal-glass rounded-t-3xl sm:rounded-2xl p-6 max-w-lg w-full mx-0 sm:mx-4 max-h-[80vh] flex flex-col">
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-xl font-bold text-white">
               {{ t('memory.title') }}

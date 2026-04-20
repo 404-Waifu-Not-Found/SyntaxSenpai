@@ -46,6 +46,10 @@ export default defineConfig({
     'btn-danger': 'rounded-xl backdrop-blur-md bg-red-700/30 hover:bg-red-700/40 active:bg-red-700/30 border-2 border-solid border-red-900/30 text-red-100 focus:ring-2 focus:ring-red-600/30 px-4 py-2 text-sm font-medium transition-all duration-200 ease-in-out outline-none',
     'btn-ghost': 'bg-transparent hover:bg-neutral-800/50 text-neutral-400 focus:ring-2 focus:ring-neutral-600/30 px-3 py-2 text-sm rounded-lg transition-all duration-200 outline-none',
     'input-field': 'w-full rounded-lg px-3 py-2 text-sm outline-none bg-neutral-950 focus:bg-neutral-900 focus:border-primary-400/50 border-2 border-solid border-neutral-900 text-neutral-100 shadow-sm transition-all duration-200 ease-in-out',
+    'settings-nav-btn': 'flex items-center gap-2.5 px-3 py-2 rounded-lg w-full text-left text-[13px] font-medium text-neutral-300 hover:bg-white/5 hover:text-white transition-colors duration-150 cursor-pointer',
+    'settings-nav-btn-active': '!bg-primary-500/20 !text-white shadow-[inset_2px_0_0_0_rgb(var(--primary-rgb))]',
+    'settings-card': 'mb-4 p-3 rounded-lg border border-neutral-700/30 bg-neutral-800/25',
+    'settings-section-title': 'text-xs font-semibold uppercase tracking-wide text-neutral-300',
   },
   rules: [
     [/^animate-slide-up$/, () => ({ animation: 'slideUpAndFade 400ms cubic-bezier(0.16, 1, 0.3, 1) forwards' })],
@@ -138,8 +142,9 @@ export default defineConfig({
           transition: opacity 250ms ease-out, backdrop-filter 250ms ease-out;
         }
         .modal-backdrop-leave-active {
-          /* Long enough for the panel slide (320ms) plus a short tail fade. */
-          transition: opacity 220ms ease-in 280ms, backdrop-filter 220ms ease-in 280ms;
+          /* Backdrop fades in the final ~180ms of the 240ms panel leave so the
+             backdrop is still solid while the panel is clearly visible. */
+          transition: opacity 180ms ease-in 80ms, backdrop-filter 180ms ease-in 80ms;
         }
         .modal-backdrop-enter-from,
         .modal-backdrop-leave-to {
@@ -148,36 +153,71 @@ export default defineConfig({
           -webkit-backdrop-filter: blur(0);
         }
 
-        /* Panel slide, driven by the parent backdrop's enter/leave classes. */
+        /* Panel enter/leave, driven by the parent backdrop's enter/leave classes.
+           Short travel + scale + spring-feeling bezier feels lighter than a full
+           100% slide — important now that the settings panel is near-fullscreen. */
         .modal-backdrop-enter-active .modal-glass,
         .modal-backdrop-enter-active .settings-glass {
-          transition: transform 520ms cubic-bezier(0.22, 1, 0.36, 1);
+          transition:
+            transform 420ms cubic-bezier(0.16, 1, 0.3, 1),
+            opacity 280ms ease-out;
         }
         .modal-backdrop-leave-active .modal-glass,
         .modal-backdrop-leave-active .settings-glass {
-          transition: transform 320ms cubic-bezier(0.55, 0, 1, 0.45);
+          transition:
+            transform 240ms cubic-bezier(0.4, 0, 0.85, 0.35),
+            opacity 220ms ease-in;
         }
         .modal-backdrop-enter-from .modal-glass,
-        .modal-backdrop-enter-from .settings-glass,
+        .modal-backdrop-enter-from .settings-glass {
+          transform: translate3d(0, 28px, 0) scale(0.965);
+          opacity: 0;
+        }
         .modal-backdrop-leave-to .modal-glass,
         .modal-backdrop-leave-to .settings-glass {
-          transform: translateY(100%);
+          transform: translate3d(0, 18px, 0) scale(0.975);
+          opacity: 0;
+        }
+        .modal-backdrop-enter-to .modal-glass,
+        .modal-backdrop-enter-to .settings-glass,
+        .modal-backdrop-leave-from .modal-glass,
+        .modal-backdrop-leave-from .settings-glass {
+          transform: translate3d(0, 0, 0) scale(1);
+          opacity: 1;
         }
 
-        /* Tab-switch transition inside the settings modal.
-           Used via <Transition name="tab-slide" mode="out-in">. */
-        .tab-slide-enter-active,
+        /* Tab-switch transition inside the settings modal. Uses <Transition
+           name="tab-slide" mode="out-in">. Leave is faster than enter so the
+           new content feels like it's pushing the old content off stage. A
+           subtle scale + blur layer makes the swap feel physical, not just
+           a horizontal slide. */
+        .tab-slide-enter-active {
+          transition:
+            transform 340ms cubic-bezier(0.22, 1, 0.36, 1),
+            opacity 280ms ease-out,
+            filter 260ms ease-out;
+        }
         .tab-slide-leave-active {
-          transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
-                      opacity 200ms ease-out;
+          transition:
+            transform 220ms cubic-bezier(0.55, 0, 1, 0.45),
+            opacity 180ms ease-in,
+            filter 180ms ease-in;
         }
         .tab-slide-enter-from {
-          transform: translateX(16px);
+          transform: translate3d(32px, 0, 0) scale(0.985);
           opacity: 0;
+          filter: blur(4px);
         }
         .tab-slide-leave-to {
-          transform: translateX(-16px);
+          transform: translate3d(-24px, 0, 0) scale(0.99);
           opacity: 0;
+          filter: blur(3px);
+        }
+        .tab-slide-enter-to,
+        .tab-slide-leave-from {
+          transform: translate3d(0, 0, 0) scale(1);
+          opacity: 1;
+          filter: blur(0);
         }
 
         /* Height-animated wrapper around the settings tab panels.
@@ -209,8 +249,8 @@ export default defineConfig({
               rgba(18, 19, 28, 0.78),
               rgba(10, 11, 16, 0.9)
             );
-          -webkit-backdrop-filter: blur(28px) saturate(160%);
-          backdrop-filter: blur(28px) saturate(160%);
+          -webkit-backdrop-filter: blur(var(--blur-intensity, 28px)) saturate(160%);
+          backdrop-filter: blur(var(--blur-intensity, 28px)) saturate(160%);
           border: 1px solid rgba(var(--primary-rgb), 0.2);
           box-shadow:
             0 30px 80px -20px rgba(0, 0, 0, 0.75),
@@ -234,6 +274,85 @@ export default defineConfig({
           box-shadow:
             0 1px 0 0 rgba(255, 255, 255, 0.1) inset,
             0 0 0 1px rgba(var(--primary-rgb), 0.4);
+        }
+
+        /* UI density / radius are exposed to the app via data attributes +
+           CSS vars so components can opt-in without a full refactor. Most of
+           the visual difference comes from scaling paddings on common shells. */
+        :root {
+          --ui-density-scale: 1;
+          --radius-scale: 1;
+          --blur-intensity: 28px;
+        }
+        [data-density="compact"] .modal-glass,
+        [data-density="compact"] .settings-glass {
+          padding: calc(1rem * var(--ui-density-scale));
+        }
+        [data-radius="sharp"] .modal-glass,
+        [data-radius="sharp"] .settings-glass,
+        [data-radius="sharp"] .btn-primary,
+        [data-radius="sharp"] .btn-secondary,
+        [data-radius="sharp"] .btn-danger,
+        [data-radius="sharp"] .btn-ghost,
+        [data-radius="sharp"] .input-field {
+          border-radius: calc(0.4rem * var(--radius-scale));
+        }
+        [data-radius="rounded"] .modal-glass,
+        [data-radius="rounded"] .settings-glass {
+          border-radius: calc(1.5rem * var(--radius-scale));
+        }
+
+        /* Sakura petal overlay — fixed behind UI content, per-petal CSS vars
+           control position/delay/speed. Toggled via data-petals="on" on :root. */
+        .sakura-layer {
+          pointer-events: none;
+          position: fixed;
+          inset: 0;
+          overflow: hidden;
+          z-index: 1;
+        }
+        [data-petals="off"] .sakura-layer { display: none; }
+
+        .sakura-petal {
+          position: absolute;
+          top: -8%;
+          left: var(--sakura-x, 50%);
+          width: var(--sakura-size, 14px);
+          height: var(--sakura-size, 14px);
+          background: radial-gradient(
+            circle at 30% 30%,
+            rgba(255, 220, 235, 0.95),
+            rgba(244, 114, 182, 0.85) 55%,
+            rgba(219, 39, 119, 0.6) 100%
+          );
+          border-radius: 75% 15% 55% 15%;
+          filter: drop-shadow(0 2px 4px rgba(244, 114, 182, 0.35));
+          opacity: 0;
+          animation:
+            sakura-fall var(--sakura-duration, 14s) linear var(--sakura-delay, 0s) infinite,
+            sakura-spin calc(var(--sakura-duration, 14s) * 0.4) linear var(--sakura-delay, 0s) infinite;
+          will-change: transform, opacity;
+        }
+
+        @keyframes sakura-fall {
+          0% {
+            transform: translate3d(0, 0, 0) rotate(0deg);
+            opacity: 0;
+          }
+          6% { opacity: 0.9; }
+          50% {
+            transform: translate3d(var(--sakura-drift, 60px), 50vh, 0) rotate(180deg);
+          }
+          94% { opacity: 0.7; }
+          100% {
+            transform: translate3d(calc(var(--sakura-drift, 60px) * -0.4), 110vh, 0) rotate(360deg);
+            opacity: 0;
+          }
+        }
+        @keyframes sakura-spin {
+          0%   { border-radius: 75% 15% 55% 15%; }
+          50%  { border-radius: 15% 75% 15% 55%; }
+          100% { border-radius: 75% 15% 55% 15%; }
         }
       `,
     },

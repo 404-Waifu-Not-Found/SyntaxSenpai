@@ -7,3 +7,6 @@
 export * from "./types";
 export * from "./providers";
 export * from "./runtime";
+export * from "./retry";
+export * from "./trace";
+export * from "./planner";

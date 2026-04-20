@@ -6,6 +6,8 @@
  */
 
 import { createProvider, type ProviderConfig } from "./providers";
+import { withRetry, type RetryOptions, ProviderError } from "./retry";
+import { TraceEmitter, type TraceHandler, type AgentTraceEvent } from "./trace";
 import type {
   AIProvider,
   ChatRequest,
@@ -25,6 +27,7 @@ export interface AISetupOptions {
   temperature?: number;
   maxTokens?: number;
   maxToolIterations?: number;
+  retry?: RetryOptions;
 }
 
 export interface SendMessageOptions {
@@ -35,6 +38,9 @@ export interface SendMessageOptions {
   temperature?: number;
   maxTokens?: number;
   maxToolIterations?: number;
+  retry?: RetryOptions;
+  onTrace?: TraceHandler;
+  signal?: AbortSignal;
 }
 
 export interface StreamMessageOptions {
@@ -74,7 +80,37 @@ export class AIChatRuntime {
       temperature: options.temperature,
       maxTokens: options.maxTokens,
       maxToolIterations: options.maxToolIterations ?? 6,
+      retry: options.retry,
     };
+  }
+
+  /**
+   * Invoke provider.chat with exponential-backoff retry for transient errors.
+   * Exposed so external callers (planner, summarizer) share the same resilience.
+   */
+  async chatWithRetry(
+    request: ChatRequest,
+    retry?: RetryOptions,
+    signal?: AbortSignal,
+    emitter?: TraceEmitter,
+    iteration = 0
+  ): Promise<ChatResponse> {
+    const retryOpts: RetryOptions = {
+      ...this.defaults.retry,
+      ...retry,
+      signal,
+      onRetry: (err, attempt, delayMs) => {
+        emitter?.emit({
+          type: "retry",
+          iteration,
+          reason: `${err.kind}: ${err.message}`,
+          attempt,
+          delayMs,
+        });
+        retry?.onRetry?.(err, attempt, delayMs);
+      },
+    };
+    return withRetry(() => this.provider.chat(request), retryOpts);
   }
 
   getProvider(): AIProvider {
@@ -97,55 +133,92 @@ export class AIChatRuntime {
     const maxToolIterations =
       options.maxToolIterations ?? this.defaults.maxToolIterations ?? 6;
 
-    let messages = initialMessages;
+    const emitter = new TraceEmitter();
+    if (options.onTrace) emitter.on(options.onTrace);
+    emitter.emit({ type: "turn_start", iteration: 0, userText: options.text });
+
+    const messages = initialMessages;
     let lastResponse: ChatResponse | null = null;
 
-    for (let iteration = 0; iteration <= maxToolIterations; iteration += 1) {
-      const request = this.buildRequest(messages, {
-        tools: options.tools,
-        systemPrompt: options.systemPrompt,
-        temperature: options.temperature,
-        maxTokens: options.maxTokens,
-      });
+    try {
+      for (let iteration = 0; iteration <= maxToolIterations; iteration += 1) {
+        const request = this.buildRequest(messages, {
+          tools: options.tools,
+          systemPrompt: options.systemPrompt,
+          temperature: options.temperature,
+          maxTokens: options.maxTokens,
+        });
 
-      const response = await this.provider.chat(request);
-      lastResponse = response;
-
-      messages.push({
-        id: response.id || createId("assistant"),
-        role: "assistant",
-        content: response.content,
-        toolCalls: response.toolCalls,
-        createdAt: new Date().toISOString(),
-      });
-
-      if (!response.toolCalls || response.toolCalls.length === 0) {
-        return { response, messages };
-      }
-
-      if (!toolExecutor || iteration === maxToolIterations) {
-        return { response, messages };
-      }
-
-      for (const toolCall of response.toolCalls) {
-        const toolResult = await toolExecutor(toolCall);
-        const normalized = normalizeToolResult(toolResult);
+        const response = await this.chatWithRetry(
+          request,
+          options.retry,
+          options.signal,
+          emitter,
+          iteration
+        );
+        lastResponse = response;
 
         messages.push({
-          id: createId("tool"),
-          role: "tool",
-          content: normalized.content,
-          toolCallId: toolCall.id,
+          id: response.id || createId("assistant"),
+          role: "assistant",
+          content: response.content,
+          toolCalls: response.toolCalls,
           createdAt: new Date().toISOString(),
         });
+
+        if (response.content && typeof response.content === "string" && response.content.trim()) {
+          emitter.emit({ type: "thought", iteration, text: stringContent(response.content) });
+        }
+
+        if (!response.toolCalls || response.toolCalls.length === 0) {
+          emitter.emit({
+            type: "final_answer",
+            iteration,
+            text: stringContent(response.content),
+          });
+          return { response, messages };
+        }
+
+        if (!toolExecutor || iteration === maxToolIterations) {
+          return { response, messages };
+        }
+
+        for (const toolCall of response.toolCalls) {
+          emitter.emit({ type: "action", iteration, toolCall });
+
+          const toolResult = await toolExecutor(toolCall);
+          const normalized = normalizeToolResult(toolResult);
+
+          emitter.emit({
+            type: "observation",
+            iteration,
+            toolCallId: toolCall.id,
+            content: normalized.content,
+            isError: normalized.isError,
+          });
+
+          messages.push({
+            id: createId("tool"),
+            role: "tool",
+            content: normalized.content,
+            toolCallId: toolCall.id,
+            createdAt: new Date().toISOString(),
+          });
+        }
       }
-    }
 
-    if (!lastResponse) {
-      throw new Error("No AI response was generated");
-    }
+      if (!lastResponse) {
+        throw new ProviderError("unknown", "No AI response was generated", { retryable: false });
+      }
 
-    return { response: lastResponse, messages };
+      return { response: lastResponse, messages };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      emitter.emit({ type: "error", iteration: 0, message });
+      throw err;
+    } finally {
+      emitter.emit({ type: "turn_end", iterations: messages.length });
+    }
   }
 
   async *streamMessage(options: StreamMessageOptions): AsyncIterable<StreamChunk> {
@@ -310,6 +383,16 @@ function normalizeToolResult(result: ToolExecutionResult): {
     content: result.content,
     isError: !!result.isError,
   };
+}
+
+function stringContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((p) => (p && typeof p === "object" && "text" in p ? (p as { text?: string }).text ?? "" : ""))
+      .join("");
+  }
+  return "";
 }
 
 function createId(prefix: string): string {

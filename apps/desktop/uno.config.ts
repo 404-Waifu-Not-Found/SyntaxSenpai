@@ -127,6 +127,114 @@ export default defineConfig({
         .themed-btn-primary:hover { background-color: rgba(var(--primary-rgb), 0.20) !important; }
         .themed-btn-primary:focus { ring-color: rgba(var(--primary-rgb), 0.6) !important; }
         .themed-input:focus { border-color: rgba(var(--primary-rgb), 0.5) !important; }
+
+        /* Shared modal transition. A single <Transition name="modal-backdrop">
+           wraps the backdrop; the panel slide is driven by descendant
+           selectors on the parent's enter/leave classes. Previously the
+           panel used its own nested <Transition>, but because both v-ifs
+           flipped on the same tick the inner leave was cut off and the
+           panel popped out with no animation. */
+        .modal-backdrop-enter-active {
+          transition: opacity 250ms ease-out, backdrop-filter 250ms ease-out;
+        }
+        .modal-backdrop-leave-active {
+          /* Long enough for the panel slide (320ms) plus a short tail fade. */
+          transition: opacity 220ms ease-in 280ms, backdrop-filter 220ms ease-in 280ms;
+        }
+        .modal-backdrop-enter-from,
+        .modal-backdrop-leave-to {
+          opacity: 0;
+          backdrop-filter: blur(0);
+          -webkit-backdrop-filter: blur(0);
+        }
+
+        /* Panel slide, driven by the parent backdrop's enter/leave classes. */
+        .modal-backdrop-enter-active .modal-glass,
+        .modal-backdrop-enter-active .settings-glass {
+          transition: transform 520ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .modal-backdrop-leave-active .modal-glass,
+        .modal-backdrop-leave-active .settings-glass {
+          transition: transform 320ms cubic-bezier(0.55, 0, 1, 0.45);
+        }
+        .modal-backdrop-enter-from .modal-glass,
+        .modal-backdrop-enter-from .settings-glass,
+        .modal-backdrop-leave-to .modal-glass,
+        .modal-backdrop-leave-to .settings-glass {
+          transform: translateY(100%);
+        }
+
+        /* Tab-switch transition inside the settings modal.
+           Used via <Transition name="tab-slide" mode="out-in">. */
+        .tab-slide-enter-active,
+        .tab-slide-leave-active {
+          transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+                      opacity 200ms ease-out;
+        }
+        .tab-slide-enter-from {
+          transform: translateX(16px);
+          opacity: 0;
+        }
+        .tab-slide-leave-to {
+          transform: translateX(-16px);
+          opacity: 0;
+        }
+
+        /* Height-animated wrapper around the settings tab panels.
+           height is driven imperatively by Vue hooks (old to new px)
+           and falls back to auto when idle. */
+        .tab-wrapper {
+          overflow: hidden;
+          transition: height 300ms cubic-bezier(0.22, 1, 0.36, 1);
+          will-change: height;
+        }
+
+        /* Shared frosted-glass surface for ALL modals — tinted by theme color.
+           Alias .settings-glass kept for back-compat. */
+        .modal-glass,
+        .settings-glass {
+          background:
+            radial-gradient(
+              120% 80% at 0% 0%,
+              rgba(var(--primary-rgb), 0.16),
+              transparent 55%
+            ),
+            radial-gradient(
+              120% 80% at 100% 100%,
+              rgba(var(--accent-rgb), 0.12),
+              transparent 60%
+            ),
+            linear-gradient(
+              to bottom,
+              rgba(18, 19, 28, 0.78),
+              rgba(10, 11, 16, 0.9)
+            );
+          -webkit-backdrop-filter: blur(28px) saturate(160%);
+          backdrop-filter: blur(28px) saturate(160%);
+          border: 1px solid rgba(var(--primary-rgb), 0.2);
+          box-shadow:
+            0 30px 80px -20px rgba(0, 0, 0, 0.75),
+            0 8px 24px -12px rgba(0, 0, 0, 0.5),
+            0 0 0 1px rgba(var(--primary-rgb), 0.05),
+            inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+        }
+
+        /* Settings tab strip — theme-aware pill and active state */
+        .settings-tabs {
+          background: rgba(var(--primary-rgb), 0.06);
+          border: 1px solid rgba(var(--primary-rgb), 0.1);
+        }
+        .settings-tab-active {
+          background: linear-gradient(
+            to bottom,
+            rgba(var(--primary-rgb), 0.35),
+            rgba(var(--primary-rgb), 0.2)
+          );
+          color: #fff;
+          box-shadow:
+            0 1px 0 0 rgba(255, 255, 255, 0.1) inset,
+            0 0 0 1px rgba(var(--primary-rgb), 0.4);
+        }
       `,
     },
   ],

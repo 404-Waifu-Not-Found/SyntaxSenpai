@@ -46,8 +46,13 @@ const PROVIDER_PREFERENCES_KEY = 'syntax-senpai-provider-preferences'
 const API_TELEMETRY_HISTORY_KEY = 'syntax-senpai-api-telemetry-history'
 const API_SPIKE_THRESHOLD_STORAGE_KEY = 'syntax-senpai-api-spike-threshold-ms'
 const MAX_TOOL_ITERATIONS_STORAGE_KEY = 'syntax-senpai-max-tool-iterations'
+const TEMPERATURE_STORAGE_KEY = 'syntax-senpai-temperature'
+const MAX_RESPONSE_TOKENS_STORAGE_KEY = 'syntax-senpai-max-response-tokens'
+const CUSTOM_INSTRUCTIONS_STORAGE_KEY = 'syntax-senpai-custom-instructions'
 const DEFAULT_API_SPIKE_THRESHOLD_MS = 5000
 const DEFAULT_MAX_TOOL_ITERATIONS = 12
+const DEFAULT_TEMPERATURE = 0.7
+const DEFAULT_MAX_RESPONSE_TOKENS = 4096
 const API_TELEMETRY_HISTORY_LIMIT = 48
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
@@ -152,6 +157,12 @@ Execution rules:
 - When you call stop_response, write final_message entirely in character.`
 }
 
+function buildCustomInstructionsBlock(instructions: string): string {
+  const trimmed = instructions.trim()
+  if (!trimmed) return ''
+  return `\n\n[User Custom Instructions]\nThe user has provided these personal preferences. Respect them unless they conflict with safety rules:\n${trimmed}`
+}
+
 function buildAffectionPrompt(affection: number, waifuName: string): string {
   return `\n\n[好感度 System — Affection Meter]
 Your current 好感度 (affection) toward this user is: ${affection}/100
@@ -234,6 +245,26 @@ function readStoredNumber(key: string, fallback: number, min: number, max: numbe
     const parsed = Number.parseInt(String(raw ?? ''), 10)
     if (!Number.isFinite(parsed)) return fallback
     return Math.max(min, Math.min(max, parsed))
+  } catch {
+    return fallback
+  }
+}
+
+function readStoredFloat(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const raw = localStorage.getItem(key)
+    const parsed = Number.parseFloat(String(raw ?? ''))
+    if (!Number.isFinite(parsed)) return fallback
+    return Math.max(min, Math.min(max, parsed))
+  } catch {
+    return fallback
+  }
+}
+
+function readStoredString(key: string, fallback: string): string {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ?? fallback
   } catch {
     return fallback
   }
@@ -340,6 +371,22 @@ export const useChatStore = defineStore('chat', () => {
     250,
     60000,
   ))
+  const temperature = ref(readStoredFloat(
+    TEMPERATURE_STORAGE_KEY,
+    DEFAULT_TEMPERATURE,
+    0,
+    2,
+  ))
+  const maxResponseTokens = ref(readStoredNumber(
+    MAX_RESPONSE_TOKENS_STORAGE_KEY,
+    DEFAULT_MAX_RESPONSE_TOKENS,
+    256,
+    16384,
+  ))
+  const customInstructions = ref(readStoredString(
+    CUSTOM_INSTRUCTIONS_STORAGE_KEY,
+    '',
+  ))
 
   function setAgentMode(mode: AgentMode) {
     agentMode.value = mode
@@ -377,6 +424,25 @@ export const useChatStore = defineStore('chat', () => {
           message: '',
           triggeredAt: null,
         }
+  }
+
+  function setTemperature(value: number) {
+    const next = Math.max(0, Math.min(2, Number.isFinite(value) ? value : DEFAULT_TEMPERATURE))
+    const rounded = Math.round(next * 100) / 100
+    temperature.value = rounded
+    localStorage.setItem(TEMPERATURE_STORAGE_KEY, String(rounded))
+  }
+
+  function setMaxResponseTokens(value: number) {
+    const next = Math.max(256, Math.min(16384, Math.round(value)))
+    maxResponseTokens.value = next
+    localStorage.setItem(MAX_RESPONSE_TOKENS_STORAGE_KEY, String(next))
+  }
+
+  function setCustomInstructions(value: string) {
+    const trimmed = (value ?? '').slice(0, 4000)
+    customInstructions.value = trimmed
+    localStorage.setItem(CUSTOM_INSTRUCTIONS_STORAGE_KEY, trimmed)
   }
 
   const selectedWaifu = computed(() =>
@@ -867,6 +933,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           systemPrompt += buildAffectionPrompt(affectionValue, waifu.displayName || 'Waifu')
           systemPrompt += buildApiTelemetryPrompt()
           systemPrompt += buildGroupChatPromptBlock(waifu, waifus, pendingTasks.get(waifu.id) || [], round)
+          systemPrompt += buildCustomInstructionsBlock(customInstructions.value)
 
           if (hasTools) {
             if (systemInfo && systemInfo.homedir) {
@@ -881,6 +948,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               : ({ type: selectedProvider.value as any } as any),
             model,
             systemPrompt,
+            temperature: temperature.value,
+            maxTokens: maxResponseTokens.value,
           })
 
           let finalContent = ''
@@ -899,6 +968,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                 messages: aiHistory,
                 tools,
                 systemPrompt,
+                temperature: temperature.value,
+                maxTokens: maxResponseTokens.value,
               })
               apiRoundTrips.push(performance.now() - requestStartedAt)
 
@@ -1243,6 +1314,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       // Let the waifu know how fast the last API reply was.
       systemPrompt += buildApiTelemetryPrompt()
 
+      systemPrompt += buildCustomInstructionsBlock(customInstructions.value)
+
       const tools = getToolsForMode(agentMode.value)
       const hasTools = tools.length > 0
 
@@ -1264,6 +1337,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           : ({ type: selectedProvider.value as any } as any),
         model,
         systemPrompt,
+        temperature: temperature.value,
+        maxTokens: maxResponseTokens.value,
       })
 
       if (hasTools) {
@@ -1288,6 +1363,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             messages: aiHistory,
             tools,
             systemPrompt,
+            temperature: temperature.value,
+            maxTokens: maxResponseTokens.value,
           })
           apiRoundTrips.push(performance.now() - requestStartedAt)
 
@@ -1679,6 +1756,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     apiTelemetryAlert,
     maxToolIterations,
     apiSpikeThresholdMs,
+    temperature,
+    maxResponseTokens,
+    customInstructions,
     userMemories,
     sidebarFilter,
     isGroupChat,
@@ -1691,6 +1771,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     setAgentMode,
     setMaxToolIterations,
     setApiSpikeThresholdMs,
+    setTemperature,
+    setMaxResponseTokens,
+    setCustomInstructions,
     newChat,
     setGroupChat,
     toggleGroupWaifu,

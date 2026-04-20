@@ -18,9 +18,20 @@ export interface RainbowSettings {
   lightness: number   // 0-100 (lower = darker, higher = lighter)
 }
 
+export type UIDensity = 'cozy' | 'compact'
+export type RadiusScale = 'sharp' | 'default' | 'rounded'
+
+export interface UISettings {
+  density: UIDensity
+  radius: RadiusScale
+  blur: number    // 0-40px backdrop-filter blur on glass surfaces
+  petals: boolean // drifting sakura petals overlay
+}
+
 export interface ThemeConfig {
   colors: ThemeColors
   rainbow: RainbowSettings
+  ui: UISettings
 }
 
 const STORAGE_KEY = 'syntax-senpai-theme'
@@ -41,6 +52,12 @@ const DEFAULT_THEME: ThemeConfig = {
     speed: 5,
     saturation: 70,
     lightness: 55,
+  },
+  ui: {
+    density: 'cozy',
+    radius: 'default',
+    blur: 28,
+    petals: false,
   },
 }
 
@@ -85,10 +102,21 @@ function loadTheme(): ThemeConfig {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) {
       const parsed = JSON.parse(saved)
-      return { ...DEFAULT_THEME, ...parsed, colors: { ...DEFAULT_THEME.colors, ...parsed.colors }, rainbow: { ...DEFAULT_THEME.rainbow, ...parsed.rainbow } }
+      return {
+        ...DEFAULT_THEME,
+        ...parsed,
+        colors: { ...DEFAULT_THEME.colors, ...parsed.colors },
+        rainbow: { ...DEFAULT_THEME.rainbow, ...parsed.rainbow },
+        ui: { ...DEFAULT_THEME.ui, ...(parsed.ui || {}) },
+      }
     }
   } catch { /* ignore */ }
-  return { ...DEFAULT_THEME, colors: { ...DEFAULT_THEME.colors }, rainbow: { ...DEFAULT_THEME.rainbow } }
+  return {
+    ...DEFAULT_THEME,
+    colors: { ...DEFAULT_THEME.colors },
+    rainbow: { ...DEFAULT_THEME.rainbow },
+    ui: { ...DEFAULT_THEME.ui },
+  }
 }
 
 function saveTheme() {
@@ -118,6 +146,27 @@ function applyThemeToDOM(colors: ThemeColors) {
   root.style.setProperty('--primary-700', adjustBrightness(colors.primary, -20))
 }
 
+function applyUIToDOM(ui: UISettings) {
+  const root = document.documentElement
+  // Density scales paddings via --ui-density-scale (1 = cozy, 0.7 = compact).
+  root.style.setProperty('--ui-density-scale', ui.density === 'compact' ? '0.72' : '1')
+  root.dataset.density = ui.density
+
+  // Radius scale multiplies border-radius via the --radius-scale factor.
+  const radiusMap: Record<RadiusScale, string> = {
+    sharp: '0.35',
+    default: '1',
+    rounded: '1.6',
+  }
+  root.style.setProperty('--radius-scale', radiusMap[ui.radius])
+  root.dataset.radius = ui.radius
+
+  const blurClamped = Math.max(0, Math.min(40, ui.blur))
+  root.style.setProperty('--blur-intensity', `${blurClamped}px`)
+
+  root.dataset.petals = ui.petals ? 'on' : 'off'
+}
+
 function startRainbow() {
   if (rainbowFrame) return
   const tick = () => {
@@ -126,9 +175,20 @@ function startRainbow() {
 
     rainbowHue = (rainbowHue + rb.speed * 0.3) % 360
     currentRainbowHue.value = rainbowHue
+
+    // Vivid hues for interactive/accent surfaces.
     const primary = hslToHex(rainbowHue, rb.saturation, rb.lightness)
     const accent = hslToHex((rainbowHue + 120) % 360, rb.saturation, rb.lightness)
     const userBubble = hslToHex(rainbowHue, rb.saturation, Math.max(rb.lightness - 15, 10))
+
+    // Surface tints — low saturation, low lightness so text stays readable.
+    // Saturation scales with the user's slider so "desaturated rainbow" still feels rainbow-y.
+    const surfaceSat = Math.max(12, Math.min(40, rb.saturation * 0.4))
+    const bg = hslToHex(rainbowHue, surfaceSat, 5)
+    const surface = hslToHex(rainbowHue, surfaceSat, 8)
+    const surface2 = hslToHex((rainbowHue + 200) % 360, surfaceSat, 4)
+    const assistantBubble = hslToHex((rainbowHue + 60) % 360, surfaceSat * 0.9, 11)
+    const fg = hslToHex(rainbowHue, Math.min(18, surfaceSat * 0.5), 96)
 
     const root = document.documentElement
     root.style.setProperty('--primary', primary)
@@ -136,6 +196,11 @@ function startRainbow() {
     root.style.setProperty('--accent', accent)
     root.style.setProperty('--accent-rgb', (() => { const { r, g, b } = hexToRgb(accent); return `${r},${g},${b}` })())
     root.style.setProperty('--user-bubble', userBubble)
+    root.style.setProperty('--bg', bg)
+    root.style.setProperty('--surface', surface)
+    root.style.setProperty('--surface-2', surface2)
+    root.style.setProperty('--assistant-bubble', assistantBubble)
+    root.style.setProperty('--fg', fg)
     root.style.setProperty('--primary-100', adjustBrightness(primary, 60))
     root.style.setProperty('--primary-200', adjustBrightness(primary, 40))
     root.style.setProperty('--primary-300', adjustBrightness(primary, 25))
@@ -159,6 +224,7 @@ function stopRainbow() {
 export function useTheme() {
   onMounted(() => {
     applyThemeToDOM(theme.value.colors)
+    applyUIToDOM(theme.value.ui)
     if (theme.value.rainbow.enabled) startRainbow()
   })
 
@@ -183,11 +249,18 @@ export function useTheme() {
     }
   }, { deep: true })
 
+  watch(() => theme.value.ui, (ui) => {
+    applyUIToDOM(ui)
+    saveTheme()
+  }, { deep: true })
+
   function resetTheme() {
     theme.value.colors = { ...DEFAULT_THEME.colors }
     theme.value.rainbow = { ...DEFAULT_THEME.rainbow }
+    theme.value.ui = { ...DEFAULT_THEME.ui }
     stopRainbow()
     applyThemeToDOM(theme.value.colors)
+    applyUIToDOM(theme.value.ui)
     saveTheme()
   }
 
@@ -199,6 +272,10 @@ export function useTheme() {
     Object.assign(theme.value.rainbow, updates)
   }
 
+  function setUI(updates: Partial<UISettings>) {
+    Object.assign(theme.value.ui, updates)
+  }
+
   return {
     theme,
     currentRainbowHue,
@@ -206,6 +283,7 @@ export function useTheme() {
     resetTheme,
     setColor,
     setRainbow,
+    setUI,
     DEFAULT_THEME,
   }
 }

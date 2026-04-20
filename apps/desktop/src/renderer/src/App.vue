@@ -10,10 +10,11 @@ import AppAvatar from './components/AppAvatar.vue'
 import TypingDots from './components/TypingDots.vue'
 import MessageSkeleton from './components/MessageSkeleton.vue'
 import QrPairModal from './components/QrPairModal.vue'
+import SakuraPetals from './components/SakuraPetals.vue'
 
 const store = useChatStore()
 const { invoke, on } = useIpc()
-const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, DEFAULT_THEME } = useTheme()
+const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, setUI, DEFAULT_THEME } = useTheme()
 const { t, locale, setLocale, localeOptions } = useI18n()
 
 const rainbowToggleBg = computed(() => {
@@ -26,15 +27,16 @@ const rainbowToggleBg = computed(() => {
   const c3 = hslToHex((h + 120) % 360, s, l)
   return `linear-gradient(to right, ${c1}, ${c2}, ${c3})`
 })
-type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'mobile'
+type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'mobile'
 const settingsTab = ref<SettingsTabId>('general')
-const settingsTabs: Array<{ id: SettingsTabId; label: string }> = [
-  { id: 'general', label: 'General' },
-  { id: 'ai', label: 'AI' },
-  { id: 'data', label: 'Data' },
-  { id: 'metrics', label: 'Metrics' },
-  { id: 'theme', label: 'Theme' },
-  { id: 'mobile', label: 'Mobile' },
+const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = [
+  { id: 'general', label: 'General', icon: '⚙️' },
+  { id: 'ai', label: 'AI', icon: '🤖' },
+  { id: 'data', label: 'Data', icon: '💾' },
+  { id: 'metrics', label: 'Metrics', icon: '📊' },
+  { id: 'theme', label: 'Theme', icon: '🎨' },
+  { id: 'interface', label: 'Interface', icon: '✨' },
+  { id: 'mobile', label: 'Mobile', icon: '📱' },
 ]
 
 // Height-animate the settings tab body on switch. Capture the outgoing
@@ -214,7 +216,20 @@ const providers = providerOrder
   .filter(Boolean)
   .map((provider) => ({ value: provider!.id, label: provider!.displayName }))
 
-const colorPresets = [
+const colorPresets: Array<{
+  id: string
+  nameKey: string
+  colors: string[]
+  theme: Record<string, string>
+  rainbow?: boolean
+}> = [
+  {
+    id: 'rainbow',
+    nameKey: 'preset.rainbow',
+    colors: ['#ff0080', '#ffea00', '#00c2ff'],
+    theme: { bg: '#0f0f0f', surface: '#111216', surface2: '#0d0f13', fg: '#ffffff', primary: '#6366f1', accent: '#ec4899', userBubble: '#4f46e5', assistantBubble: '#1a1a2e' },
+    rainbow: true,
+  },
   {
     id: 'default',
     nameKey: 'preset.default',
@@ -275,13 +290,55 @@ const colorPresets = [
     colors: ['#3b82f6', '#f59e0b', '#f8fafc'],
     theme: { bg: '#ffffff', surface: '#ffffff', surface2: '#f8fafc', fg: '#1f2937', primary: '#3b82f6', accent: '#f59e0b', userBubble: '#2563eb', assistantBubble: '#ffffff' },
   },
+  {
+    id: 'cherry-blossom-dark',
+    nameKey: 'preset.cherryBlossomDark',
+    colors: ['#f472b6', '#fbcfe8', '#1a0f18'],
+    theme: { bg: '#1a0f18', surface: '#231424', surface2: '#140a14', fg: '#fde3ef', primary: '#f472b6', accent: '#f9a8d4', userBubble: '#be185d', assistantBubble: '#2a1726' },
+  },
+  {
+    id: 'dracula',
+    nameKey: 'preset.dracula',
+    colors: ['#bd93f9', '#ff79c6', '#282a36'],
+    theme: { bg: '#282a36', surface: '#2f3142', surface2: '#21222c', fg: '#f8f8f2', primary: '#bd93f9', accent: '#ff79c6', userBubble: '#6272a4', assistantBubble: '#343746' },
+  },
+  {
+    id: 'nord',
+    nameKey: 'preset.nord',
+    colors: ['#88c0d0', '#81a1c1', '#2e3440'],
+    theme: { bg: '#2e3440', surface: '#3b4252', surface2: '#242933', fg: '#eceff4', primary: '#88c0d0', accent: '#81a1c1', userBubble: '#5e81ac', assistantBubble: '#434c5e' },
+  },
+  {
+    id: 'tokyo-night',
+    nameKey: 'preset.tokyoNight',
+    colors: ['#7aa2f7', '#bb9af7', '#1a1b26'],
+    theme: { bg: '#1a1b26', surface: '#24283b', surface2: '#16161e', fg: '#c0caf5', primary: '#7aa2f7', accent: '#bb9af7', userBubble: '#3d59a1', assistantBubble: '#292e42' },
+  },
+  {
+    id: 'catppuccin',
+    nameKey: 'preset.catppuccin',
+    colors: ['#cba6f7', '#f5c2e7', '#1e1e2e'],
+    theme: { bg: '#1e1e2e', surface: '#302d41', surface2: '#181825', fg: '#cdd6f4', primary: '#cba6f7', accent: '#f5c2e7', userBubble: '#7f849c', assistantBubble: '#313244' },
+  },
+  {
+    id: 'synthwave',
+    nameKey: 'preset.synthwave',
+    colors: ['#f92aad', '#ff8b39', '#130c25'],
+    theme: { bg: '#130c25', surface: '#1d1141', surface2: '#0c0722', fg: '#f7f7ff', primary: '#f92aad', accent: '#ff8b39', userBubble: '#c71585', assistantBubble: '#241548' },
+  },
+  {
+    id: 'matrix',
+    nameKey: 'preset.matrix',
+    colors: ['#22c55e', '#4ade80', '#050a05'],
+    theme: { bg: '#050a05', surface: '#0a150a', surface2: '#040804', fg: '#bbf7d0', primary: '#22c55e', accent: '#4ade80', userBubble: '#15803d', assistantBubble: '#0f1a0f' },
+  },
 ]
 
 function applyPreset(preset: typeof colorPresets[0]) {
-  setRainbow({ enabled: false })
   Object.entries(preset.theme).forEach(([key, value]) => {
     setColor(key as any, value)
   })
+  setRainbow({ enabled: !!preset.rainbow })
 }
 
 const sidebarOpen = ref(true)
@@ -747,6 +804,9 @@ async function handleExportData() {
         apiTelemetryHistory: readLocalStorageJson(API_TELEMETRY_HISTORY_STORAGE_KEY),
         maxToolIterations: store.maxToolIterations,
         apiSpikeThresholdMs: store.apiSpikeThresholdMs,
+        temperature: store.temperature,
+        maxResponseTokens: store.maxResponseTokens,
+        customInstructions: store.customInstructions,
       },
       data: {
         selectedWaifuId: store.selectedWaifuId,
@@ -812,6 +872,10 @@ async function handleImportData() {
           ...DEFAULT_THEME.rainbow,
           ...(payload.settings.theme.rainbow || {}),
         },
+        ui: {
+          ...DEFAULT_THEME.ui,
+          ...(payload.settings.theme.ui || {}),
+        },
       }
       localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(theme.value))
     }
@@ -837,6 +901,15 @@ async function handleImportData() {
     }
     if (typeof payload?.settings?.apiSpikeThresholdMs === 'number') {
       store.setApiSpikeThresholdMs(payload.settings.apiSpikeThresholdMs)
+    }
+    if (typeof payload?.settings?.temperature === 'number') {
+      store.setTemperature(payload.settings.temperature)
+    }
+    if (typeof payload?.settings?.maxResponseTokens === 'number') {
+      store.setMaxResponseTokens(payload.settings.maxResponseTokens)
+    }
+    if (typeof payload?.settings?.customInstructions === 'string') {
+      store.setCustomInstructions(payload.settings.customInstructions)
     }
     if (payload?.settings?.affection) {
       localStorage.setItem('syntax-senpai-affection', JSON.stringify(payload.settings.affection))
@@ -915,6 +988,11 @@ async function handleImportData() {
 </script>
 
 <template>
+  <!-- Sakura petal overlay (fixed, behind UI content, toggled via theme.ui.petals) -->
+  <Teleport to="body">
+    <SakuraPetals v-if="theme.ui.petals" />
+  </Teleport>
+
   <!-- Toast Notification -->
   <Teleport to="body">
     <Transition
@@ -1016,32 +1094,32 @@ async function handleImportData() {
         @click.self="showSettings = false"
       >
           <div
-            class="settings-glass relative rounded-t-3xl sm:rounded-3xl max-w-lg w-full mx-0 sm:mx-4 max-h-[88vh] overflow-hidden flex flex-col"
+            class="settings-glass relative rounded-t-3xl sm:rounded-3xl max-w-6xl w-full mx-0 sm:mx-4 max-h-[92vh] overflow-hidden flex"
           >
-            <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent" />
-            <div class="pointer-events-none absolute inset-0 rounded-t-3xl sm:rounded-3xl ring-1 ring-inset ring-white/5" />
-            <div class="relative overflow-y-auto p-6">
-          <h2 class="text-xl font-bold text-white mb-4">
-            {{ t('settings.title') }}
-          </h2>
+            <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent z-10" />
+            <div class="pointer-events-none absolute inset-0 rounded-t-3xl sm:rounded-3xl ring-1 ring-inset ring-white/5 z-10" />
 
-          <!-- Tabs -->
-          <div class="flex flex-nowrap gap-0.5 mb-5 p-1 rounded-lg settings-tabs">
-            <button
-              v-for="tab in settingsTabs"
-              :key="tab.id"
-              :class="[
-                'flex-1 basis-0 min-w-0 text-[11px] font-semibold py-2 px-1 rounded-md transition-colors duration-150 whitespace-nowrap',
-                settingsTab === tab.id
-                  ? 'settings-tab-active'
-                  : 'text-neutral-400 hover:text-neutral-200',
-              ]"
-              @click="tab.id === 'mobile' ? (settingsTab = 'mobile', checkMobilePairingStatus()) : (settingsTab = tab.id)"
-            >
-              {{ tab.label }}
-            </button>
-          </div>
+            <!-- Sidebar nav -->
+            <aside class="w-56 shrink-0 border-r border-white/6 bg-black/20 flex flex-col relative">
+              <div class="px-5 pt-5 pb-3 border-b border-white/5">
+                <h2 class="text-base font-bold text-white">{{ t('settings.title') }}</h2>
+              </div>
+              <nav class="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
+                <button
+                  v-for="tab in settingsTabs"
+                  :key="tab.id"
+                  :class="['settings-nav-btn', settingsTab === tab.id && 'settings-nav-btn-active']"
+                  @click="tab.id === 'mobile' ? (settingsTab = 'mobile', checkMobilePairingStatus()) : (settingsTab = tab.id)"
+                >
+                  <span class="text-base leading-none shrink-0">{{ tab.icon }}</span>
+                  <span class="truncate">{{ tab.label }}</span>
+                </button>
+              </nav>
+            </aside>
 
+            <!-- Content pane -->
+            <main class="flex-1 min-w-0 relative overflow-y-auto">
+              <div class="p-5">
           <div
             ref="tabInnerRef"
             class="tab-wrapper"
@@ -1081,7 +1159,7 @@ async function handleImportData() {
               </select>
             </div>
 
-            <div class="mb-4 rounded-xl border border-neutral-700/40 bg-neutral-800/30 p-4">
+            <div class="settings-card">
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <div class="text-sm font-semibold text-neutral-200">{{ t('settings.groupChat') }}</div>
@@ -1151,11 +1229,65 @@ async function handleImportData() {
                 class="input-field"
               >
             </div>
+
+            <div class="settings-card">
+              <div class="flex items-center justify-between mb-1">
+                <div>
+                  <h3 class="text-sm font-bold text-white">{{ t('agent.temperature') }}</h3>
+                  <p class="text-xs text-neutral-400">{{ t('agent.temperatureDesc') }}</p>
+                </div>
+                <span class="text-xs text-neutral-300 font-mono">{{ store.temperature.toFixed(2) }}</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="2"
+                step="0.05"
+                :value="store.temperature"
+                class="w-full accent-primary-500 mt-2"
+                @input="store.setTemperature(Number(($event.target as HTMLInputElement).value))"
+              >
+            </div>
+
+            <div class="settings-card">
+              <div class="flex items-center justify-between mb-1">
+                <div>
+                  <h3 class="text-sm font-bold text-white">{{ t('agent.maxResponseTokens') }}</h3>
+                  <p class="text-xs text-neutral-400">{{ t('agent.maxResponseTokensDesc') }}</p>
+                </div>
+                <span class="text-xs text-neutral-300 font-mono">{{ store.maxResponseTokens }}</span>
+              </div>
+              <input
+                type="range"
+                min="256"
+                max="16384"
+                step="128"
+                :value="store.maxResponseTokens"
+                class="w-full accent-primary-500 mt-2"
+                @input="store.setMaxResponseTokens(Number(($event.target as HTMLInputElement).value))"
+              >
+            </div>
+
+            <div class="settings-card">
+              <h3 class="text-sm font-bold text-white">{{ t('agent.customInstructions') }}</h3>
+              <p class="text-xs text-neutral-400 mb-2">{{ t('agent.customInstructionsDesc') }}</p>
+              <textarea
+                :value="store.customInstructions"
+                :placeholder="t('agent.customInstructionsPlaceholder')"
+                class="input-field font-mono text-xs resize-y"
+                rows="4"
+                maxlength="4000"
+                @input="store.setCustomInstructions(($event.target as HTMLTextAreaElement).value)"
+              />
+              <div class="mt-1 text-[10px] text-neutral-500 text-right">
+                {{ store.customInstructions.length }} / 4000
+              </div>
+            </div>
           </div>
 
           <!-- Data Tab: export / import -->
           <div v-if="settingsTab === 'data'">
-            <div class="mb-6 rounded-xl border border-neutral-700/40 bg-neutral-800/30 p-4">
+            <div class="settings-card">
               <div class="mb-3">
                 <h3 class="text-sm font-bold text-white">{{ t('settings.exportData') }}</h3>
                 <p class="text-xs text-neutral-400">
@@ -1178,7 +1310,7 @@ async function handleImportData() {
 
           <!-- Metrics Tab: telemetry -->
           <div v-if="settingsTab === 'metrics'">
-            <div class="mb-6 rounded-xl border border-neutral-700/40 bg-neutral-800/30 p-4">
+            <div class="settings-card">
               <div class="mb-3">
                 <div class="flex items-center justify-between gap-3">
                   <div>
@@ -1309,108 +1441,98 @@ async function handleImportData() {
           <!-- Theme Tab -->
           <div v-if="settingsTab === 'theme'">
             <!-- Color Presets -->
-            <div class="mb-6 p-4 rounded-xl border border-neutral-700/40 bg-neutral-800/30">
+            <div class="settings-card">
               <div class="mb-3">
                 <h3 class="text-sm font-bold text-white">{{ t('theme.presets') }}</h3>
                 <p class="text-xs text-neutral-400">{{ t('theme.presetsDesc') }}</p>
               </div>
 
-              <div class="grid grid-cols-2 gap-3">
+              <div class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
                 <button
                   v-for="preset in colorPresets"
                   :key="preset.id"
-                  class="rounded-xl border border-neutral-700/40 bg-neutral-900/60 p-3 text-left transition-all duration-150 hover:border-neutral-500/50 hover:bg-neutral-800/70"
+                  :class="[
+                    'rounded-lg border p-1.5 text-left transition-colors duration-150',
+                    (preset.rainbow ? theme.rainbow.enabled : !theme.rainbow.enabled && theme.colors.primary === preset.theme.primary && theme.colors.bg === preset.theme.bg)
+                      ? 'border-primary-500/60 bg-primary-500/10'
+                      : 'border-neutral-700/30 bg-neutral-900/40 hover:border-primary-500/50 hover:bg-neutral-800/60',
+                  ]"
+                  :title="preset.rainbow ? t('preset.rainbow') : `${preset.theme.primary} / ${preset.theme.accent}`"
                   @click="applyPreset(preset)"
                 >
-                  <div class="flex items-center gap-2 mb-2">
-                    <div
-                      v-for="color in preset.colors"
-                      :key="color"
-                      class="h-4 w-4 rounded-full border border-white/10 shadow-sm"
-                      :style="{ backgroundColor: color }"
-                    />
-                  </div>
-                  <div class="text-sm font-semibold text-neutral-100">
+                  <div
+                    class="h-9 w-full rounded-md mb-1.5 border border-white/5"
+                    :style="{
+                      background: preset.rainbow
+                        ? 'linear-gradient(135deg,#ff0080,#ff8a00,#ffea00,#00c853,#00c2ff,#7928ca,#ff0080)'
+                        : `linear-gradient(135deg, ${preset.colors[0]}, ${preset.colors[1]} 55%, ${preset.colors[2]})`,
+                    }"
+                  />
+                  <div class="text-[11px] font-semibold text-neutral-100 truncate leading-tight">
                     {{ t(preset.nameKey) }}
-                  </div>
-                  <div class="mt-1 text-[10px] font-mono uppercase text-neutral-500">
-                    {{ preset.theme.primary }} / {{ preset.theme.accent }}
                   </div>
                 </button>
               </div>
             </div>
 
-            <!-- Rainbow Mode -->
-            <div class="mb-6 p-4 rounded-xl border border-neutral-700/40 bg-neutral-800/30">
-              <div class="flex items-center justify-between mb-3">
-                <div>
-                  <h3 class="text-sm font-bold text-white">{{ t('theme.rainbowMode') }}</h3>
-                  <p class="text-xs text-neutral-400">{{ t('theme.rainbowDesc') }}</p>
+            <!-- Rainbow tuning — only visible when the Rainbow theme is active -->
+            <Transition
+              enter-active-class="transition-all duration-200"
+              leave-active-class="transition-all duration-150"
+              enter-from-class="opacity-0 -translate-y-2"
+              leave-to-class="opacity-0 -translate-y-2"
+            >
+              <div v-if="theme.rainbow.enabled" class="settings-card">
+                <div class="mb-2 flex items-center justify-between">
+                  <h3 class="settings-section-title">{{ t('theme.rainbowMode') }}</h3>
+                  <div class="h-2 w-16 rounded-full" :style="{ background: rainbowToggleBg }" />
                 </div>
-                <button
-                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
-                  :style="{ background: rainbowToggleBg }"
-                  @click="setRainbow({ enabled: !theme.rainbow.enabled })"
-                >
-                  <span
-                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
-                    :style="{ transform: theme.rainbow.enabled ? 'translateX(20px)' : 'translateX(0)' }"
-                  />
-                </button>
-              </div>
-
-              <Transition
-                enter-active-class="transition-all duration-200"
-                leave-active-class="transition-all duration-150"
-                enter-from-class="opacity-0 -translate-y-2"
-                leave-to-class="opacity-0 -translate-y-2"
-              >
-                <div v-if="theme.rainbow.enabled" class="space-y-3 mt-3 pt-3 border-t border-neutral-700/40">
+                <div class="grid grid-cols-3 gap-3">
                   <div>
                     <div class="flex items-center justify-between mb-1">
-                      <label class="text-xs font-semibold text-neutral-300">{{ t('theme.speed') }}</label>
-                      <span class="text-xs text-neutral-500">{{ theme.rainbow.speed }}</span>
+                      <label class="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">{{ t('theme.speed') }}</label>
+                      <span class="text-[10px] text-neutral-500 font-mono">{{ theme.rainbow.speed }}</span>
                     </div>
                     <input
                       type="range"
                       min="1"
                       max="10"
                       :value="theme.rainbow.speed"
-                      class="w-full accent-purple-500"
+                      class="w-full accent-primary-500"
                       @input="setRainbow({ speed: +($event.target as HTMLInputElement).value })"
                     >
                   </div>
                   <div>
                     <div class="flex items-center justify-between mb-1">
-                      <label class="text-xs font-semibold text-neutral-300">{{ t('theme.saturation') }}</label>
-                      <span class="text-xs text-neutral-500">{{ theme.rainbow.saturation }}%</span>
+                      <label class="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">{{ t('theme.saturation') }}</label>
+                      <span class="text-[10px] text-neutral-500 font-mono">{{ theme.rainbow.saturation }}%</span>
                     </div>
                     <input
                       type="range"
                       min="10"
                       max="100"
                       :value="theme.rainbow.saturation"
-                      class="w-full accent-purple-500"
+                      class="w-full accent-primary-500"
                       @input="setRainbow({ saturation: +($event.target as HTMLInputElement).value })"
                     >
                   </div>
                   <div>
                     <div class="flex items-center justify-between mb-1">
-                      <label class="text-xs font-semibold text-neutral-300">{{ t('theme.lightness') }}</label>
-                      <span class="text-xs text-neutral-500">{{ theme.rainbow.lightness }}%</span>
+                      <label class="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">{{ t('theme.lightness') }}</label>
+                      <span class="text-[10px] text-neutral-500 font-mono">{{ theme.rainbow.lightness }}%</span>
                     </div>
                     <input
                       type="range"
                       min="10"
                       max="90"
                       :value="theme.rainbow.lightness"
-                      class="w-full accent-purple-500"
+                      class="w-full accent-primary-500"
                       @input="setRainbow({ lightness: +($event.target as HTMLInputElement).value })"
                     >
                   </div>
                 </div>
-              </Transition>
-            </div>
+              </div>
+            </Transition>
 
             <!-- Color Pickers -->
             <div class="space-y-3 mb-6">
@@ -1543,10 +1665,105 @@ async function handleImportData() {
             </div>
           </div>
 
+          <!-- Interface Tab: density, radius, blur, petals -->
+          <div v-if="settingsTab === 'interface'">
+            <div class="settings-card">
+              <h3 class="text-sm font-bold text-white">{{ t('interface.density') }}</h3>
+              <p class="text-xs text-neutral-400 mb-3">{{ t('interface.densityDesc') }}</p>
+              <div class="grid grid-cols-2 gap-2">
+                <button
+                  v-for="opt in [
+                    { value: 'cozy', label: t('interface.densityCozy') },
+                    { value: 'compact', label: t('interface.densityCompact') },
+                  ]"
+                  :key="opt.value"
+                  :class="[
+                    'rounded-lg py-2 text-xs font-semibold transition-colors border',
+                    theme.ui.density === opt.value
+                      ? 'bg-primary-500/25 border-primary-500/50 text-white'
+                      : 'bg-neutral-900/50 border-neutral-700/40 text-neutral-300 hover:bg-neutral-800/70',
+                  ]"
+                  @click="setUI({ density: opt.value as any })"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <h3 class="text-sm font-bold text-white">{{ t('interface.radius') }}</h3>
+              <p class="text-xs text-neutral-400 mb-3">{{ t('interface.radiusDesc') }}</p>
+              <div class="grid grid-cols-3 gap-2">
+                <button
+                  v-for="opt in [
+                    { value: 'sharp', label: t('interface.radiusSharp'), radius: '2px' },
+                    { value: 'default', label: t('interface.radiusDefault'), radius: '10px' },
+                    { value: 'rounded', label: t('interface.radiusRounded'), radius: '18px' },
+                  ]"
+                  :key="opt.value"
+                  :class="[
+                    'py-3 text-xs font-semibold transition-colors border',
+                    theme.ui.radius === opt.value
+                      ? 'bg-primary-500/25 border-primary-500/50 text-white'
+                      : 'bg-neutral-900/50 border-neutral-700/40 text-neutral-300 hover:bg-neutral-800/70',
+                  ]"
+                  :style="{ borderRadius: opt.radius }"
+                  @click="setUI({ radius: opt.value as any })"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <div class="flex items-center justify-between mb-1">
+                <h3 class="text-sm font-bold text-white">{{ t('interface.blur') }}</h3>
+                <span class="text-xs text-neutral-500 font-mono">{{ theme.ui.blur }}px</span>
+              </div>
+              <p class="text-xs text-neutral-400 mb-3">{{ t('interface.blurDesc') }}</p>
+              <input
+                type="range"
+                min="0"
+                max="40"
+                :value="theme.ui.blur"
+                class="w-full accent-primary-500"
+                @input="setUI({ blur: Number(($event.target as HTMLInputElement).value) })"
+              >
+            </div>
+
+            <div class="settings-card">
+              <div class="flex items-center justify-between mb-1">
+                <div>
+                  <h3 class="text-sm font-bold text-white">{{ t('interface.petals') }}</h3>
+                  <p class="text-xs text-neutral-400">{{ t('interface.petalsDesc') }}</p>
+                </div>
+                <button
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :style="{ background: theme.ui.petals ? 'linear-gradient(90deg,#f472b6,#f9a8d4)' : '#404040' }"
+                  @click="setUI({ petals: !theme.ui.petals })"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: theme.ui.petals ? 'translateX(20px)' : 'translateX(0)' }"
+                  />
+                </button>
+              </div>
+            </div>
+
+            <div class="flex gap-2">
+              <button class="btn-secondary flex-1" @click="resetTheme">
+                {{ t('theme.resetDefaults') }}
+              </button>
+              <button class="btn-primary flex-1" @click="showSettings = false">
+                {{ t('theme.done') }}
+              </button>
+            </div>
+          </div>
+
           <!-- Mobile Tab -->
           <div v-if="settingsTab === 'mobile'">
             <!-- Connection Status -->
-            <div class="mb-6 p-4 rounded-xl border border-neutral-700/40 bg-neutral-800/30">
+            <div class="settings-card">
               <h3 class="text-sm font-bold text-white mb-1">Desktop Connection</h3>
               <p class="text-xs text-neutral-400 mb-4">Pair your phone to use the chatbot remotely via your local network.</p>
 
@@ -1581,7 +1798,8 @@ async function handleImportData() {
           </div>
           </Transition>
           </div>
-            </div>
+              </div>
+            </main>
           </div>
       </div>
     </Transition>

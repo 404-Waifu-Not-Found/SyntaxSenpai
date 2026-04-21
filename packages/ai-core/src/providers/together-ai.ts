@@ -3,7 +3,7 @@
  */
 
 import type { ChatRequest, ChatResponse, StreamChunk, ToolCall } from "../types";
-import { BaseAIProvider, convertToOpenAIMessages } from "./base";
+import { BaseAIProvider, convertToOpenAIMessages, formatFetchError } from "./base";
 
 export class TogetherProvider extends BaseAIProvider {
   id = "together";
@@ -62,7 +62,7 @@ export class TogetherProvider extends BaseAIProvider {
       });
 
       if (!response.ok) {
-        throw new Error(`Together API error: ${response.statusText}`);
+        throw new Error(await formatFetchError("Together", response));
       }
 
       const data = await response.json();
@@ -119,7 +119,7 @@ export class TogetherProvider extends BaseAIProvider {
       });
 
       if (!response.ok) {
-        throw new Error(`Together API error: ${response.statusText}`);
+        throw new Error(await formatFetchError("Together", response));
       }
 
       if (!response.body) {

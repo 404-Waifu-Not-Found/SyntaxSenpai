@@ -283,6 +283,31 @@ export default defineConfig({
           --ui-density-scale: 1;
           --radius-scale: 1;
           --blur-intensity: 28px;
+          --rainbow-hue: 0;
+          --rainbow-saturation: 70%;
+          --rainbow-lightness: 55%;
+        }
+
+        /* Rainbow mode: a fullscreen overlay blended with mix-blend-mode: color
+           tints every pixel to the cycling hue while keeping original
+           luminosity. This is what makes every surface — including hardcoded
+           bg-neutral-* backgrounds — cycle, not just the themed elements. */
+        .rainbow-overlay {
+          pointer-events: none;
+          position: fixed;
+          inset: 0;
+          z-index: 2147483646; /* above modals, below toast */
+          mix-blend-mode: color;
+          background: hsl(
+            var(--rainbow-hue, 0),
+            var(--rainbow-saturation, 70%),
+            var(--rainbow-lightness, 55%)
+          );
+          opacity: 0;
+          transition: opacity 300ms ease-out;
+        }
+        [data-rainbow="on"] .rainbow-overlay {
+          opacity: 0.55;
         }
         [data-density="compact"] .modal-glass,
         [data-density="compact"] .settings-glass {

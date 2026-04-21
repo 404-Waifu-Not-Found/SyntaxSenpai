@@ -25,6 +25,7 @@ import { registerAgentIpc } from './ipc/agent'
 import { registerKeystoreIpc } from './ipc/keystore'
 import { registerProviderIpc } from './ipc/provider'
 import { registerTerminalIpc } from './ipc/terminal'
+import { registerFilesystemIpc } from './ipc/filesystem'
 import { registerSpotifyIpc } from './ipc/spotify'
 import { registerExportIpc } from './ipc/export'
 import { registerWsIpc } from './ipc/ws'
@@ -78,6 +79,7 @@ app.whenReady().then(() => {
   registerKeystoreIpc()
   registerProviderIpc()
   registerTerminalIpc()
+  registerFilesystemIpc()
   registerSpotifyIpc()
   registerExportIpc()
   registerWsIpc()

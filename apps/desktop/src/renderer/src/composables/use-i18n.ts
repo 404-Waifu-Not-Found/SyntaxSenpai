@@ -147,14 +147,6 @@ const messages: Record<Locale, Record<string, string>> = {
     'interface.petals': 'Sakura Petals',
     'interface.petalsDesc': 'Drifting petals in the background. Pairs well with Sakura themes.',
 
-    // AI agent extras
-    'agent.temperature': 'Temperature',
-    'agent.temperatureDesc': 'Lower is more focused, higher is more creative.',
-    'agent.maxResponseTokens': 'Max Response Tokens',
-    'agent.maxResponseTokensDesc': 'Hard cap on the length of each reply.',
-    'agent.customInstructions': 'Custom Instructions',
-    'agent.customInstructionsDesc': 'Appended to the system prompt every turn. Tone, preferences, constraints.',
-    'agent.customInstructionsPlaceholder': 'e.g. Always answer in bullet points. Be concise.',
 
     // Model Picker
     'model.title': 'Choose Model',
@@ -331,13 +323,6 @@ const messages: Record<Locale, Record<string, string>> = {
     'interface.petals': '樱花花瓣',
     'interface.petalsDesc': '背景中飘落的樱花花瓣,与樱花主题相得益彰。',
 
-    'agent.temperature': '温度',
-    'agent.temperatureDesc': '越低越稳,越高越有创意。',
-    'agent.maxResponseTokens': '回复长度上限',
-    'agent.maxResponseTokensDesc': '每条回复的最长 token 限制。',
-    'agent.customInstructions': '自定义指令',
-    'agent.customInstructionsDesc': '每轮都会附加到系统提示中。语气、偏好、约束等。',
-    'agent.customInstructionsPlaceholder': '例如:请尽量简洁,多用列表。',
 
     // Model Picker
     'model.title': '选择模型',

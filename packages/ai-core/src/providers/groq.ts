@@ -3,7 +3,7 @@
  */
 
 import type { ChatRequest, ChatResponse, StreamChunk, ToolCall } from "../types";
-import { BaseAIProvider, convertToOpenAIMessages } from "./base";
+import { BaseAIProvider, convertToOpenAIMessages, formatFetchError } from "./base";
 
 export class GroqProvider extends BaseAIProvider {
   id = "groq";
@@ -62,7 +62,7 @@ export class GroqProvider extends BaseAIProvider {
       });
 
       if (!response.ok) {
-        throw new Error(`Groq API error: ${response.statusText}`);
+        throw new Error(await formatFetchError("Groq", response));
       }
 
       const data = await response.json();
@@ -119,7 +119,7 @@ export class GroqProvider extends BaseAIProvider {
       });
 
       if (!response.ok) {
-        throw new Error(`Groq API error: ${response.statusText}`);
+        throw new Error(await formatFetchError("Groq", response));
       }
 
       if (!response.body) {

@@ -804,9 +804,6 @@ async function handleExportData() {
         apiTelemetryHistory: readLocalStorageJson(API_TELEMETRY_HISTORY_STORAGE_KEY),
         maxToolIterations: store.maxToolIterations,
         apiSpikeThresholdMs: store.apiSpikeThresholdMs,
-        temperature: store.temperature,
-        maxResponseTokens: store.maxResponseTokens,
-        customInstructions: store.customInstructions,
       },
       data: {
         selectedWaifuId: store.selectedWaifuId,
@@ -902,15 +899,6 @@ async function handleImportData() {
     if (typeof payload?.settings?.apiSpikeThresholdMs === 'number') {
       store.setApiSpikeThresholdMs(payload.settings.apiSpikeThresholdMs)
     }
-    if (typeof payload?.settings?.temperature === 'number') {
-      store.setTemperature(payload.settings.temperature)
-    }
-    if (typeof payload?.settings?.maxResponseTokens === 'number') {
-      store.setMaxResponseTokens(payload.settings.maxResponseTokens)
-    }
-    if (typeof payload?.settings?.customInstructions === 'string') {
-      store.setCustomInstructions(payload.settings.customInstructions)
-    }
     if (payload?.settings?.affection) {
       localStorage.setItem('syntax-senpai-affection', JSON.stringify(payload.settings.affection))
     }
@@ -988,6 +976,12 @@ async function handleImportData() {
 </script>
 
 <template>
+  <!-- Rainbow tint overlay — blends every pixel with the cycling hue while keeping luminosity.
+       Always mounted so the fade-in/out runs cleanly; visibility is driven by data-rainbow on :root. -->
+  <Teleport to="body">
+    <div class="rainbow-overlay" aria-hidden="true" />
+  </Teleport>
+
   <!-- Sakura petal overlay (fixed, behind UI content, toggled via theme.ui.petals) -->
   <Teleport to="body">
     <SakuraPetals v-if="theme.ui.petals" />
@@ -1228,60 +1222,6 @@ async function handleImportData() {
                 placeholder="sk-..."
                 class="input-field"
               >
-            </div>
-
-            <div class="settings-card">
-              <div class="flex items-center justify-between mb-1">
-                <div>
-                  <h3 class="text-sm font-bold text-white">{{ t('agent.temperature') }}</h3>
-                  <p class="text-xs text-neutral-400">{{ t('agent.temperatureDesc') }}</p>
-                </div>
-                <span class="text-xs text-neutral-300 font-mono">{{ store.temperature.toFixed(2) }}</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="2"
-                step="0.05"
-                :value="store.temperature"
-                class="w-full accent-primary-500 mt-2"
-                @input="store.setTemperature(Number(($event.target as HTMLInputElement).value))"
-              >
-            </div>
-
-            <div class="settings-card">
-              <div class="flex items-center justify-between mb-1">
-                <div>
-                  <h3 class="text-sm font-bold text-white">{{ t('agent.maxResponseTokens') }}</h3>
-                  <p class="text-xs text-neutral-400">{{ t('agent.maxResponseTokensDesc') }}</p>
-                </div>
-                <span class="text-xs text-neutral-300 font-mono">{{ store.maxResponseTokens }}</span>
-              </div>
-              <input
-                type="range"
-                min="256"
-                max="16384"
-                step="128"
-                :value="store.maxResponseTokens"
-                class="w-full accent-primary-500 mt-2"
-                @input="store.setMaxResponseTokens(Number(($event.target as HTMLInputElement).value))"
-              >
-            </div>
-
-            <div class="settings-card">
-              <h3 class="text-sm font-bold text-white">{{ t('agent.customInstructions') }}</h3>
-              <p class="text-xs text-neutral-400 mb-2">{{ t('agent.customInstructionsDesc') }}</p>
-              <textarea
-                :value="store.customInstructions"
-                :placeholder="t('agent.customInstructionsPlaceholder')"
-                class="input-field font-mono text-xs resize-y"
-                rows="4"
-                maxlength="4000"
-                @input="store.setCustomInstructions(($event.target as HTMLTextAreaElement).value)"
-              />
-              <div class="mt-1 text-[10px] text-neutral-500 text-right">
-                {{ store.customInstructions.length }} / 4000
-              </div>
             </div>
           </div>
 

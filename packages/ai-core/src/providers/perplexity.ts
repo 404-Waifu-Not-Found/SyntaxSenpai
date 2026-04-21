@@ -3,7 +3,7 @@
  */
 
 import type { ChatRequest, ChatResponse, StreamChunk, ToolCall } from "../types";
-import { BaseAIProvider, convertToOpenAIMessages } from "./base";
+import { BaseAIProvider, convertToOpenAIMessages, formatFetchError } from "./base";
 
 export class PerplexityProvider extends BaseAIProvider {
   id = "perplexity";
@@ -54,7 +54,7 @@ export class PerplexityProvider extends BaseAIProvider {
       });
 
       if (!response.ok) {
-        throw new Error(`Perplexity API error: ${response.statusText}`);
+        throw new Error(await formatFetchError("Perplexity", response));
       }
 
       const data = await response.json();
@@ -95,7 +95,7 @@ export class PerplexityProvider extends BaseAIProvider {
       });
 
       if (!response.ok) {
-        throw new Error(`Perplexity API error: ${response.statusText}`);
+        throw new Error(await formatFetchError("Perplexity", response));
       }
 
       if (!response.body) {

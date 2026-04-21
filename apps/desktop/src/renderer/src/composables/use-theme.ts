@@ -209,6 +209,16 @@ function startRainbow() {
     root.style.setProperty('--primary-600', adjustBrightness(primary, -10))
     root.style.setProperty('--primary-700', adjustBrightness(primary, -20))
 
+    // Hue + opacity consumed by the fullscreen .rainbow-overlay element (see
+    // uno.config.ts). The overlay uses mix-blend-mode: color, so every pixel
+    // in the app picks up this hue while keeping its original luminosity —
+    // which is the only way to tint the hundreds of hardcoded bg-neutral-*
+    // surfaces without rewriting every component.
+    root.style.setProperty('--rainbow-hue', String(Math.round(rainbowHue)))
+    root.style.setProperty('--rainbow-saturation', `${Math.round(rb.saturation)}%`)
+    root.style.setProperty('--rainbow-lightness', `${Math.round(rb.lightness)}%`)
+    root.dataset.rainbow = 'on'
+
     rainbowFrame = requestAnimationFrame(tick)
   }
   rainbowFrame = requestAnimationFrame(tick)
@@ -219,12 +229,14 @@ function stopRainbow() {
     cancelAnimationFrame(rainbowFrame)
     rainbowFrame = null
   }
+  document.documentElement.dataset.rainbow = 'off'
 }
 
 export function useTheme() {
   onMounted(() => {
     applyThemeToDOM(theme.value.colors)
     applyUIToDOM(theme.value.ui)
+    document.documentElement.dataset.rainbow = theme.value.rainbow.enabled ? 'on' : 'off'
     if (theme.value.rainbow.enabled) startRainbow()
   })
 

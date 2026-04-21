@@ -77,6 +77,40 @@ export abstract class BaseAIProvider implements AIProvider {
 }
 
 /**
+ * Build a human-readable error string from a failed fetch Response.
+ * `response.statusText` is empty on HTTP/2 in Chromium/Electron, so we read
+ * the body and try to surface the provider's own error message.
+ */
+export async function formatFetchError(
+  providerName: string,
+  response: Response
+): Promise<string> {
+  let body = "";
+  try {
+    body = await response.text();
+  } catch {
+    /* ignore */
+  }
+  let detail = body;
+  if (body) {
+    try {
+      const parsed = JSON.parse(body);
+      detail =
+        parsed?.error?.message ||
+        parsed?.message ||
+        parsed?.error ||
+        body;
+      if (typeof detail !== "string") detail = JSON.stringify(detail);
+    } catch {
+      /* keep raw body */
+    }
+  }
+  const status = response.status ? `${response.status}` : "network";
+  const tail = detail ? ` — ${detail.slice(0, 400)}` : "";
+  return `${providerName} API error (${status})${tail}`;
+}
+
+/**
  * Base class for OpenAI-compatible providers (Together, Groq, Perplexity, etc.)
  */
 export abstract class OpenAICompatibleProvider extends BaseAIProvider {

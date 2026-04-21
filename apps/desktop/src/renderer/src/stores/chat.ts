@@ -4,7 +4,18 @@ import { buildSystemPrompt, builtInWaifus } from '@syntax-senpai/waifu-core'
 import { AIChatRuntime } from '@syntax-senpai/ai-core'
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
-import { getToolsForMode, executeToolCall, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, type AgentMode } from '../agent-tools'
+import { getToolsForMode, executeToolCall, describeToolCall, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, type AgentMode } from '../agent-tools'
+
+function annotateToolResult(result: string, iteration: number, maxIterations: number): string {
+  const remaining = Math.max(0, maxIterations - iteration)
+  if (remaining <= 0) {
+    return `${result}\n\n[runtime] This was your LAST tool iteration. You MUST call stop_response in your next reply.`
+  }
+  if (remaining <= 2) {
+    return `${result}\n\n[runtime] ${remaining} tool iteration${remaining === 1 ? '' : 's'} left — wrap up and call stop_response soon.`
+  }
+  return result
+}
 
 export interface Message {
   id: string
@@ -46,13 +57,8 @@ const PROVIDER_PREFERENCES_KEY = 'syntax-senpai-provider-preferences'
 const API_TELEMETRY_HISTORY_KEY = 'syntax-senpai-api-telemetry-history'
 const API_SPIKE_THRESHOLD_STORAGE_KEY = 'syntax-senpai-api-spike-threshold-ms'
 const MAX_TOOL_ITERATIONS_STORAGE_KEY = 'syntax-senpai-max-tool-iterations'
-const TEMPERATURE_STORAGE_KEY = 'syntax-senpai-temperature'
-const MAX_RESPONSE_TOKENS_STORAGE_KEY = 'syntax-senpai-max-response-tokens'
-const CUSTOM_INSTRUCTIONS_STORAGE_KEY = 'syntax-senpai-custom-instructions'
 const DEFAULT_API_SPIKE_THRESHOLD_MS = 5000
 const DEFAULT_MAX_TOOL_ITERATIONS = 12
-const DEFAULT_TEMPERATURE = 0.7
-const DEFAULT_MAX_RESPONSE_TOKENS = 4096
 const API_TELEMETRY_HISTORY_LIMIT = 48
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
@@ -142,25 +148,77 @@ function createWaifuSystemPrompt(waifu: any, provider: string, model: string, af
 }
 
 function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: string): string {
-  const shellLine = shell ? `\n- The user's shell is: ${shell}.` : ''
+  const shellLine = shell ? `\n- Shell: ${shell}. Each terminal call is a new process — \`cd\` does NOT persist between calls; use absolute paths or chain with \`&&\`.` : ''
   return `\n\n[Agent Behavior]
-You have access to a terminal tool to run commands on the user's machine and a web_search tool (DuckDuckGo).${shellLine}
+You can act on the user's machine through tools. Your goal is to actually finish the task, verified, not to sound like you finished it.
 
-When to use which tool:
-- terminal → local machine tasks: files, processes, installs, git, etc.
-- web_search → current facts, documentation, news, anything you should verify online.
+Tool selection — pick the RIGHT tool, not the most convenient one:
+- terminal → running programs, git, installs, searches, network, diagnostics. NOT for editing text files.
+- read_file → look at source/config/logs. Always use this before edit_file so you know the exact whitespace.
+- write_file → create a new file, or deliberately replace a whole file.
+- edit_file → change one specific block of an existing file. Exact-string match, must be unique.
+- web_search → docs, recent APIs, error messages you don't recognize.${shellLine}
 
-Execution rules:
-- If the user asks you to run, inspect, list, read, or modify ANYTHING on their machine, you MUST call the terminal tool — do not describe hypothetical steps.
-- Keep going until you have a real result, then call stop_response.
+Workflow for anything non-trivial:
+1. If the task has more than ~2 steps, write a one-line plan in your thinking before calling any tool. Revise it if a step fails.
+2. Gather before you act. Read files / list dirs / check versions before editing or installing.
+3. Do one thing at a time. Don't batch unrelated commands in one \`&&\` chain — errors get buried.
+4. Read the tool result. If stderr is non-empty or the exit code is non-zero, DIAGNOSE before retrying. Never rerun the exact same failed command hoping it works.
+5. On failure: try once more with a fix. If it still fails, explain the blocker instead of looping.
+6. Verify before stopping. Confirm the file reads back correctly, the test passes, the process is up, etc. Only then call stop_response.
+
+Efficiency rules:
+- Don't re-read a file you already have in context unless you just wrote to it.
+- Don't paste huge outputs back at the user — summarize.
+- Don't apologize in tool-calling turns; just fix the problem.
+- If the user asks "can you X", do X — don't ask for permission mid-task when you already have the tools.
+
+Persona rules:
 - Stay fully in character as ${waifuName} at all times, even while running commands. Never sound like a generic assistant.
-- When you call stop_response, write final_message entirely in character.`
+- In stop_response.final_message, report what was actually done (and any caveats), fully in character.`
 }
 
-function buildCustomInstructionsBlock(instructions: string): string {
-  const trimmed = instructions.trim()
-  if (!trimmed) return ''
-  return `\n\n[User Custom Instructions]\nThe user has provided these personal preferences. Respect them unless they conflict with safety rules:\n${trimmed}`
+const CODING_TRIGGERS = [
+  /```/,                                                     // code fence
+  /\b(?:\/|~\/|\.\/|\.\.\/)[\w./-]+\.(?:ts|tsx|js|jsx|vue|py|rs|go|java|kt|cs|c|h|cpp|rb|php|swift|md|json|yaml|yml|toml|sh|sql|html|css|scss)\b/i,
+  /\b(?:npm|pnpm|yarn|bun|git|cargo|rustc|pip|poetry|go build|go run|make|docker|kubectl|tsc|eslint|pytest|jest|vitest)\b/i,
+  /\b(?:bug|fix(?:\s+this|\s+the|\s+a)?|refactor|implement|debug|typecheck|compile|lint|stack\s*trace|exception|traceback|regression|crash(?:es|ed)?)\b/i,
+  /\b(?:function|class|interface|component|variable|const|let|var|import|export|return|async|await)\b.*\b(?:in|to|from|that|which|should|doesn'?t|doesn'?t\s+work)\b/i,
+  /\b(?:add|remove|rename|move|extract)\b.*\b(?:file|method|component|module|package|hook|route|endpoint|handler|reducer|store)\b/i,
+  /^\s*(?:TypeError|ReferenceError|SyntaxError|RangeError|Error|Exception|Panic|Segfault|Traceback|Uncaught)\b/m,
+]
+
+function isCodingSession(userText: string): boolean {
+  if (!userText) return false
+  return CODING_TRIGGERS.some((pattern) => pattern.test(userText))
+}
+
+function buildCodingSessionPromptBlock(userText: string): string {
+  if (!isCodingSession(userText)) return ''
+  return `\n\n[Coding Session]
+This message looks like a coding task. Raise your bar:
+
+Read before you write:
+- Before any edit_file or write_file, read the target file with read_file so you know its exact contents, indentation style, and surrounding context.
+- For anything non-trivial (new feature, bug that crosses files, refactor), first skim siblings or related files to understand existing patterns. Don't invent a new pattern if the repo already has one.
+
+Prefer surgical edits:
+- edit_file > write_file whenever part of the file should survive. Only use write_file for new files or full rewrites you have explicit reason to do.
+- If edit_file fails because old_text isn't unique, expand the snippet with a few more lines of context — don't guess.
+
+Match the codebase:
+- Match the file's indentation (tabs vs spaces, 2 vs 4), quoting style, semicolon convention, trailing-comma convention, and import order. Do NOT reformat lines you weren't asked to touch.
+- Use existing utilities/helpers before creating new ones. Grep the repo if unsure.
+
+Finish the job:
+- No TODO placeholders, no \`throw new Error('not implemented')\`, no commented-out code unless the user asked for a stub.
+- Handle the obvious edge cases (empty inputs, missing files, null/undefined) but don't invent defensive code for scenarios that can't happen.
+- When you reference a location in your reply, use \`file.ext:line\` format so the user can jump to it.
+
+Verify before stop_response:
+- If the project has a typecheck, lint, or test command that's relevant to your change and it's reasonable to run, run it. If something fails, fix it — don't report success.
+- Read back the file you edited with read_file to confirm the change landed as intended, unless you just wrote it fresh.
+- stop_response.final_message should state what actually changed and any follow-ups the user still needs to do (e.g. install a new dep, restart the dev server).`
 }
 
 function buildAffectionPrompt(affection: number, waifuName: string): string {
@@ -250,25 +308,6 @@ function readStoredNumber(key: string, fallback: number, min: number, max: numbe
   }
 }
 
-function readStoredFloat(key: string, fallback: number, min: number, max: number): number {
-  try {
-    const raw = localStorage.getItem(key)
-    const parsed = Number.parseFloat(String(raw ?? ''))
-    if (!Number.isFinite(parsed)) return fallback
-    return Math.max(min, Math.min(max, parsed))
-  } catch {
-    return fallback
-  }
-}
-
-function readStoredString(key: string, fallback: string): string {
-  try {
-    const raw = localStorage.getItem(key)
-    return raw ?? fallback
-  } catch {
-    return fallback
-  }
-}
 
 function loadGroupChatSettings() {
   try {
@@ -371,22 +410,6 @@ export const useChatStore = defineStore('chat', () => {
     250,
     60000,
   ))
-  const temperature = ref(readStoredFloat(
-    TEMPERATURE_STORAGE_KEY,
-    DEFAULT_TEMPERATURE,
-    0,
-    2,
-  ))
-  const maxResponseTokens = ref(readStoredNumber(
-    MAX_RESPONSE_TOKENS_STORAGE_KEY,
-    DEFAULT_MAX_RESPONSE_TOKENS,
-    256,
-    16384,
-  ))
-  const customInstructions = ref(readStoredString(
-    CUSTOM_INSTRUCTIONS_STORAGE_KEY,
-    '',
-  ))
 
   function setAgentMode(mode: AgentMode) {
     agentMode.value = mode
@@ -424,25 +447,6 @@ export const useChatStore = defineStore('chat', () => {
           message: '',
           triggeredAt: null,
         }
-  }
-
-  function setTemperature(value: number) {
-    const next = Math.max(0, Math.min(2, Number.isFinite(value) ? value : DEFAULT_TEMPERATURE))
-    const rounded = Math.round(next * 100) / 100
-    temperature.value = rounded
-    localStorage.setItem(TEMPERATURE_STORAGE_KEY, String(rounded))
-  }
-
-  function setMaxResponseTokens(value: number) {
-    const next = Math.max(256, Math.min(16384, Math.round(value)))
-    maxResponseTokens.value = next
-    localStorage.setItem(MAX_RESPONSE_TOKENS_STORAGE_KEY, String(next))
-  }
-
-  function setCustomInstructions(value: string) {
-    const trimmed = (value ?? '').slice(0, 4000)
-    customInstructions.value = trimmed
-    localStorage.setItem(CUSTOM_INSTRUCTIONS_STORAGE_KEY, trimmed)
   }
 
   const selectedWaifu = computed(() =>
@@ -933,7 +937,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           systemPrompt += buildAffectionPrompt(affectionValue, waifu.displayName || 'Waifu')
           systemPrompt += buildApiTelemetryPrompt()
           systemPrompt += buildGroupChatPromptBlock(waifu, waifus, pendingTasks.get(waifu.id) || [], round)
-          systemPrompt += buildCustomInstructionsBlock(customInstructions.value)
+          systemPrompt += buildCodingSessionPromptBlock(trimmedText)
 
           if (hasTools) {
             if (systemInfo && systemInfo.homedir) {
@@ -948,8 +952,6 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               : ({ type: selectedProvider.value as any } as any),
             model,
             systemPrompt,
-            temperature: temperature.value,
-            maxTokens: maxResponseTokens.value,
           })
 
           let finalContent = ''
@@ -968,8 +970,6 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                 messages: aiHistory,
                 tools,
                 systemPrompt,
-                temperature: temperature.value,
-                maxTokens: maxResponseTokens.value,
               })
               apiRoundTrips.push(performance.now() - requestStartedAt)
 
@@ -1014,14 +1014,14 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                   continue
                 }
 
-                const cmd = String((toolCall.arguments as any).command || '')
+                const label = describeToolCall(toolCall)
                 const toolMsgId = `tool-${waifu.id}-${Date.now()}-${toolCall.id}`
                 toolMsgIds.push(toolMsgId)
 
                 messages.value.push({
                   id: toolMsgId,
                   role: 'assistant',
-                  content: `${waifu.displayName} is running \`$ ${cmd}\``,
+                  content: `${waifu.displayName} is running \`${label}\``,
                   timestamp: now(),
                   waifuId: waifu.id,
                   waifuDisplayName: waifu.displayName,
@@ -1031,13 +1031,13 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                 const preview = result.length > 500 ? result.slice(0, 500) + '\u2026' : result
                 const toolMsg = messages.value.find((message) => message.id === toolMsgId)
                 if (toolMsg) {
-                  toolMsg.content = `${waifu.displayName} ran \`$ ${cmd}\`\n\`\`\`\n${preview}\n\`\`\``
+                  toolMsg.content = `${waifu.displayName} ran \`${label}\`\n\`\`\`\n${preview}\n\`\`\``
                 }
 
                 aiHistory.push({
                   id: `tool-result-${Date.now()}-${toolCall.id}`,
                   role: 'tool',
-                  content: result,
+                  content: annotateToolResult(result, iteration, maxIterations),
                   toolCallId: toolCall.id,
                 })
               }
@@ -1314,7 +1314,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       // Let the waifu know how fast the last API reply was.
       systemPrompt += buildApiTelemetryPrompt()
 
-      systemPrompt += buildCustomInstructionsBlock(customInstructions.value)
+      systemPrompt += buildCodingSessionPromptBlock(trimmedText)
 
       const tools = getToolsForMode(agentMode.value)
       const hasTools = tools.length > 0
@@ -1337,8 +1337,6 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           : ({ type: selectedProvider.value as any } as any),
         model,
         systemPrompt,
-        temperature: temperature.value,
-        maxTokens: maxResponseTokens.value,
       })
 
       if (hasTools) {
@@ -1363,8 +1361,6 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             messages: aiHistory,
             tools,
             systemPrompt,
-            temperature: temperature.value,
-            maxTokens: maxResponseTokens.value,
           })
           apiRoundTrips.push(performance.now() - requestStartedAt)
 
@@ -1413,8 +1409,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               continue
             }
 
-            // ── terminal: run the command ──
-            const cmd = (tc.arguments as any).command || ''
+            // ── tool call: run it ──
+            const label = describeToolCall(tc)
             const toolMsgId = `tool-${Date.now()}-${tc.id}`
             toolMsgIds.push(toolMsgId)
 
@@ -1422,7 +1418,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             messages.value.push({
               id: toolMsgId,
               role: 'assistant',
-              content: `\u{1F4BB} \`$ ${cmd}\``,
+              content: `\u{1F4BB} \`${label}\``,
               timestamp: now(),
             })
             recentMessageId.value = toolMsgId
@@ -1433,13 +1429,13 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             // Update chat bubble with output
             const toolMsg = messages.value.find((m) => m.id === toolMsgId)
             if (toolMsg) {
-              toolMsg.content = `\u{1F4BB} \`$ ${cmd}\`\n\`\`\`\n${preview}\n\`\`\``
+              toolMsg.content = `\u{1F4BB} \`${label}\`\n\`\`\`\n${preview}\n\`\`\``
             }
 
             aiHistory.push({
               id: `tool-result-${Date.now()}-${tc.id}`,
               role: 'tool',
-              content: result,
+              content: annotateToolResult(result, i, maxIterations),
               toolCallId: tc.id,
             })
           }
@@ -1756,9 +1752,6 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     apiTelemetryAlert,
     maxToolIterations,
     apiSpikeThresholdMs,
-    temperature,
-    maxResponseTokens,
-    customInstructions,
     userMemories,
     sidebarFilter,
     isGroupChat,
@@ -1771,9 +1764,6 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     setAgentMode,
     setMaxToolIterations,
     setApiSpikeThresholdMs,
-    setTemperature,
-    setMaxResponseTokens,
-    setCustomInstructions,
     newChat,
     setGroupChat,
     toggleGroupWaifu,

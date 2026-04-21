@@ -21,28 +21,99 @@ export const agentTools: ToolDefinition[] = [
   {
     name: 'terminal',
     description:
-      'Run a shell command on the user\'s machine. Supports pipes, redirects, ~, $ENV, etc. Returns stdout, stderr, and exit code. Use this for any system interaction: listing files, reading files, running programs, installing packages, git operations, etc.',
+      'Run a shell command on the user\'s machine. Use for: listing, searching, running programs, git, installs, network checks. ' +
+      'DO NOT use for reading, writing, or editing text files — call read_file / write_file / edit_file instead (shell heredocs and echo redirection routinely corrupt files). ' +
+      'Each invocation is a fresh process, so `cd` does not persist between calls — either use absolute paths or chain with `&&`. ' +
+      'Returns stdout, stderr, and exit code.',
     parameters: {
       type: 'object',
       properties: {
         command: {
           type: 'string',
-          description: 'The shell command to execute, e.g. "ls -la ~/Desktop"',
+          description: 'The shell command to execute, e.g. "ls -la ~/Desktop" or "cd ~/proj && pnpm test".',
         },
       },
       required: ['command'],
     },
   },
   {
+    name: 'read_file',
+    description:
+      'Read a text file and return its contents with line numbers. Prefer this over `cat` in terminal — output is paginated and annotated so you can refer to exact line numbers when editing. ' +
+      'Pass offset+limit to page through large files.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Absolute path to the file. `~` is expanded.',
+        },
+        offset: {
+          type: 'integer',
+          description: '1-based line number to start reading from. Defaults to 1.',
+        },
+        limit: {
+          type: 'integer',
+          description: 'Max number of lines to return. Defaults to entire file.',
+        },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'write_file',
+    description:
+      'Create a new file or completely overwrite an existing one. Use ONLY when you intend to replace the whole file (new files, full rewrites). For targeted changes to an existing file, use edit_file instead — it preserves the parts you do not mean to touch.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Absolute path. Parent directories will be created as needed.',
+        },
+        content: {
+          type: 'string',
+          description: 'The full file contents to write. Do NOT include line numbers or any wrapper — just the raw file body.',
+        },
+      },
+      required: ['path', 'content'],
+    },
+  },
+  {
+    name: 'edit_file',
+    description:
+      'Replace a specific substring in a file with exact string matching. old_text must appear EXACTLY ONCE in the file — including leading whitespace and surrounding context. ' +
+      'If it is not unique, expand old_text with more context lines until it is. Fails loudly if old_text is not found or matches multiple times. ' +
+      'Read the file first with read_file so you know the exact whitespace.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Absolute path to the file. `~` is expanded.',
+        },
+        old_text: {
+          type: 'string',
+          description: 'The exact substring to find. Must be unique in the file.',
+        },
+        new_text: {
+          type: 'string',
+          description: 'What to replace old_text with. Can be empty to delete old_text.',
+        },
+      },
+      required: ['path', 'old_text', 'new_text'],
+    },
+  },
+  {
     name: 'web_search',
     description:
-      'Search the public web using DuckDuckGo free search. Use this when the user asks for current events, recent information, web lookups, documentation, product pages, or anything you should verify online before answering.',
+      'Search the public web via DuckDuckGo. Use for: current events, docs, version-specific syntax, third-party APIs, anything past your training cutoff. Do NOT use for local-machine questions — use terminal or read_file for those.',
     parameters: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'The search query to run on DuckDuckGo.',
+          description: 'The search query. Be specific — include library + version or error message verbatim when debugging.',
         },
         limit: {
           type: 'integer',
@@ -101,13 +172,15 @@ export const agentTools: ToolDefinition[] = [
   {
     name: STOP_TOOL_NAME,
     description:
-      'Call this when you are finished executing commands and want to deliver your final answer to the user. You MUST call this to end your turn. Write the final_message fully in character as your waifu persona — never sound like a generic assistant.',
+      'Call this ONLY after you have verified the task is actually done — e.g. the file you edited reads back as expected, the command you ran exited 0, the tests you ran passed. ' +
+      'If a previous tool call failed, you must retry or explain the failure before stopping. Do not stop early "optimistically". ' +
+      'Write final_message fully in character as your waifu persona — never sound like a generic assistant.',
     parameters: {
       type: 'object',
       properties: {
         final_message: {
           type: 'string',
-          description: 'Your final in-character response to the user, using your personality and emojis',
+          description: 'Your final in-character response to the user, using your personality and emojis. Mention what was actually done, not what you planned to do.',
         },
       },
       required: ['final_message'],
@@ -146,7 +219,32 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
       let out = res.stdout || ''
       if (res.stderr) out += (out ? '\n' : '') + `STDERR: ${res.stderr}`
       if (!out.trim()) out = `(exit code ${res.code ?? 0})`
+      if (typeof res.code === 'number' && res.code !== 0) {
+        out = `EXIT ${res.code}\n${out}`
+      }
       return out
+    }
+
+    case 'read_file': {
+      const offset = args.offset !== undefined ? Number(args.offset) : undefined
+      const limit = args.limit !== undefined ? Number(args.limit) : undefined
+      const res = await ipc.invoke('fs:read', args.path, offset, limit)
+      if (!res.success) return `Error: ${res.error}`
+      const header = `File: ${res.path}\nLines ${res.startLine}-${res.endLine} of ${res.totalLines}\n`
+      return header + res.content
+    }
+
+    case 'write_file': {
+      const res = await ipc.invoke('fs:write', args.path, args.content ?? '')
+      if (!res.success) return `Error: ${res.error}`
+      return `Wrote ${res.lines} lines (${res.bytes} bytes) to ${res.path}`
+    }
+
+    case 'edit_file': {
+      const res = await ipc.invoke('fs:edit', args.path, args.old_text, args.new_text)
+      if (!res.success) return `Error: ${res.error}`
+      const deltaLabel = res.delta === 0 ? '0 char delta' : `${res.delta > 0 ? '+' : ''}${res.delta} chars`
+      return `Edited ${res.path} at offset ${res.replacedAt} (${deltaLabel})`
     }
 
     case 'web_search': {
@@ -174,5 +272,31 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
 
     default:
       return `Unknown tool: ${toolCall.name}`
+  }
+}
+
+/**
+ * Short human label for a tool call. Used by the chat UI to render the "running"
+ * bubble so non-terminal tools don't render as `$ undefined`.
+ */
+export function describeToolCall(toolCall: ToolCall): string {
+  const args = (toolCall.arguments ?? {}) as Record<string, unknown>
+  switch (toolCall.name) {
+    case 'terminal':
+      return `$ ${args.command ?? ''}`
+    case 'read_file':
+      return `read_file(${args.path ?? ''}${args.offset ? `, offset=${args.offset}` : ''}${args.limit ? `, limit=${args.limit}` : ''})`
+    case 'write_file':
+      return `write_file(${args.path ?? ''})`
+    case 'edit_file':
+      return `edit_file(${args.path ?? ''})`
+    case 'web_search':
+      return `web_search("${String(args.query ?? '').slice(0, 60)}")`
+    case 'spotify_now_playing':
+      return 'spotify_now_playing()'
+    case 'spotify_control':
+      return `spotify_control(${args.action ?? ''})`
+    default:
+      return `${toolCall.name}(${Object.keys(args).join(', ')})`
   }
 }

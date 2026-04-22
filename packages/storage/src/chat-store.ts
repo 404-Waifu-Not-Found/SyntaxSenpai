@@ -95,6 +95,17 @@ export class InMemoryChatStore implements IChatStore {
     }
   }
 
+  async deleteMessage(conversationId: string, messageId: string): Promise<void> {
+    const conv = this.conversations.get(conversationId);
+    const messages = this.messages.get(conversationId) || [];
+    const filtered = messages.filter((m: any) => m.id !== messageId);
+    this.messages.set(conversationId, filtered);
+    if (conv) {
+      conv.messageCount = filtered.length;
+      conv.updatedAt = new Date().toISOString();
+    }
+  }
+
   async setRelationship(relationship: WaifuRelationship): Promise<void> {
     const key = `${relationship.waifuId}:${relationship.userId}`;
     this.relationships.set(key, relationship);
@@ -126,6 +137,7 @@ export class InMemoryChatStore implements IChatStore {
  */
 export class DesktopSQLiteChatStore implements IChatStore {
   private filePath: string;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private data: {
     conversations: Record<string, ConversationRecord>;
     messages: Record<string, Message[]>;
@@ -165,13 +177,20 @@ export class DesktopSQLiteChatStore implements IChatStore {
     }
   }
 
-  private flush(): void {
-    try {
+  private scheduleFlush(): void {
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
       const fs = require("fs");
-      fs.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), "utf-8");
-    } catch (err) {
-      console.error("Failed to write chat data:", err);
-    }
+      const tmpPath = this.filePath + ".tmp";
+      try {
+        fs.writeFileSync(tmpPath, JSON.stringify(this.data, null, 2), "utf-8");
+        fs.renameSync(tmpPath, this.filePath);
+      } catch (err) {
+        console.error("Failed to write chat data:", err);
+        try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+      }
+    }, 200);
   }
 
   async createConversation(
@@ -191,7 +210,7 @@ export class DesktopSQLiteChatStore implements IChatStore {
     };
     this.data.conversations[id] = conversation;
     this.data.messages[id] = [];
-    this.flush();
+    this.scheduleFlush();
     return conversation;
   }
 
@@ -219,13 +238,13 @@ export class DesktopSQLiteChatStore implements IChatStore {
     if (updates.favorited !== undefined) conv.favorited = updates.favorited;
     conv.updatedAt = new Date().toISOString();
 
-    this.flush();
+    this.scheduleFlush();
   }
 
   async deleteConversation(id: string): Promise<void> {
     delete this.data.conversations[id];
     delete this.data.messages[id];
-    this.flush();
+    this.scheduleFlush();
   }
 
   async addMessage(conversationId: string, message: Message): Promise<void> {
@@ -244,7 +263,7 @@ export class DesktopSQLiteChatStore implements IChatStore {
       conv.messageCount = this.data.messages[conversationId].length;
       conv.updatedAt = new Date().toISOString();
     }
-    this.flush();
+    this.scheduleFlush();
   }
 
   async getMessages(conversationId: string): Promise<Message[]> {
@@ -269,13 +288,24 @@ export class DesktopSQLiteChatStore implements IChatStore {
         conv.updatedAt = new Date().toISOString();
       }
     }
-    this.flush();
+    this.scheduleFlush();
+  }
+
+  async deleteMessage(conversationId: string, messageId: string): Promise<void> {
+    const conv = this.data.conversations[conversationId];
+    const msgs = this.data.messages[conversationId] || [];
+    this.data.messages[conversationId] = msgs.filter((m: any) => m.id !== messageId);
+    if (conv) {
+      conv.messageCount = this.data.messages[conversationId].length;
+      conv.updatedAt = new Date().toISOString();
+    }
+    this.scheduleFlush();
   }
 
   async setRelationship(relationship: WaifuRelationship): Promise<void> {
     const key = `${relationship.waifuId}:${relationship.userId}`;
     this.data.relationships[key] = relationship;
-    this.flush();
+    this.scheduleFlush();
   }
 
   async getRelationship(
@@ -294,7 +324,7 @@ export class DesktopSQLiteChatStore implements IChatStore {
     const current = this.data.relationships[key];
     if (current) {
       this.data.relationships[key] = { ...current, ...updates };
-      this.flush();
+      this.scheduleFlush();
     }
   }
 
@@ -304,7 +334,7 @@ export class DesktopSQLiteChatStore implements IChatStore {
 
     conv.favorited = !conv.favorited;
     conv.updatedAt = new Date().toISOString();
-    this.flush();
+    this.scheduleFlush();
     return !!conv.favorited;
   }
 }
@@ -314,6 +344,7 @@ export class DesktopSQLiteChatStore implements IChatStore {
  */
 export class DesktopMemoryStore implements IMemoryStore {
   private filePath: string;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private data: Record<string, MemoryEntry>;
 
   constructor(dbOrPath?: any) {
@@ -347,13 +378,20 @@ export class DesktopMemoryStore implements IMemoryStore {
     }
   }
 
-  private flush(): void {
-    try {
+  private scheduleFlush(): void {
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
       const fs = require("fs");
-      fs.writeFileSync(this.filePath, JSON.stringify(this.data, null, 2), "utf-8");
-    } catch (err) {
-      console.error("Failed to write memory data:", err);
-    }
+      const tmpPath = this.filePath + ".tmp";
+      try {
+        fs.writeFileSync(tmpPath, JSON.stringify(this.data, null, 2), "utf-8");
+        fs.renameSync(tmpPath, this.filePath);
+      } catch (err) {
+        console.error("Failed to write memory data:", err);
+        try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+      }
+    }, 200);
   }
 
   async setMemory(key: string, value: string, category = 'general'): Promise<void> {
@@ -366,7 +404,7 @@ export class DesktopMemoryStore implements IMemoryStore {
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     };
-    this.flush();
+    this.scheduleFlush();
   }
 
   async getMemory(key: string): Promise<MemoryEntry | null> {
@@ -385,12 +423,12 @@ export class DesktopMemoryStore implements IMemoryStore {
 
   async deleteMemory(key: string): Promise<void> {
     delete this.data[key];
-    this.flush();
+    this.scheduleFlush();
   }
 
   async clearAllMemories(): Promise<void> {
     this.data = {};
-    this.flush();
+    this.scheduleFlush();
   }
 }
 

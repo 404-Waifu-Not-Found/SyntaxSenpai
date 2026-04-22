@@ -35,11 +35,11 @@ export class AWSBedrockProvider extends BaseAIProvider {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    throw new Error("AWS Bedrock provider not yet implemented");
+    throw new Error("AWS Bedrock provider is not yet implemented in SyntaxSenpai. Pick a different provider in Settings → AI (Anthropic, OpenAI, Groq, DeepSeek, Gemini, etc.).");
   }
 
   async *stream(request: ChatRequest): AsyncIterable<StreamChunk> {
-    throw new Error("AWS Bedrock provider not yet implemented");
+    throw new Error("AWS Bedrock provider is not yet implemented in SyntaxSenpai. Pick a different provider in Settings → AI (Anthropic, OpenAI, Groq, DeepSeek, Gemini, etc.).");
   }
 }
 

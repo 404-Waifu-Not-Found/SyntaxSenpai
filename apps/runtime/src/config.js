@@ -19,7 +19,8 @@ function loadConfig() {
     backupMaxFiles: resolveNumber(process.env.BACKUP_MAX_FILES, 20),
     backupRetentionDays: resolveNumber(process.env.BACKUP_RETENTION_DAYS, 14),
     serviceName: process.env.SERVICE_NAME || 'syntax-senpai-runtime',
-    version: process.env.APP_VERSION || '0.0.1'
+    version: process.env.APP_VERSION || '0.0.1',
+    authToken: process.env.RUNTIME_AUTH_TOKEN || '',
   }
 }
 

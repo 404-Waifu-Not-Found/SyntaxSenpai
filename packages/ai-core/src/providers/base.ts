@@ -155,10 +155,21 @@ export abstract class OpenAICompatibleProvider extends BaseAIProvider {
  * Helper to convert messages to OpenAI format.
  * Handles tool_calls on assistant messages and tool_call_id on tool results.
  */
+function toOpenAIContent(content: Message["content"]): unknown {
+  if (typeof content === "string") return content;
+  // Multi-modal: map ContentPart[] to OpenAI's content-parts shape
+  return content.map((part) => {
+    if (part.type === "text") return { type: "text", text: part.text ?? "" };
+    if (part.type === "image_url") {
+      return { type: "image_url", image_url: { url: part.imageUrl?.url ?? "" } };
+    }
+    return { type: "text", text: JSON.stringify(part) };
+  });
+}
+
 export function convertToOpenAIMessages(messages: Message[]): Array<Record<string, unknown>> {
   return messages.map((msg) => {
-    const content =
-      typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+    const content = toOpenAIContent(msg.content);
 
     // Assistant message that invoked tools
     if (msg.role === "assistant" && msg.toolCalls && msg.toolCalls.length > 0) {
@@ -179,17 +190,43 @@ export function convertToOpenAIMessages(messages: Message[]): Array<Record<strin
       };
     }
 
-    // Tool result message
+    // Tool result message — always stringify; tools don't ship image content
     if (msg.role === "tool" && msg.toolCallId) {
+      const toolContent = typeof msg.content === "string"
+        ? msg.content
+        : JSON.stringify(msg.content);
       return {
         role: "tool",
-        content,
+        content: toolContent,
         tool_call_id: msg.toolCallId,
       };
     }
 
     // Regular message (system / user / assistant without tools)
     return { role: msg.role, content };
+  });
+}
+
+/**
+ * Convert a content string or ContentPart[] into Anthropic content blocks.
+ * Handles text plus image_url parts (expected as data: URLs for base64 images).
+ */
+function toAnthropicContent(content: Message["content"]): Array<Record<string, unknown>> | string {
+  if (typeof content === "string") return content;
+  return content.map((part) => {
+    if (part.type === "text") return { type: "text", text: part.text ?? "" };
+    if (part.type === "image_url") {
+      const url = part.imageUrl?.url ?? "";
+      const dataMatch = /^data:([^;]+);base64,(.+)$/.exec(url);
+      if (dataMatch) {
+        return {
+          type: "image",
+          source: { type: "base64", media_type: dataMatch[1], data: dataMatch[2] },
+        };
+      }
+      return { type: "image", source: { type: "url", url } };
+    }
+    return { type: "text", text: JSON.stringify(part) };
   });
 }
 
@@ -204,13 +241,12 @@ export function convertToAnthropicMessages(
   return messages
     .filter((msg) => msg.role !== "system")
     .map((msg) => {
-      const content =
-        typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
-
       // Assistant message that invoked tools
       if (msg.role === "assistant" && msg.toolCalls && msg.toolCalls.length > 0) {
+        const text =
+          typeof msg.content === "string" ? msg.content : "";
         const blocks: Array<Record<string, unknown>> = [];
-        if (content) blocks.push({ type: "text", text: content });
+        if (text) blocks.push({ type: "text", text });
         for (const tc of msg.toolCalls) {
           blocks.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.arguments });
         }
@@ -219,17 +255,20 @@ export function convertToAnthropicMessages(
 
       // Tool result message
       if (msg.role === "tool" && msg.toolCallId) {
+        const toolContent = typeof msg.content === "string"
+          ? msg.content
+          : JSON.stringify(msg.content);
         return {
           role: "user",
           content: [
-            { type: "tool_result", tool_use_id: msg.toolCallId, content },
+            { type: "tool_result", tool_use_id: msg.toolCallId, content: toolContent },
           ],
         };
       }
 
       return {
         role: msg.role as "user" | "assistant",
-        content,
+        content: toAnthropicContent(msg.content),
       };
     });
 }

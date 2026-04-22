@@ -3,7 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { builtInWaifus } from '@syntax-senpai/waifu-core'
 import { useChatStore } from './stores/chat'
 import { useTheme } from './composables/use-theme'
-import { useI18n } from './composables/use-i18n'
+import { useI18n, formatLocalizedCost } from './composables/use-i18n'
 import { useIpc } from './composables/use-ipc'
 import ChatBubble from './components/ChatBubble.vue'
 import AppAvatar from './components/AppAvatar.vue'
@@ -97,6 +97,7 @@ const providerOrder = [
   'gemini',
   'mistral',
   'groq',
+  'cohere',
   'minimax-global',
   'minimax-cn',
   'xai',
@@ -162,6 +163,15 @@ const providerMetadata = [
     ],
   },
   {
+    id: 'cohere',
+    displayName: 'Cohere',
+    models: [
+      { id: 'command-r-plus', displayName: 'Command R Plus' },
+      { id: 'command-r', displayName: 'Command R' },
+      { id: 'command-a-03-2025', displayName: 'Command A' },
+    ],
+  },
+  {
     id: 'groq',
     displayName: 'Groq',
     models: [
@@ -215,6 +225,35 @@ const providers = providerOrder
   .map((id) => providerMetadata.find((provider) => provider.id === id))
   .filter(Boolean)
   .map((provider) => ({ value: provider!.id, label: provider!.displayName }))
+
+const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+  'claude-opus-4-1': 200000,
+  'claude-sonnet-4-20250514': 200000,
+  'claude-haiku-4-5-20251001': 200000,
+  'claude-sonnet-4-6': 200000,
+  'claude-opus-4-7': 200000,
+  'gpt-4o': 128000,
+  'gpt-4-turbo': 128000,
+  'gpt-4': 8192,
+  'gpt-4o-mini': 128000,
+  'deepseek-chat': 64000,
+  'deepseek-reasoner': 64000,
+  'gemini-2.0-flash': 1000000,
+  'gemini-1.5-pro': 2000000,
+  'gemini-1.5-flash': 1000000,
+  'mistral-large-latest': 128000,
+  'mistral-medium-latest': 32000,
+  'mistral-small-latest': 32000,
+  'llama-3.1-70b-versatile': 128000,
+  'mixtral-8x7b-32768': 32768,
+  'llama-3.1-8b-instant': 128000,
+  'grok-2-latest': 131072,
+  'MiniMax-Text-01': 1000000,
+  'MiniMax-M1': 1000000,
+  'command-r-plus': 128000,
+  'command-r': 128000,
+  'command-a-03-2025': 256000,
+}
 
 const colorPresets: Array<{
   id: string
@@ -352,7 +391,12 @@ const agentMode = computed({
   set: (v: AgentMode) => store.setAgentMode(v),
 })
 const convSearch = ref('')
+const convSearchMatchIds = ref<Set<string> | null>(null)
+let convSearchTimer: ReturnType<typeof setTimeout> | null = null
 const showMemory = ref(false)
+const agentAllowlist = ref<string[]>([])
+const newAllowCmd = ref('')
+const showAllowlist = ref(false)
 const newMemoryKey = ref('')
 const newMemoryValue = ref('')
 const newMemoryCategory = ref('general')
@@ -377,6 +421,49 @@ function showToast(message: string, type: 'success' | 'error') {
 
 const messagesEndRef = ref<HTMLDivElement>()
 const inputRef = ref<HTMLTextAreaElement>()
+const fileInputRef = ref<HTMLInputElement>()
+const isDraggingFiles = ref(false)
+
+async function ingestFiles(fileList: FileList | null | undefined) {
+  if (!fileList || fileList.length === 0) return
+  for (const file of Array.from(fileList)) {
+    if (!file.type.startsWith('image/')) continue
+    try {
+      await store.addAttachment(file)
+    } catch (err: any) {
+      showToast(err?.message || t('toast.attachmentFailed'), 'error')
+    }
+  }
+}
+
+function handleFilePick(event: Event) {
+  const input = event.target as HTMLInputElement
+  ingestFiles(input.files)
+  // reset so re-selecting the same file still fires @change
+  input.value = ''
+}
+
+async function handlePaste(event: ClipboardEvent) {
+  const items = event.clipboardData?.items
+  if (!items || items.length === 0) return
+  const images: File[] = []
+  for (const item of Array.from(items)) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile()
+      if (file) images.push(file)
+    }
+  }
+  if (images.length === 0) return
+  event.preventDefault()
+  const list = new DataTransfer()
+  for (const f of images) list.items.add(f)
+  await ingestFiles(list.files)
+}
+
+async function handleFileDrop(event: DragEvent) {
+  isDraggingFiles.value = false
+  await ingestFiles(event.dataTransfer?.files)
+}
 
 const filteredConversations = computed(() => {
   let convs = [...store.conversations]
@@ -384,8 +471,12 @@ const filteredConversations = computed(() => {
     convs = convs.filter((c: any) => c.favorited)
   }
   if (convSearch.value) {
-    const q = convSearch.value.toLowerCase()
-    convs = convs.filter((c: any) => (c.title || '').toLowerCase().includes(q))
+    if (convSearchMatchIds.value !== null) {
+      convs = convs.filter((c: any) => convSearchMatchIds.value!.has(c.id))
+    } else {
+      const q = convSearch.value.toLowerCase()
+      convs = convs.filter((c: any) => (c.title || '').toLowerCase().includes(q))
+    }
   }
   return convs.sort((a: any, b: any) => {
     const favoriteDelta = Number(!!b.favorited) - Number(!!a.favorited)
@@ -403,6 +494,23 @@ const currentProviderModels = computed(() =>
   currentProviderMeta.value?.models ||
   [],
 )
+
+const contextWindowSize = computed(() =>
+  MODEL_CONTEXT_WINDOWS[store.selectedModel] ?? 0,
+)
+
+const estimatedTokensUsed = computed(() => {
+  const totalChars = store.messages.reduce((sum: number, m: any) => {
+    const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '')
+    return sum + content.length
+  }, 0)
+  return Math.round(totalChars / 4)
+})
+
+const contextUsagePercent = computed(() => {
+  if (!contextWindowSize.value || !store.messages.length) return 0
+  return Math.min(100, Math.round((estimatedTokensUsed.value / contextWindowSize.value) * 100))
+})
 
 const affectionTier = computed(() => {
   const value = store.affection
@@ -600,6 +708,37 @@ const startupAccentStyle = computed(() => {
   }
 })
 
+const showShortcuts = ref(false)
+
+function onAppError(e: Event) {
+  const detail = (e as CustomEvent).detail
+  const msg = typeof detail === 'string' ? detail : 'Unexpected error'
+  showToast(msg, 'error')
+}
+function onAppRetry(e: Event) {
+  const detail = (e as CustomEvent).detail
+  showToast(typeof detail === 'string' ? detail : 'Retrying…', 'error')
+}
+
+function onGlobalKeydown(e: KeyboardEvent) {
+  const mod = e.metaKey || e.ctrlKey
+  const target = e.target as HTMLElement | null
+  const isTyping = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+
+  // Esc closes the topmost modal.
+  if (e.key === 'Escape') {
+    if (showShortcuts.value) { showShortcuts.value = false; e.preventDefault(); return }
+    if (showSettings.value) { showSettings.value = false; e.preventDefault(); return }
+    if (showAgent.value) { showAgent.value = false; e.preventDefault(); return }
+    if (showModelPicker.value) { showModelPicker.value = false; e.preventDefault(); return }
+    if (showMemory.value) { showMemory.value = false; e.preventDefault(); return }
+    if (showQrPair.value) { showQrPair.value = false; e.preventDefault(); return }
+  }
+  if (mod && e.key.toLowerCase() === 'k' && !isTyping) { e.preventDefault(); store.newChat() }
+  if (mod && e.key === ',') { e.preventDefault(); showSettings.value = true }
+  if (!isTyping && e.key === '?' && e.shiftKey) { e.preventDefault(); showShortcuts.value = !showShortcuts.value }
+}
+
 onMounted(() => {
   ;(async () => {
     store.loadSetup()
@@ -619,6 +758,14 @@ onMounted(() => {
     }
   })
 
+  on('tray:new-chat', () => {
+    store.newChat()
+  })
+
+  window.addEventListener('app:error', onAppError as EventListener)
+  window.addEventListener('app:retry', onAppRetry as EventListener)
+  window.addEventListener('keydown', onGlobalKeydown)
+
   startupSplashTimer = window.setTimeout(() => {
     showStartupSplash.value = false
     nextTick(() => { appReady.value = true })
@@ -629,6 +776,9 @@ onMounted(() => {
 
 onUnmounted(() => {
   removeMobileChatListener?.()
+  window.removeEventListener('app:error', onAppError as EventListener)
+  window.removeEventListener('app:retry', onAppRetry as EventListener)
+  window.removeEventListener('keydown', onGlobalKeydown)
   if (startupSplashTimer !== null) {
     window.clearTimeout(startupSplashTimer)
   }
@@ -730,7 +880,7 @@ async function finalizeSetup(apiKeyValue: string) {
     showModelPicker.value = false
     showSettings.value = false
   } catch (err: any) {
-    alert('Setup failed: ' + (err?.message || 'Unknown error'))
+    showToast((err?.message || t('toast.exportFailed')), 'error')
   }
 }
 
@@ -765,6 +915,129 @@ function readLocalStorageJson(key: string) {
   } catch {
     return null
   }
+}
+
+function bcp47Locale(loc: string): string {
+  switch (loc) {
+    case 'zh': return 'zh-CN'
+    case 'fr': return 'fr-FR'
+    case 'ru': return 'ru-RU'
+    case 'ja': return 'ja-JP'
+    default:   return 'en-US'
+  }
+}
+
+function currencyCodeForLocale(loc: string): string {
+  switch (loc) {
+    case 'zh': return 'CNY'
+    case 'fr': return 'EUR'
+    case 'ru': return 'RUB'
+    case 'ja': return 'JPY'
+    default:   return 'USD'
+  }
+}
+
+function relativeTime(iso: string | number | Date | undefined): string {
+  if (!iso) return ''
+  const ts = new Date(iso).getTime()
+  if (!Number.isFinite(ts)) return ''
+  const diff = Date.now() - ts
+  if (diff < 60_000) return 'now'
+  const m = Math.round(diff / 60_000)
+  if (m < 60) return `${m}m`
+  const h = Math.round(diff / 3_600_000)
+  if (h < 24) return `${h}h`
+  const d = Math.round(diff / 86_400_000)
+  if (d < 7) return `${d}d`
+  const w = Math.round(d / 7)
+  if (w < 5) return `${w}w`
+  const mo = Math.round(d / 30)
+  if (mo < 12) return `${mo}mo`
+  return `${Math.round(d / 365)}y`
+}
+
+watch(convSearch, (q) => {
+  if (convSearchTimer) clearTimeout(convSearchTimer)
+  if (!q || q.length < 2) {
+    convSearchMatchIds.value = null
+    return
+  }
+  convSearchTimer = setTimeout(async () => {
+    const res = await invoke('store:searchConversations', q)
+    if (res?.success && Array.isArray(res.conversationIds)) {
+      convSearchMatchIds.value = new Set(res.conversationIds)
+    }
+  }, 250)
+})
+
+async function exportAuditLog() {
+  try {
+    const res = await invoke('agent:getAudit')
+    if (!res?.success || !res.content) {
+      showToast('No audit log data', 'error')
+      return
+    }
+    const blob = new Blob([res.content], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `agent-audit-${new Date().toISOString().slice(0, 10)}.jsonl`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    showToast('Failed to export audit log', 'error')
+  }
+}
+
+async function loadAllowlist() {
+  const res = await invoke('agent:getAllowlist')
+  if (res?.success) agentAllowlist.value = res.allowlist || []
+}
+
+async function addToAllowlist() {
+  const cmd = newAllowCmd.value.trim()
+  if (!cmd) return
+  await invoke('agent:addAllow', cmd)
+  newAllowCmd.value = ''
+  await loadAllowlist()
+}
+
+async function removeFromAllowlist(cmd: string) {
+  await invoke('agent:removeAllow', cmd)
+  await loadAllowlist()
+}
+
+function exportConversationMarkdown() {
+  if (store.messages.length === 0) return
+  const title = store.conversations.find((c: any) => c.id === store.conversationId)?.title || 'Conversation'
+  const now = new Date()
+  const stamp = now.toISOString().slice(0, 16).replace(/[:T]/g, '-')
+  const lines: string[] = [
+    `# ${title}`,
+    '',
+    `_Exported ${now.toLocaleString()} • Provider: ${store.selectedProvider} • Model: ${store.selectedModel}_`,
+    '',
+  ]
+  for (const m of store.messages) {
+    if (m.id.startsWith('tool-')) {
+      lines.push(`> _tool:_ ${m.content}`, '')
+      continue
+    }
+    const who = m.role === 'user' ? '**You**' : `**${m.waifuDisplayName || store.selectedWaifu?.displayName || 'Assistant'}**`
+    lines.push(`### ${who}`)
+    if (m.timestamp) lines.push(`_${m.timestamp}_`)
+    lines.push('', m.content, '')
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/markdown' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${title.replace(/[^\w.-]+/g, '_').slice(0, 60) || 'conversation'}-${stamp}.md`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+  showToast(t('toast.conversationExported'), 'success')
 }
 
 async function handleExportData() {
@@ -980,6 +1253,50 @@ async function handleImportData() {
        Always mounted so the fade-in/out runs cleanly; visibility is driven by data-rainbow on :root. -->
   <Teleport to="body">
     <div class="rainbow-overlay" aria-hidden="true" />
+  </Teleport>
+
+  <!-- Keyboard shortcuts overlay (? toggle) -->
+  <Teleport to="body">
+    <Transition name="modal-backdrop">
+      <div
+        v-if="showShortcuts"
+        class="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center z-[80]"
+        @click.self="showShortcuts = false"
+      >
+        <div class="modal-glass rounded-2xl p-6 max-w-md w-full mx-4">
+          <h2 class="text-lg font-bold text-white mb-4">{{ t('shortcuts.title') }}</h2>
+          <ul class="space-y-2 text-sm">
+            <li class="flex items-center justify-between gap-3">
+              <span class="text-neutral-300">{{ t('shortcuts.newChat') }}</span>
+              <kbd class="px-2 py-0.5 rounded bg-white/10 text-xs font-mono">⌘/Ctrl K</kbd>
+            </li>
+            <li class="flex items-center justify-between gap-3">
+              <span class="text-neutral-300">{{ t('shortcuts.openSettings') }}</span>
+              <kbd class="px-2 py-0.5 rounded bg-white/10 text-xs font-mono">⌘/Ctrl ,</kbd>
+            </li>
+            <li class="flex items-center justify-between gap-3">
+              <span class="text-neutral-300">{{ t('shortcuts.closeModal') }}</span>
+              <kbd class="px-2 py-0.5 rounded bg-white/10 text-xs font-mono">Esc</kbd>
+            </li>
+            <li class="flex items-center justify-between gap-3">
+              <span class="text-neutral-300">{{ t('shortcuts.showOverlay') }}</span>
+              <kbd class="px-2 py-0.5 rounded bg-white/10 text-xs font-mono">?</kbd>
+            </li>
+            <li class="flex items-center justify-between gap-3">
+              <span class="text-neutral-300">{{ t('shortcuts.sendMessage') }}</span>
+              <kbd class="px-2 py-0.5 rounded bg-white/10 text-xs font-mono">Enter</kbd>
+            </li>
+            <li class="flex items-center justify-between gap-3">
+              <span class="text-neutral-300">{{ t('shortcuts.newline') }}</span>
+              <kbd class="px-2 py-0.5 rounded bg-white/10 text-xs font-mono">Shift Enter</kbd>
+            </li>
+          </ul>
+          <div class="mt-5 flex justify-end">
+            <button class="btn-primary" @click="showShortcuts = false">{{ t('shortcuts.gotIt') }}</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </Teleport>
 
   <!-- Sakura petal overlay (fixed, behind UI content, toggled via theme.ui.petals) -->
@@ -1223,6 +1540,18 @@ async function handleImportData() {
                 class="input-field"
               >
             </div>
+
+            <div class="mb-6">
+              <button
+                class="btn-secondary w-full"
+                @click="loadProviderModels(store.selectedProvider, store.apiKey)"
+              >
+                {{ t('settings.refreshModels') }}
+              </button>
+              <p class="mt-1 text-[10px] text-neutral-500 text-right">
+                {{ t('settings.modelsLoaded', { count: currentProviderModels.length }) }}
+              </p>
+            </div>
           </div>
 
           <!-- Data Tab: export / import -->
@@ -1245,6 +1574,81 @@ async function handleImportData() {
               <p class="mt-3 text-[11px] text-neutral-500">
                 {{ t('settings.importDescription') }}
               </p>
+            </div>
+
+            <div class="settings-card">
+              <div class="mb-3">
+                <h3 class="text-sm font-bold text-white">{{ t('settings.exportMarkdownTitle') }}</h3>
+                <p class="text-xs text-neutral-400">
+                  {{ t('settings.exportMarkdownDesc') }}
+                </p>
+              </div>
+              <button class="btn-secondary w-full" :disabled="store.messages.length === 0" @click="exportConversationMarkdown">
+                {{ t('settings.exportMarkdownButton') }}
+              </button>
+            </div>
+
+            <!-- Agent audit log export -->
+            <div class="settings-card">
+              <div class="mb-3">
+                <h3 class="text-sm font-bold text-white">Agent Audit Log</h3>
+                <p class="text-xs text-neutral-400">Download a JSONL log of every command the agent has run, including outputs and timestamps.</p>
+              </div>
+              <button class="btn-secondary w-full" @click="exportAuditLog">
+                Export Audit Log (.jsonl)
+              </button>
+            </div>
+
+            <!-- Agent command allowlist -->
+            <div class="settings-card">
+              <div class="flex items-center justify-between mb-1">
+                <div>
+                  <h3 class="text-sm font-bold text-white">Command Allowlist</h3>
+                  <p class="text-xs text-neutral-400">Commands the agent may run without a destructive-action dialog.</p>
+                </div>
+                <button
+                  class="text-xs text-primary-400 hover:text-primary-300 font-semibold"
+                  @click="showAllowlist = !showAllowlist; showAllowlist && loadAllowlist()"
+                >
+                  {{ showAllowlist ? 'Hide' : 'Manage' }}
+                </button>
+              </div>
+              <Transition
+                enter-active-class="transition-all duration-150"
+                leave-active-class="transition-all duration-100"
+                enter-from-class="opacity-0 -translate-y-1"
+                leave-to-class="opacity-0 -translate-y-1"
+              >
+                <div v-if="showAllowlist" class="mt-3">
+                  <div class="flex gap-2 mb-3">
+                    <input
+                      v-model="newAllowCmd"
+                      placeholder="command name (e.g. pnpm)"
+                      class="input-field text-sm flex-1"
+                      @keydown.enter="addToAllowlist"
+                    >
+                    <button class="btn-primary text-sm px-4" @click="addToAllowlist">Add</button>
+                  </div>
+                  <div class="space-y-1 max-h-36 overflow-y-auto">
+                    <div
+                      v-for="cmd in agentAllowlist"
+                      :key="cmd"
+                      class="flex items-center justify-between px-3 py-1.5 rounded-lg bg-neutral-800/40 border border-neutral-700/30 group"
+                    >
+                      <code class="text-xs text-emerald-400 font-mono">{{ cmd }}</code>
+                      <button
+                        class="text-xs text-neutral-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all duration-150"
+                        @click="removeFromAllowlist(cmd)"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div v-if="agentAllowlist.length === 0" class="text-xs text-neutral-500 text-center py-2">
+                      No commands in allowlist
+                    </div>
+                  </div>
+                </div>
+              </Transition>
             </div>
           </div>
 
@@ -1704,8 +2108,8 @@ async function handleImportData() {
           <div v-if="settingsTab === 'mobile'">
             <!-- Connection Status -->
             <div class="settings-card">
-              <h3 class="text-sm font-bold text-white mb-1">Desktop Connection</h3>
-              <p class="text-xs text-neutral-400 mb-4">Pair your phone to use the chatbot remotely via your local network.</p>
+              <h3 class="text-sm font-bold text-white mb-1">{{ t('mobile.title') }}</h3>
+              <p class="text-xs text-neutral-400 mb-4">{{ t('mobile.description') }}</p>
 
               <div class="flex items-center gap-2 mb-4">
                 <div
@@ -1713,26 +2117,26 @@ async function handleImportData() {
                   :class="mobilePairedDevice ? 'bg-emerald-400' : 'bg-neutral-600'"
                 />
                 <span class="text-sm text-neutral-300">
-                  {{ mobilePairedDevice ? `Connected: ${mobilePairedDevice}` : 'No device connected' }}
+                  {{ mobilePairedDevice ? t('mobile.connected', { device: mobilePairedDevice }) : t('mobile.noDevice') }}
                 </span>
               </div>
 
               <div class="flex gap-2">
                 <button class="btn-primary flex-1" @click="showQrPair = true; showSettings = false">
-                  Show QR Code
+                  {{ t('mobile.showQr') }}
                 </button>
                 <button
                   v-if="mobilePairedDevice"
                   class="btn-secondary flex-1"
                   @click="invoke('ws:stop').then(() => { mobilePairedDevice = null })"
                 >
-                  Disconnect
+                  {{ t('mobile.disconnect') }}
                 </button>
               </div>
             </div>
 
             <div class="flex gap-2">
-              <button class="btn-primary flex-1" @click="showSettings = false">Done</button>
+              <button class="btn-primary flex-1" @click="showSettings = false">{{ t('mobile.done') }}</button>
             </div>
           </div>
           </div>
@@ -2101,46 +2505,42 @@ async function handleImportData() {
           <p v-if="filteredConversations.length === 0" class="text-xs text-neutral-500 text-center py-4">
             {{ store.sidebarFilter === 'favorites' ? t('sidebar.noFavorites') : t('sidebar.noConversations') }}
           </p>
-          <ul class="space-y-1.5">
+          <ul class="space-y-px">
             <li
               v-for="c in filteredConversations"
               :key="c.id"
               :class="[
-                'flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer group',
-                'transition-all duration-160',
+                'flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer group',
+                'transition-colors duration-150',
                 store.conversationId === c.id
-                  ? 'themed-active-item text-white shadow-lg'
-                  : 'hover:bg-white/4 text-neutral-300',
+                  ? 'themed-active-item text-white'
+                  : 'hover:bg-white/5 text-neutral-300',
               ]"
+              :title="`${c.title}\nUpdated ${new Date(c.updatedAt).toLocaleString()}${c.messageCount ? ` • ${c.messageCount} messages` : ''}`"
               @click="store.selectConversation(c.id)"
             >
-              <AppAvatar :name="c.title || store.selectedWaifu?.displayName" :size="32" />
-              <div class="flex-1 min-w-0">
-                <div class="text-sm font-semibold truncate">
-                  {{ c.title }}
-                </div>
-                <div class="text-xs text-neutral-400 flex items-center gap-1">
-                  {{ new Date(c.updatedAt).toLocaleString() }}
-                  <span v-if="c.messageCount" class="text-neutral-500">({{ c.messageCount }})</span>
-                </div>
+              <span
+                v-if="c.favorited"
+                class="text-amber-400 text-[11px] leading-none shrink-0"
+                title="Favorite"
+              >★</span>
+              <div class="flex-1 min-w-0 flex items-baseline gap-1.5 overflow-hidden">
+                <span class="text-[13px] font-medium truncate">{{ c.title }}</span>
+                <span class="text-[10px] text-neutral-500 shrink-0 tabular-nums">{{ relativeTime(c.updatedAt) }}</span>
               </div>
-              <div class="flex gap-0.5 shrink-0 items-center">
-                <!-- Favorite star -->
+              <div class="flex gap-0.5 shrink-0 items-center opacity-0 group-hover:opacity-100 transition-opacity duration-150">
                 <button
                   :class="[
-                    'text-sm px-1 transition-all duration-150',
-                    c.favorited
-                      ? 'text-amber-400 opacity-100'
-                      : 'opacity-0 group-hover:opacity-60 hover:!opacity-100 text-neutral-400',
+                    'text-[11px] leading-none px-1 transition-colors',
+                    c.favorited ? 'text-amber-400' : 'text-neutral-400 hover:text-amber-300',
                   ]"
                   title="Toggle favorite"
                   @click.stop="store.toggleFavorite(c.id)"
                 >
                   {{ c.favorited ? '★' : '☆' }}
                 </button>
-                <!-- Delete -->
                 <button
-                  class="text-xs px-1 opacity-0 group-hover:opacity-60 hover:!opacity-100 text-neutral-400 hover:text-red-400 transition-all duration-150"
+                  class="text-[11px] leading-none px-1 text-neutral-400 hover:text-red-400 transition-colors"
                   title="Delete"
                   @click.stop="store.deleteConversation(c.id)"
                 >
@@ -2224,6 +2624,56 @@ async function handleImportData() {
         </div>
       </div>
 
+      <!-- Usage + todo status strip (only when there's something to show) -->
+      <div
+        v-if="store.usageTotals.turns > 0 || store.activeTodoList.length > 0 || (contextWindowSize > 0 && store.messages.length > 0)"
+        class="px-4 py-2 border-b border-white/5 flex items-center gap-4 text-[11px] text-neutral-400"
+      >
+        <div v-if="store.usageTotals.turns > 0" class="flex items-center gap-3 font-mono">
+          <span :title="t('usage.promptTokens')">
+            ↑ {{ store.usageTotals.promptTokens.toLocaleString(bcp47Locale(locale)) }}
+          </span>
+          <span :title="t('usage.completionTokens')">
+            ↓ {{ store.usageTotals.completionTokens.toLocaleString(bcp47Locale(locale)) }}
+          </span>
+          <span :title="t('usage.estCost', { currency: currencyCodeForLocale(locale) })">
+            ≈ {{ formatLocalizedCost(store.usageTotals.costUsd, locale) }}
+          </span>
+        </div>
+        <div
+          v-if="contextWindowSize > 0 && store.messages.length > 0"
+          class="flex items-center gap-2 ml-auto"
+          :title="`~${estimatedTokensUsed.toLocaleString()} / ${contextWindowSize.toLocaleString()} tokens (estimated)`"
+        >
+          <span class="font-mono">ctx</span>
+          <div class="w-24 h-1.5 rounded-full bg-neutral-700/50 overflow-hidden">
+            <div
+              class="h-full rounded-full transition-all duration-500"
+              :class="contextUsagePercent >= 90 ? 'bg-red-400' : contextUsagePercent >= 70 ? 'bg-amber-400' : 'bg-emerald-500/70'"
+              :style="{ width: contextUsagePercent + '%' }"
+            />
+          </div>
+          <span :class="contextUsagePercent >= 90 ? 'text-red-400' : contextUsagePercent >= 70 ? 'text-amber-400' : ''">
+            {{ contextUsagePercent }}%
+          </span>
+        </div>
+        <div v-if="store.activeTodoList.length > 0" class="flex-1 flex flex-wrap gap-x-3 gap-y-1">
+          <span
+            v-for="item in store.activeTodoList"
+            :key="item.id"
+            :class="[
+              'flex items-center gap-1',
+              item.status === 'done' ? 'text-emerald-300 line-through opacity-75' :
+              item.status === 'in_progress' ? 'text-primary-300 font-semibold' :
+              'text-neutral-400',
+            ]"
+          >
+            <span>{{ item.status === 'done' ? '☑' : item.status === 'in_progress' ? '▸' : '☐' }}</span>
+            <span>{{ item.text }}</span>
+          </span>
+        </div>
+      </div>
+
       <!-- Messages -->
       <div :class="['flex-1 overflow-y-auto p-4 space-y-4', !startupAnimDone && appReady ? 'app-fade-in-scale' : '', !appReady ? 'opacity-0' : '']">
         <div
@@ -2254,7 +2704,7 @@ async function handleImportData() {
             v-for="msg in store.messages"
             :key="msg.id"
             :class="[
-              'flex',
+              'group flex',
               msg.role === 'user' ? 'justify-end items-end' : 'justify-start items-start',
             ]"
           >
@@ -2281,6 +2731,38 @@ async function handleImportData() {
                 :recent="msg.id === store.recentMessageId"
                 :show-copy="msg.role === 'assistant'"
               />
+              <div
+                v-if="msg.attachments && msg.attachments.length > 0"
+                :class="['flex flex-wrap gap-2 mt-1.5', msg.role === 'user' ? 'justify-end' : 'justify-start']"
+              >
+                <img
+                  v-for="att in msg.attachments"
+                  :key="att.id"
+                  :src="att.url"
+                  :alt="att.name"
+                  :title="att.name"
+                  class="max-h-40 max-w-[240px] rounded-lg border border-white/10 object-cover"
+                />
+              </div>
+              <div
+                v-if="msg.role === 'assistant' && !msg.id.startsWith('tool-')"
+                class="flex gap-2 mt-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+              >
+                <button
+                  class="text-[11px] text-neutral-500 hover:text-primary-300 transition-colors"
+                  :title="t('message.regenerateTitle')"
+                  @click="store.regenerateFromMessage(msg.id)"
+                >
+                  {{ t('message.regenerate') }}
+                </button>
+                <button
+                  class="text-[11px] text-neutral-500 hover:text-red-400 transition-colors"
+                  :title="t('message.deleteTitle')"
+                  @click="store.deleteMessage(msg.id)"
+                >
+                  {{ t('message.delete') }}
+                </button>
+              </div>
             </div>
 
             <div v-if="msg.role === 'user'" class="ml-3 shrink-0">
@@ -2305,10 +2787,55 @@ async function handleImportData() {
 
       <!-- Input -->
       <div
-        :class="['glass-surface border-t p-4', !startupAnimDone && appReady ? 'app-slide-in-bottom' : '', !appReady ? 'opacity-0' : '']"
+        :class="['glass-surface border-t p-4 relative', !startupAnimDone && appReady ? 'app-slide-in-bottom' : '', !appReady ? 'opacity-0' : '']"
         :style="secondaryPanelStyle"
+        @dragover.prevent="isDraggingFiles = true"
+        @dragleave.prevent="isDraggingFiles = false"
+        @drop.prevent="handleFileDrop"
       >
+        <div
+          v-if="isDraggingFiles"
+          class="absolute inset-0 rounded-xl bg-primary-500/15 border-2 border-dashed border-primary-400/60 flex items-center justify-center text-sm text-primary-100 font-semibold pointer-events-none z-10"
+        >
+          {{ t('input.dropHint') }}
+        </div>
+
+        <!-- Pending-attachment thumbnail row -->
+        <div v-if="store.pendingAttachments.length > 0" class="flex flex-wrap gap-2 mb-2">
+          <div
+            v-for="att in store.pendingAttachments"
+            :key="att.id"
+            class="relative group rounded-lg overflow-hidden border border-white/10 bg-black/30"
+            :title="att.name"
+          >
+            <img :src="att.url" :alt="att.name" class="h-16 w-16 object-cover" />
+            <button
+              class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+              :title="t('input.removeAttachment', { name: att.name })"
+              @click="store.removeAttachment(att.id)"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+
         <div class="flex gap-3 items-end">
+          <input
+            ref="fileInputRef"
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            multiple
+            class="hidden"
+            @change="handleFilePick"
+          />
+          <button
+            class="btn-ghost min-w-fit !px-2"
+            :title="t('input.attachImage')"
+            :disabled="store.isLoading"
+            @click="fileInputRef?.click()"
+          >
+            📎
+          </button>
           <textarea
             ref="inputRef"
             v-model="store.inputValue"
@@ -2323,11 +2850,12 @@ async function handleImportData() {
             :style="inputSurfaceStyle"
             @input="adjustInputHeight"
             @keydown="handleKeyDown"
+            @paste="handlePaste"
           />
           <button
             class="btn-primary themed-btn-primary min-w-fit flex items-center justify-center gap-2"
             :style="primaryButtonStyle"
-            :disabled="!store.inputValue.trim() || store.isLoading"
+            :disabled="(!store.inputValue.trim() && store.pendingAttachments.length === 0) || store.isLoading"
             @click="store.sendMessage(store.inputValue)"
           >
             {{ store.isLoading ? t('chat.sending') : t('chat.send') }}

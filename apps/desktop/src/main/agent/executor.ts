@@ -1,3 +1,17 @@
+// ────────────────────────────────────────────────────────────────────────────
+// DORMANT: this file is NOT wired into the current agent path.
+//
+// Today the renderer agent tools call the unified handlers in ipc/terminal.ts
+// and ipc/filesystem.ts. Those handlers do NOT consult the allowlist or audit
+// log implemented here. Destructive-command gating lives in ipc/terminal.ts
+// (DESTRUCTIVE_PATTERNS + dialog.showMessageBox).
+//
+// Keeping this module around because the allowlist + JSONL audit log are a
+// solid starting point if we later want a stricter "ask" / corporate mode.
+// To re-wire: replace the bodies of terminal:exec / fs:* IPC handlers to call
+// runCommand / readFile / writeFile from here instead of the direct calls.
+// ────────────────────────────────────────────────────────────────────────────
+
 const { spawn } = require('child_process')
 const fs = require('fs').promises
 const fssync = require('fs')

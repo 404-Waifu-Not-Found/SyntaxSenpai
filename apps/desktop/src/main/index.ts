@@ -18,8 +18,9 @@ if (typeof electronModule === 'string') {
   process.exit(0)
 }
 
-const { app, BrowserWindow, ipcMain, shell } = electronModule
+const { app, BrowserWindow, ipcMain, shell, clipboard, globalShortcut, Tray, Menu, nativeImage } = electronModule
 const { join } = require('path')
+const fs = require('fs')
 import { registerChatIpc } from './ipc/chat'
 import { registerAgentIpc } from './ipc/agent'
 import { registerKeystoreIpc } from './ipc/keystore'
@@ -34,6 +35,73 @@ import { startWsServer } from './ws-server'
 const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow: any = null
+let tray: any = null
+
+function toggleMainWindow() {
+  if (!mainWindow) {
+    createWindow()
+    return
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  if (mainWindow.isVisible() && mainWindow.isFocused()) {
+    mainWindow.hide()
+  } else {
+    mainWindow.show()
+    mainWindow.focus()
+  }
+}
+
+function resolveIconPath(): string {
+  // Try common locations, fall back to the repo-level icon.png for dev.
+  const candidates = [
+    join(__dirname, '..', 'renderer', 'icon.png'),
+    join(__dirname, '..', '..', 'icon.png'),
+    join(process.cwd(), 'icon.png'),
+    join(process.cwd(), '..', '..', 'icon.png'),
+  ]
+  for (const p of candidates) {
+    try { if (fs.existsSync(p)) return p } catch { /* ignore */ }
+  }
+  return ''
+}
+
+function setupTray() {
+  try {
+    const iconPath = resolveIconPath()
+    let image: any
+    if (iconPath) {
+      image = nativeImage.createFromPath(iconPath)
+      if (!image.isEmpty()) {
+        // macOS menubar likes ~22x22 template images
+        image = image.resize({ width: 22, height: 22 })
+      }
+    }
+    tray = image && !image.isEmpty() ? new Tray(image) : new Tray(nativeImage.createEmpty())
+    tray.setToolTip('SyntaxSenpai')
+    const menu = Menu.buildFromTemplate([
+      { label: 'Show / Hide', click: () => toggleMainWindow() },
+      { label: 'New chat', accelerator: 'CmdOrCtrl+Shift+N', click: () => {
+        toggleMainWindow()
+        mainWindow?.webContents.send('tray:new-chat')
+      } },
+      { type: 'separator' },
+      { label: 'Quit SyntaxSenpai', click: () => app.quit() },
+    ])
+    tray.setContextMenu(menu)
+    tray.on('click', () => toggleMainWindow())
+  } catch (err) {
+    console.warn('[main] tray setup failed:', err)
+  }
+}
+
+function registerGlobalShortcuts() {
+  try {
+    const registered = globalShortcut.register('CommandOrControl+Shift+Space', () => toggleMainWindow())
+    if (!registered) console.warn('[main] global shortcut not registered (already bound elsewhere?)')
+  } catch (err) {
+    console.warn('[main] globalShortcut failed:', err)
+  }
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -44,6 +112,9 @@ function createWindow(): void {
     acceptFirstMouse: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
+      // sandbox:false is required — the preload script uses Node.js require()
+      // to bridge native APIs (keytar, node:fs) into the context-isolated
+      // renderer. The sandbox would block require() in the preload layer.
       sandbox: false,
       nodeIntegration: false,
       contextIsolation: true
@@ -61,6 +132,39 @@ function createWindow(): void {
     mainWindow = null
   })
 }
+
+function writeCrashLog(kind: string, err: any) {
+  try {
+    const line = `[${new Date().toISOString()}] ${kind}: ${err && err.stack ? err.stack : String(err)}\n`
+    const logPath = join(app.getPath('userData'), 'crash.log')
+    fs.appendFileSync(logPath, line)
+  } catch {
+    /* best effort */
+  }
+}
+
+process.on('uncaughtException', (err: any) => {
+  console.error('[main] uncaughtException:', err)
+  writeCrashLog('uncaughtException', err)
+})
+
+process.on('unhandledRejection', (reason: any) => {
+  console.error('[main] unhandledRejection:', reason)
+  writeCrashLog('unhandledRejection', reason)
+})
+
+// Simple clipboard IPC — lets the agent read/write the system clipboard
+// without reaching for shell invocations.
+ipcMain.handle('clipboard:read', () => {
+  try { return { success: true, text: clipboard.readText() } } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+ipcMain.handle('clipboard:write', (_e: any, text: string) => {
+  try { clipboard.writeText(String(text ?? '')); return { success: true } } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
 
 app.whenReady().then(() => {
   createWindow()
@@ -84,10 +188,18 @@ app.whenReady().then(() => {
   registerExportIpc()
   registerWsIpc()
   startWsServer().catch((err) => console.error('[ws-server] Failed to start:', err))
+
+  setupTray()
+  registerGlobalShortcuts()
+})
+
+app.on('will-quit', () => {
+  try { globalShortcut.unregisterAll() } catch { /* ignore */ }
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  // On macOS + Linux with a tray, keep the process alive. On Windows, quit.
+  if (process.platform === 'win32') {
     app.quit()
   }
 })
@@ -95,6 +207,8 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (mainWindow === null) {
     createWindow()
+  } else {
+    mainWindow.show()
   }
 })
 

@@ -19,15 +19,19 @@ An AI-powered companion app where users pick a personalized "waifu" through a da
 
 Every interaction is delivered in-character, blending emotional engagement with real productivity.
 
+> **Current status:** see [STATE.md](./STATE.md) for an accurate snapshot of what's built. Older `*_COMPLETE.md`, `*_STATUS.md`, `NEXT_STEPS.md`, `IMPLEMENTATION_PLAN.md`, `SESSION_SUMMARY.md`, `TODAY_COMPLETED.txt` predate the current state and are kept only for history.
+
 ## Features
 
-- **Multi-provider AI** — Anthropic, OpenAI, DeepSeek, Gemini, Mistral, Groq, xAI, MiniMax, Hugging Face, GitHub Models
+- **19 AI providers** — Anthropic, OpenAI, OpenAI Codex, Gemini, Mistral, Groq, DeepSeek, Perplexity, Together, xAI (2 endpoints), Hugging Face, GitHub Models, MiniMax (global + CN), Fireworks, Azure OpenAI, Ollama, LM Studio
 - **Waifu personalities** — distinct characters with unique tones and backstories
-- **Agent modes** — ask-before-running, auto-edit, or full-access
+- **Agent modes** — ask / auto / full; plan-and-verify workflow with iteration-budget feedback
+- **Agent tools** — terminal (with destructive-pattern gating), read/write/edit_file, clipboard, git_status / git_diff, web_search, todo_write, Spotify
 - **Affection system** — relationship meter that evolves with conversation
 - **AI memory** — persistent memory across all chats
-- **Theming** — full color customization with rainbow mode
-- **Desktop & mobile** — Electron desktop app and mobile target
+- **Theming** — 17 presets including live rainbow hue-cycle and sakura-petals overlay
+- **Chat niceties** — image attachments (paste / drop / paperclip), token + cost counter, per-message regenerate/delete, Markdown export, keyboard shortcuts, tray icon + global shortcut
+- **Desktop & mobile** — Electron desktop app with QR pairing to React Native mobile
 - **Runtime ops** — health probes, Prometheus metrics, Grafana dashboards, container builds, and Kubernetes manifests
 - **Backups** — export and restore chat + memory snapshots from the runtime API
 - **Plugin system** — manifest-based tool plugins for extending agent capabilities

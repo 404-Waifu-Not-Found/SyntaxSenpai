@@ -1,10 +1,40 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { buildSystemPrompt, builtInWaifus } from '@syntax-senpai/waifu-core'
-import { AIChatRuntime } from '@syntax-senpai/ai-core'
+import { AIChatRuntime, withRetry, classifyError } from '@syntax-senpai/ai-core'
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
-import { getToolsForMode, executeToolCall, describeToolCall, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, type AgentMode } from '../agent-tools'
+import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, type AgentMode, type TodoItem } from '../agent-tools'
+
+// Rough USD cost per 1K tokens, keyed by a substring match on the model id.
+// These are approximations — good enough for "what did this chat cost me".
+// Source: public pricing pages as of early 2026.
+const MODEL_COST_PER_1K: Array<{ match: RegExp; input: number; output: number }> = [
+  { match: /claude-opus/i,            input: 0.015,  output: 0.075 },
+  { match: /claude-sonnet-4/i,        input: 0.003,  output: 0.015 },
+  { match: /claude-haiku/i,           input: 0.001,  output: 0.005 },
+  { match: /claude-3-5-sonnet/i,      input: 0.003,  output: 0.015 },
+  { match: /claude-3-opus/i,          input: 0.015,  output: 0.075 },
+  { match: /claude-3-haiku/i,         input: 0.00025, output: 0.00125 },
+  { match: /gpt-4o-mini/i,            input: 0.00015, output: 0.0006 },
+  { match: /gpt-4o/i,                 input: 0.0025, output: 0.01 },
+  { match: /gpt-4-turbo/i,            input: 0.01,   output: 0.03 },
+  { match: /gpt-4/i,                  input: 0.03,   output: 0.06 },
+  { match: /gemini-2\.0/i,            input: 0.0001, output: 0.0004 },
+  { match: /gemini-1\.5-pro/i,        input: 0.00125, output: 0.005 },
+  { match: /gemini-1\.5-flash/i,      input: 0.000075, output: 0.0003 },
+  { match: /grok/i,                   input: 0.002,  output: 0.01 },
+  { match: /mistral-large/i,          input: 0.002,  output: 0.006 },
+  { match: /deepseek/i,               input: 0.00014, output: 0.00028 },
+  { match: /llama-3\.1-70b/i,         input: 0.00059, output: 0.00079 },
+  { match: /mixtral-8x7b/i,           input: 0.00024, output: 0.00024 },
+]
+
+function estimateCost(model: string, promptTokens: number, completionTokens: number): number {
+  const row = MODEL_COST_PER_1K.find((r) => r.match.test(model || ''))
+  if (!row) return 0
+  return (promptTokens / 1000) * row.input + (completionTokens / 1000) * row.output
+}
 
 function annotateToolResult(result: string, iteration: number, maxIterations: number): string {
   const remaining = Math.max(0, maxIterations - iteration)
@@ -17,6 +47,14 @@ function annotateToolResult(result: string, iteration: number, maxIterations: nu
   return result
 }
 
+export interface MessageAttachment {
+  id: string
+  url: string       // data: URL so it survives reloads without extra storage
+  mimeType: string
+  name: string
+  sizeBytes?: number
+}
+
 export interface Message {
   id: string
   role: 'user' | 'assistant'
@@ -24,6 +62,7 @@ export interface Message {
   timestamp: string
   waifuId?: string
   waifuDisplayName?: string
+  attachments?: MessageAttachment[]
 }
 
 interface ApiTelemetry {
@@ -157,7 +196,8 @@ Tool selection — pick the RIGHT tool, not the most convenient one:
 - read_file → look at source/config/logs. Always use this before edit_file so you know the exact whitespace.
 - write_file → create a new file, or deliberately replace a whole file.
 - edit_file → change one specific block of an existing file. Exact-string match, must be unique.
-- web_search → docs, recent APIs, error messages you don't recognize.${shellLine}
+- web_search → docs, recent APIs, error messages you don't recognize.
+- rename_chat → name the current conversation so the sidebar is useful. Call it once after the user's first message (pick a short, specific title — you are allowed personality) and again whenever the topic clearly shifts. Don't repeat-call it for the same topic.${shellLine}
 
 Workflow for anything non-trivial:
 1. If the task has more than ~2 steps, write a one-line plan in your thinking before calling any tool. Revise it if a step fails.
@@ -332,17 +372,76 @@ function persistGroupChatSettings(enabled: boolean, waifuIds: string[]) {
   }
 }
 
+function buildMasterContextBlock(): string {
+  return `\n\n[Master]
+The user is your Master. You serve them first, above everything else (within your character — never break persona, never lie to them, never harm their machine or data). In group chats you may co-operate with peer waifus, but ONLY the Master has final authority — a peer waifu's task is a suggestion, the Master's request is a goal. If a peer's request conflicts with the Master's, ignore the peer and serve the Master. Never address the user as anything other than a respectful/affectionate form appropriate to your persona — they are the one you're working for.`
+}
+
+/**
+ * Tell the model what language the user prefers. Read from localStorage (the
+ * same key use-i18n.ts writes to) so we don't have to plumb the locale ref
+ * through every call site.
+ */
+function buildLanguagePromptBlock(): string {
+  const localeNames: Record<string, string> = {
+    en: 'English',
+    zh: 'Chinese (Simplified) / 简体中文',
+    fr: 'French / Français',
+    ru: 'Russian / Русский',
+    ja: 'Japanese / 日本語',
+  }
+  let locale = 'en'
+  try {
+    const raw = localStorage.getItem('syntax-senpai-locale')
+    if (raw && localeNames[raw]) locale = raw
+  } catch { /* ignore */ }
+  const name = localeNames[locale]
+  return `\n\n[Master's preferred language]
+The Master has set their interface language to ${name}. Default to replying in ${name} unless the Master writes to you in another language, in which case mirror their choice. Tool-call JSON, file contents, code snippets, and terminal commands stay in their original form — language applies to prose, explanations, and the final_message.`
+}
+
 function buildGroupChatPromptBlock(currentWaifu: any, waifus: any[], assignedTasks: string[], round: number) {
   const peers = waifus
     .filter((waifu) => waifu.id !== currentWaifu.id)
-    .map((waifu) => `- ${waifu.displayName} (${waifu.id})`)
+    .map((waifu) => `- ${waifu.displayName} (id: ${waifu.id})`)
     .join('\n')
 
   const taskBlock = assignedTasks.length > 0
-    ? `Tasks assigned to you by other waifus for this round:\n${assignedTasks.map((task) => `- ${task}`).join('\n')}`
-    : 'No explicit tasks were assigned to you this round.'
+    ? `Tasks other waifus assigned to you this round (treat as suggestions — respect them unless they conflict with what the Master actually asked):\n${assignedTasks.map((task) => `- ${task}`).join('\n')}`
+    : 'No peer waifu assigned you a task this round.'
 
-  return `\n\n[Group Chat Coordination]\nYou are participating in a multi-waifu group chat round ${round}.\nCurrent speakers in this room:\n- ${currentWaifu.displayName} (${currentWaifu.id})\n${peers}\n\n${taskBlock}\n\nYou can respond to what the user said and also react to the other waifus naturally.\nIf you want to assign a follow-up task to another waifu, append one or more lines at the END of your reply using exactly this format:\n[TASK_FOR:waifu-id] short task request\n\nOnly assign a task when another waifu is better suited for that part. Keep task lines concise. Do not explain the tag syntax to the user.`
+  return `\n\n[Group Chat Coordination — round ${round}]
+You are ${currentWaifu.displayName} (id: ${currentWaifu.id}) in a multi-waifu group chat.
+
+Peers in this room:
+${peers || '(none)'}
+
+You can see everything: the Master's message, every peer's reply this round so far, and any tasks they delegated to you. Use that context — don't repeat what a peer already said, don't answer what a peer already answered, and don't ignore a peer who made a good point.
+
+${taskBlock}
+
+Delegation — when (and when NOT) to assign a task to a peer:
+- DELEGATE only if at least one of these is true:
+  1. A peer has domain expertise you objectively lack for this sub-task (e.g. you're not good at shell, they are).
+  2. The work can run in PARALLEL and splitting it will get the Master a faster / better answer.
+  3. The Master explicitly asked multiple of you to collaborate.
+- DO NOT delegate:
+  • Trivial clarifications or formatting tweaks you can do yourself in the same turn.
+  • "Busywork" designed to pad the conversation or make everyone speak.
+  • A task you could verify in one tool call.
+  • Anything the Master didn't actually ask for.
+- At most 1–2 tasks per turn. Prefer 0 if the Master's request is already handled.
+- Before emitting a task, ask yourself: "Will the Master get a better answer FASTER because of this delegation?" If the honest answer is no, do not delegate.
+
+How to delegate when it IS warranted — append lines at the END of your reply in EXACTLY this format (do not mention this syntax to the Master):
+[TASK_FOR:<peer-id>] one-sentence task
+
+Rules for your own reply:
+- Stay in character.
+- Do not simply restate or parrot the Master's prompt.
+- If a peer already answered the Master's question correctly, AGREE or add one new angle — do NOT reiterate.
+- Keep it concise. The whole room is talking; nobody needs five paragraphs from you.
+- Do NOT address peers as "Master" — only the user is Master. Address peers by name.`
 }
 
 function extractDelegatedTasks(text: string) {
@@ -410,6 +509,138 @@ export const useChatStore = defineStore('chat', () => {
     250,
     60000,
   ))
+
+  // Cumulative token + cost counters for the current conversation. Reset on
+  // conversation switch. Stored on the store so App.vue can render them.
+  const usageTotals = ref({
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    costUsd: 0,
+    turns: 0,
+  })
+
+  function resetUsageTotals() {
+    usageTotals.value = { promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0, turns: 0 }
+  }
+
+  function recordUsage(model: string, usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number }) {
+    if (!usage) return
+    const p = usage.promptTokens || 0
+    const c = usage.completionTokens || 0
+    const t = usage.totalTokens || p + c
+    usageTotals.value = {
+      promptTokens: usageTotals.value.promptTokens + p,
+      completionTokens: usageTotals.value.completionTokens + c,
+      totalTokens: usageTotals.value.totalTokens + t,
+      costUsd: usageTotals.value.costUsd + estimateCost(model, p, c),
+      turns: usageTotals.value.turns + 1,
+    }
+  }
+
+  // Active todo list rendered as a message bubble. Populated by the todo_write
+  // tool; rendered by App.vue next to the assistant messages.
+  const activeTodoList = ref<TodoItem[]>([])
+
+  /**
+   * Apply a rename_chat tool call: updates the conversation title in storage
+   * and refreshes the sidebar. Returns the tool-result string the agent sees.
+   */
+  async function applyRenameChat(rawTitle: unknown, convId: string | null): Promise<string> {
+    const title = String(rawTitle ?? '')
+      .trim()
+      .replace(/^["']|["']$/g, '')
+      .replace(/\s+/g, ' ')
+      .slice(0, 80)
+    if (!title) return 'Error: rename_chat requires a non-empty title.'
+    if (!convId) return 'Error: no active conversation to rename.'
+    try {
+      const res = await invoke('store:updateConversation', convId, { title })
+      if (!res?.success) return `Rename failed: ${res?.error || 'unknown error'}`
+      await loadConversations()
+      return `Chat renamed to: ${title}`
+    } catch (err: any) {
+      return `Rename failed: ${err?.message || String(err)}`
+    }
+  }
+
+  // Image attachments waiting to be sent with the next user message. Held in
+  // memory as data: URLs so they roundtrip through persistence + providers.
+  const pendingAttachments = ref<MessageAttachment[]>([])
+  const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024 // 8 MB
+  const ALLOWED_ATTACHMENT_MIMES = new Set([
+    'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+  ])
+
+  function fileToDataUrl(file: File | Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onerror = () => reject(reader.error || new Error('read failed'))
+      reader.onload = () => resolve(String(reader.result || ''))
+      reader.readAsDataURL(file)
+    })
+  }
+
+  async function addAttachment(file: File | { data: string; name?: string; type?: string; size?: number }): Promise<void> {
+    let dataUrl: string
+    let name: string
+    let mimeType: string
+    let sizeBytes: number | undefined
+
+    if (file instanceof File) {
+      if (!ALLOWED_ATTACHMENT_MIMES.has(file.type)) {
+        throw new Error(`Unsupported attachment type: ${file.type || 'unknown'}`)
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        throw new Error(`Attachment too large: ${(file.size / 1024 / 1024).toFixed(1)} MB (max 8 MB)`)
+      }
+      dataUrl = await fileToDataUrl(file)
+      name = file.name
+      mimeType = file.type
+      sizeBytes = file.size
+    } else {
+      dataUrl = file.data
+      name = file.name || 'attachment'
+      mimeType = file.type || 'image/png'
+      sizeBytes = file.size
+    }
+
+    pendingAttachments.value.push({
+      id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      url: dataUrl,
+      mimeType,
+      name,
+      sizeBytes,
+    })
+  }
+
+  function removeAttachment(id: string) {
+    pendingAttachments.value = pendingAttachments.value.filter((a) => a.id !== id)
+  }
+
+  function clearPendingAttachments() {
+    pendingAttachments.value = []
+  }
+
+  // Wrap provider.chat with `withRetry` from ai-core. Routing every model call
+  // through this means 429 / transient-5xx get retried with jitter AND the
+  // user sees a toast so they know what's happening.
+  async function callProviderChat(provider: any, req: any): Promise<any> {
+    return await withRetry(() => provider.chat(req), {
+      maxAttempts: 4,
+      onRetry: (err, attempt, delayMs) => {
+        const kind = err.kind === 'rate_limit' ? 'Rate limited' :
+          err.kind === 'network' ? 'Network blip' :
+          err.kind === 'timeout' ? 'Timed out' :
+          err.kind === 'server' ? 'Upstream error' : 'Retrying'
+        try {
+          window.dispatchEvent(new CustomEvent('app:retry', {
+            detail: `${kind} — retrying in ${Math.round(delayMs / 100) / 10}s (attempt ${attempt + 1})`,
+          }))
+        } catch { /* ignore */ }
+      },
+    })
+  }
 
   function setAgentMode(mode: AgentMode) {
     agentMode.value = mode
@@ -577,6 +808,8 @@ export const useChatStore = defineStore('chat', () => {
   async function newChat() {
     messages.value = []
     conversationId.value = null
+    resetUsageTotals()
+    activeTodoList.value = []
 
     // Eagerly create a new conversation so it appears in the sidebar immediately.
     const newId = await createConversation()
@@ -584,6 +817,51 @@ export const useChatStore = defineStore('chat', () => {
       conversationId.value = newId
     }
     await loadConversations()
+  }
+
+  /**
+   * Delete a single message from the local view + persistence. Used by the
+   * per-message "delete" button rendered inside ChatBubble actions.
+   */
+  async function deleteMessage(id: string) {
+    const idx = messages.value.findIndex((m) => m.id === id)
+    if (idx < 0) return
+    messages.value = messages.value.filter((m) => m.id !== id)
+    if (conversationId.value) {
+      try {
+        await invoke('store:deleteMessage', conversationId.value, id)
+      } catch {
+        /* main handler may not support single-message delete; UI state is still updated */
+      }
+    }
+  }
+
+  /**
+   * Re-run the most recent user turn before the given assistant message. This
+   * pops the assistant reply (and any tool bubbles between it and the user
+   * message) and re-sends the user's text through sendMessage.
+   */
+  async function regenerateFromMessage(assistantId: string) {
+    const idx = messages.value.findIndex((m) => m.id === assistantId)
+    if (idx < 0) return
+    // Walk backwards to find the user message that produced this reply.
+    let userIdx = -1
+    for (let i = idx - 1; i >= 0; i--) {
+      if (messages.value[i].role === 'user') { userIdx = i; break }
+    }
+    if (userIdx < 0) return
+    const userText = messages.value[userIdx].content
+
+    // Remove the user message + everything after it (assistant reply + tool
+    // bubbles). sendMessage will re-insert the user turn and run the model.
+    const removed = messages.value.slice(userIdx)
+    messages.value = messages.value.slice(0, userIdx)
+    if (conversationId.value) {
+      for (const m of removed) {
+        try { await invoke('store:deleteMessage', conversationId.value, m.id) } catch { /* best effort */ }
+      }
+    }
+    await sendMessage(userText)
   }
 
   function setGroupChat(enabled: boolean) {
@@ -634,6 +912,8 @@ export const useChatStore = defineStore('chat', () => {
   async function selectConversation(id: string) {
     conversationId.value = id
     messages.value = []
+    resetUsageTotals()
+    activeTodoList.value = []
     try {
       const res = await invoke('store:getMessages', id)
       if (res?.success) {
@@ -683,7 +963,7 @@ export const useChatStore = defineStore('chat', () => {
           ? ({ type: selectedProvider.value as any, apiKey: key } as any)
           : ({ type: selectedProvider.value as any } as any),
         model,
-        systemPrompt: `You are ${waifu?.displayName || 'an assistant'}. Reply ONLY with a short chat title (3-6 words max, no quotes, no punctuation at end) that captures what the user's first message is about.`,
+        systemPrompt: `You are ${waifu?.displayName || 'an assistant'} naming a chat for your own sidebar. Read the user's first message and reply with ONE short title (2–8 words) that captures what the conversation is really about. You can have personality — a little wink, an emoji at most — but NO surrounding quotes and NO trailing punctuation. Reply with ONLY the title, nothing else.`,
       })
       let title = ''
       for await (const chunk of runtime.streamMessage({ text: firstUserMessage, history: [] })) {
@@ -861,11 +1141,17 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     const trimmedText = text.trim()
 
+    // Consume pending attachments — they'll be persisted on this user message
+    // and forwarded to the model as image_url content parts.
+    const attachmentsForThisTurn = pendingAttachments.value.slice()
+    pendingAttachments.value = []
+
     const userMsg: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: trimmedText,
       timestamp: now(),
+      ...(attachmentsForThisTurn.length > 0 ? { attachments: attachmentsForThisTurn } : {}),
     }
 
     messages.value.push(userMsg)
@@ -905,14 +1191,22 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
       const sharedHistory: any[] = messages.value
         .filter((message) => message.role === 'user' || message.role === 'assistant')
-        .map((message) => ({
-          id: message.id,
-          role: message.role,
-          content:
+        .map((message) => {
+          const prefixed =
             message.waifuDisplayName && message.role === 'assistant'
               ? `${message.waifuDisplayName}: ${message.content}`
-              : message.content,
-        }))
+              : message.content
+          return {
+            id: message.id,
+            role: message.role,
+            content: (message.attachments && message.attachments.length > 0)
+              ? [
+                  ...(prefixed ? [{ type: 'text', text: prefixed }] : []),
+                  ...message.attachments.map((a) => ({ type: 'image_url', imageUrl: { url: a.url } })),
+                ]
+              : prefixed,
+          }
+        })
 
       const apiRoundTrips: number[] = []
       const assistantTurns: Array<{ waifu: any; content: string }> = []
@@ -933,6 +1227,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         for (const waifu of waifusForRound) {
           const affectionValue = loadAffection(waifu.id)
           let systemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, affectionValue)
+          systemPrompt += buildMasterContextBlock()
+          systemPrompt += buildLanguagePromptBlock()
           systemPrompt += buildMemoryContext()
           systemPrompt += buildAffectionPrompt(affectionValue, waifu.displayName || 'Waifu')
           systemPrompt += buildApiTelemetryPrompt()
@@ -965,13 +1261,14 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
             for (let iteration = 0; iteration <= maxIterations; iteration++) {
               const requestStartedAt = performance.now()
-              const response = await provider.chat({
+              const response = await callProviderChat(provider, {
                 model,
                 messages: aiHistory,
                 tools,
                 systemPrompt,
               })
               apiRoundTrips.push(performance.now() - requestStartedAt)
+              recordUsage(model, response?.usage)
 
               if (!response.toolCalls || response.toolCalls.length === 0) {
                 finalContent = response.content || ''
@@ -1009,6 +1306,29 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                     id: `tool-result-${Date.now()}-${toolCall.id}`,
                     role: 'tool',
                     content: `好感度 updated to ${newVal}`,
+                    toolCallId: toolCall.id,
+                  })
+                  continue
+                }
+
+                if (toolCall.name === TODO_WRITE_TOOL_NAME) {
+                  const items = parseTodoList((toolCall.arguments as any).items)
+                  activeTodoList.value = items
+                  aiHistory.push({
+                    id: `tool-result-${Date.now()}-${toolCall.id}`,
+                    role: 'tool',
+                    content: `Todo list updated (${items.filter((i) => i.status === 'done').length}/${items.length} done).`,
+                    toolCallId: toolCall.id,
+                  })
+                  continue
+                }
+
+                if (toolCall.name === RENAME_CHAT_TOOL_NAME) {
+                  const result = await applyRenameChat((toolCall.arguments as any).title, conversationId.value)
+                  aiHistory.push({
+                    id: `tool-result-${Date.now()}-${toolCall.id}`,
+                    role: 'tool',
+                    content: result,
                     toolCallId: toolCall.id,
                   })
                   continue
@@ -1305,6 +1625,10 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
       let systemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, affection.value)
 
+      // The user is your Master — applies to every conversation, not just group.
+      systemPrompt += buildMasterContextBlock()
+      systemPrompt += buildLanguagePromptBlock()
+
       // Inject persistent memory context
       systemPrompt += buildMemoryContext()
 
@@ -1343,10 +1667,21 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         // ── Agentic loop: AI calls terminal, repeats until stop_response ──
         const provider = runtime.getProvider()
 
-        // Build AI-compatible message history (skip tool-display messages from UI)
+        // Build AI-compatible message history (skip tool-display messages from UI).
+        // When a user message has image attachments, emit ContentPart[] so the
+        // provider mapper translates them to the provider's multi-modal shape.
         const aiHistory: any[] = messages.value
           .filter((m) => m.role === 'user' || m.role === 'assistant')
-          .map((m) => ({ id: m.id, role: m.role, content: m.content }))
+          .map((m) => ({
+            id: m.id,
+            role: m.role,
+            content: (m.attachments && m.attachments.length > 0)
+              ? [
+                  ...(m.content ? [{ type: 'text', text: m.content }] : []),
+                  ...m.attachments.map((a) => ({ type: 'image_url', imageUrl: { url: a.url } })),
+                ]
+              : m.content,
+          }))
 
         const maxIterations = maxToolIterations.value
         let finalContent = ''
@@ -1356,13 +1691,14 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
         for (let i = 0; i <= maxIterations; i++) {
           const requestStartedAt = performance.now()
-          const response = await provider.chat({
+          const response = await callProviderChat(provider, {
             model,
             messages: aiHistory,
             tools,
             systemPrompt,
           })
           apiRoundTrips.push(performance.now() - requestStartedAt)
+          recordUsage(model, response?.usage)
 
           // No tool calls → natural stop, use the text response
           if (!response.toolCalls || response.toolCalls.length === 0) {
@@ -1404,6 +1740,31 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                 id: `tool-result-${Date.now()}-${tc.id}`,
                 role: 'tool',
                 content: `好感度 updated to ${newVal}`,
+                toolCallId: tc.id,
+              })
+              continue
+            }
+
+            // ── todo_write: AI posts a visible checklist ──
+            if (tc.name === TODO_WRITE_TOOL_NAME) {
+              const items = parseTodoList((tc.arguments as any).items)
+              activeTodoList.value = items
+              aiHistory.push({
+                id: `tool-result-${Date.now()}-${tc.id}`,
+                role: 'tool',
+                content: `Todo list updated (${items.filter((i) => i.status === 'done').length}/${items.length} done).`,
+                toolCallId: tc.id,
+              })
+              continue
+            }
+
+            // ── rename_chat: AI renames the current conversation ──
+            if (tc.name === RENAME_CHAT_TOOL_NAME) {
+              const result = await applyRenameChat((tc.arguments as any).title, conversationId.value)
+              aiHistory.push({
+                id: `tool-result-${Date.now()}-${tc.id}`,
+                role: 'tool',
+                content: result,
                 toolCallId: tc.id,
               })
               continue
@@ -1752,6 +2113,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     apiTelemetryAlert,
     maxToolIterations,
     apiSpikeThresholdMs,
+    usageTotals,
+    activeTodoList,
+    pendingAttachments,
     userMemories,
     sidebarFilter,
     isGroupChat,
@@ -1764,6 +2128,11 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     setAgentMode,
     setMaxToolIterations,
     setApiSpikeThresholdMs,
+    deleteMessage,
+    regenerateFromMessage,
+    addAttachment,
+    removeAttachment,
+    clearPendingAttachments,
     newChat,
     setGroupChat,
     toggleGroupWaifu,

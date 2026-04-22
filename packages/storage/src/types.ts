@@ -47,6 +47,7 @@ export interface IChatStore {
   addMessage(conversationId: string, message: Message): Promise<void>;
   getMessages(conversationId: string): Promise<Message[]>;
   deleteMessages(conversationId: string, beforeDate?: string): Promise<void>;
+  deleteMessage?(conversationId: string, messageId: string): Promise<void>;
 
   // Relationships
   setRelationship(relationship: WaifuRelationship): Promise<void>;

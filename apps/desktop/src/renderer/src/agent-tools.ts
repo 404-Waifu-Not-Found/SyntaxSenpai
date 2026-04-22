@@ -16,6 +16,28 @@ export type AgentMode = 'ask' | 'auto' | 'full'
 
 export const STOP_TOOL_NAME = 'stop_response'
 export const SET_AFFECTION_TOOL_NAME = 'set_affection'
+export const TODO_WRITE_TOOL_NAME = 'todo_write'
+export const RENAME_CHAT_TOOL_NAME = 'rename_chat'
+
+export interface TodoItem { id: string; text: string; status: 'pending' | 'in_progress' | 'done' }
+
+export function parseTodoList(raw: unknown): TodoItem[] {
+  if (!Array.isArray(raw)) return []
+  const normalised: TodoItem[] = []
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i] as any
+    const text = typeof item?.text === 'string' ? item.text.trim() : ''
+    if (!text) continue
+    const rawStatus = String(item?.status ?? 'pending').toLowerCase()
+    const status: TodoItem['status'] = rawStatus === 'in_progress' || rawStatus === 'doing'
+      ? 'in_progress'
+      : rawStatus === 'done' || rawStatus === 'completed'
+      ? 'done'
+      : 'pending'
+    normalised.push({ id: String(item?.id ?? `t${i}`), text, status })
+  }
+  return normalised
+}
 
 export const agentTools: ToolDefinition[] = [
   {
@@ -102,6 +124,89 @@ export const agentTools: ToolDefinition[] = [
         },
       },
       required: ['path', 'old_text', 'new_text'],
+    },
+  },
+  {
+    name: 'clipboard_read',
+    description:
+      'Read the user\'s system clipboard (text only). Use when the user says "check my clipboard", "what I copied", "the URL I have", or similar. Returns the current clipboard text.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'clipboard_write',
+    description:
+      'Write plain text to the user\'s system clipboard. Use to hand the user something they asked you to copy — a URL, a command, a generated snippet. Overwrites existing clipboard content.',
+    parameters: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The text to place on the clipboard.' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'git_status',
+    description:
+      'Get a compact parsed git status for a repo: current branch, staged / unstaged / untracked paths, ahead/behind counts. Much cheaper than running `git status` via terminal + parsing the output yourself. Use this before coding-session work so you know what has already been modified.',
+    parameters: {
+      type: 'object',
+      properties: {
+        cwd: { type: 'string', description: 'Absolute repo path. Defaults to the user\'s home directory.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'git_diff',
+    description:
+      'Get a unified git diff for a repo. Defaults to working-tree (unstaged) diff. Use this before stop_response on coding tasks to double-check the exact changes you made.',
+    parameters: {
+      type: 'object',
+      properties: {
+        cwd: { type: 'string', description: 'Absolute repo path. Defaults to the user\'s home directory.' },
+        staged: { type: 'boolean', description: 'Show staged diff (--cached) instead of working tree.' },
+        path: { type: 'string', description: 'Optional path/glob to restrict the diff to.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: RENAME_CHAT_TOOL_NAME,
+    description:
+      'Rename the current conversation shown in the sidebar. Call this once after the user\'s first message (a short, specific title that captures what the chat is really about), and again whenever the topic clearly shifts. Keep it under ~60 characters, no trailing punctuation. You can add personality but do NOT paste a whole sentence — it\'s a sidebar label.',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: {
+          type: 'string',
+          description: 'The new title. 2–8 words is ideal. No surrounding quotes.',
+        },
+      },
+      required: ['title'],
+    },
+  },
+  {
+    name: TODO_WRITE_TOOL_NAME,
+    description:
+      'Post or update a visible todo checklist for the current task. The user sees this as a checkbox bubble. Call this when the task has 3+ steps so the user can track progress, and update it as each step completes (status: pending | in_progress | done). Overwrites the previous list each call.',
+    parameters: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          description: 'Ordered list of todo items.',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Stable id for this item (any string).' },
+              text: { type: 'string', description: 'Short human-readable description of the step.' },
+              status: { type: 'string', enum: ['pending', 'in_progress', 'done'], description: 'Current status.' },
+            },
+            required: ['text'],
+          },
+        },
+      },
+      required: ['items'],
     },
   },
   {
@@ -253,6 +358,58 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
       return res.content || 'No search results found.'
     }
 
+    case 'clipboard_read': {
+      const res = await ipc.invoke('clipboard:read')
+      if (!res.success) return `Clipboard error: ${res.error}`
+      const text = res.text || ''
+      return text ? `Clipboard contents (${text.length} chars):\n${text}` : '(clipboard is empty)'
+    }
+
+    case 'clipboard_write': {
+      const res = await ipc.invoke('clipboard:write', String(args.text ?? ''))
+      if (!res.success) return `Clipboard error: ${res.error}`
+      return 'Clipboard updated.'
+    }
+
+    case 'git_status': {
+      const cwdFlag = args.cwd ? `cd ${JSON.stringify(args.cwd)} && ` : ''
+      const res = await ipc.invoke(
+        'terminal:exec',
+        `${cwdFlag}git rev-parse --abbrev-ref HEAD && git status --porcelain=v1 --branch`,
+      )
+      if (!res.success) return `git_status error: ${res.error}`
+      if (res.code && res.code !== 0) return `git_status failed (exit ${res.code}):\n${res.stderr || res.stdout}`
+      return res.stdout || '(clean working tree)'
+    }
+
+    case 'git_diff': {
+      const cwdFlag = args.cwd ? `cd ${JSON.stringify(args.cwd)} && ` : ''
+      const flags = [
+        args.staged ? '--cached' : '',
+        '--stat-count=200',
+      ].filter(Boolean).join(' ')
+      const pathArg = args.path ? ` -- ${JSON.stringify(args.path)}` : ''
+      const res = await ipc.invoke('terminal:exec', `${cwdFlag}git diff ${flags}${pathArg}`)
+      if (!res.success) return `git_diff error: ${res.error}`
+      if (res.code && res.code !== 0) return `git_diff failed (exit ${res.code}):\n${res.stderr || res.stdout}`
+      return res.stdout || '(no changes)'
+    }
+
+    case TODO_WRITE_TOOL_NAME: {
+      const items = parseTodoList((args as any).items)
+      if (items.length === 0) return 'Error: todo_write requires a non-empty items array.'
+      const done = items.filter((i) => i.status === 'done').length
+      return `Todo list updated (${done}/${items.length} done).`
+    }
+
+    case RENAME_CHAT_TOOL_NAME: {
+      // Actual rename happens in the chat store loop (which has conversation
+      // id context). If we ever reach here the caller did not intercept —
+      // return success so the model doesn't retry.
+      const title = String((args as any).title ?? '').trim()
+      return title ? `Chat renamed to: ${title}` : 'Error: rename_chat requires a non-empty title.'
+    }
+
     case 'spotify_now_playing': {
       const res = await ipc.invoke('spotify:nowPlaying')
       if (!res.success) return `Spotify error: ${res.error}`
@@ -292,6 +449,18 @@ export function describeToolCall(toolCall: ToolCall): string {
       return `edit_file(${args.path ?? ''})`
     case 'web_search':
       return `web_search("${String(args.query ?? '').slice(0, 60)}")`
+    case 'clipboard_read':
+      return 'clipboard_read()'
+    case 'clipboard_write':
+      return `clipboard_write(${String(args.text ?? '').slice(0, 40)})`
+    case 'git_status':
+      return `git_status(${args.cwd ?? ''})`
+    case 'git_diff':
+      return `git_diff(${args.staged ? '--staged, ' : ''}${args.cwd ?? ''}${args.path ? `, ${args.path}` : ''})`
+    case TODO_WRITE_TOOL_NAME:
+      return `todo_write(${Array.isArray((args as any).items) ? (args as any).items.length : 0} items)`
+    case RENAME_CHAT_TOOL_NAME:
+      return `rename_chat(${String((args as any).title ?? '').slice(0, 60)})`
     case 'spotify_now_playing':
       return 'spotify_now_playing()'
     case 'spotify_control':

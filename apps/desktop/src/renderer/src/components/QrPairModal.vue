@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, onUnmounted, watch } from 'vue'
 import { useIpc } from '../composables/use-ipc'
+import { useI18n } from '../composables/use-i18n'
 
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const { invoke } = useIpc()
+const { t } = useI18n()
 
 const qrDataUrl = ref<string | null>(null)
 const wsUrl = ref<string | null>(null)
@@ -45,7 +47,7 @@ async function initPairing() {
       availableIps.value = result.data.availableIps ?? []
       selectedIp.value = availableIps.value[0]?.address ?? null
     } else {
-      error.value = 'Could not generate QR code. Make sure the desktop app is running.'
+      error.value = t('mobile.qrError')
     }
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Unknown error'
@@ -98,7 +100,7 @@ onUnmounted(() => {
             class="modal-glass rounded-t-3xl sm:rounded-2xl p-6 max-w-sm w-full mx-0 sm:mx-4 text-center"
           >
             <div class="flex items-center justify-between mb-4">
-              <h2 class="text-lg font-bold text-white">Connect Mobile</h2>
+              <h2 class="text-lg font-bold text-white">{{ t('mobile.connectTitle') }}</h2>
               <button class="text-neutral-400 hover:text-white transition-colors" @click="emit('close')">
                 <span class="text-xl leading-none">×</span>
               </button>
@@ -107,7 +109,7 @@ onUnmounted(() => {
             <!-- Loading -->
             <div v-if="loading" class="py-12 flex flex-col items-center gap-3">
               <div class="w-8 h-8 border-2 border-primary-500/40 border-t-primary-500 rounded-full animate-spin" />
-              <p class="text-sm text-neutral-400">Generating QR code...</p>
+              <p class="text-sm text-neutral-400">{{ t('mobile.generating') }}</p>
             </div>
 
             <!-- Error -->
@@ -123,16 +125,16 @@ onUnmounted(() => {
                 </svg>
               </div>
               <div>
-                <p class="text-white font-semibold">Connected!</p>
+                <p class="text-white font-semibold">{{ t('mobile.connectedHeading') }}</p>
                 <p class="text-sm text-neutral-400 mt-1">{{ deviceName }}</p>
               </div>
-              <button class="btn-primary w-full" @click="emit('close')">Done</button>
+              <button class="btn-primary w-full" @click="emit('close')">{{ t('mobile.done') }}</button>
             </div>
 
             <!-- QR Code -->
             <div v-else>
               <p class="text-sm text-neutral-400 mb-4">
-                Open SyntaxSenpai on your phone and scan this code to connect.
+                {{ t('mobile.scanHint') }}
               </p>
 
               <div class="flex justify-center mb-4">
@@ -143,14 +145,14 @@ onUnmounted(() => {
 
               <div class="flex items-center gap-2 justify-center mb-5">
                 <div class="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                <p class="text-xs text-neutral-400">Waiting for device...</p>
+                <p class="text-xs text-neutral-400">{{ t('mobile.waitingDevice') }}</p>
               </div>
 
               <p v-if="wsUrl" class="text-[10px] font-mono text-neutral-600 break-all">{{ wsUrl }}</p>
 
               <!-- IP selector -->
               <div v-if="availableIps.length > 1" class="mt-4 text-left">
-                <p class="text-[10px] text-neutral-500 mb-1">Network interface</p>
+                <p class="text-[10px] text-neutral-500 mb-1">{{ t('mobile.networkInterface') }}</p>
                 <div class="flex flex-col gap-1">
                   <button
                     v-for="ip in availableIps"

@@ -271,12 +271,29 @@ const renderedAssistantHtml = computed(() => renderMarkdown(props.content || '')
 }
 
 .markdown-content :deep(pre) {
+  position: relative;
   margin: 0 0 0.75rem;
   padding: 0.8rem;
+  padding-top: 1.6rem;
   border-radius: 0.75rem;
   overflow-x: auto;
   background: rgba(15, 23, 42, 0.78);
   border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.markdown-content :deep(pre[data-language])::before {
+  content: attr(data-language);
+  position: absolute;
+  top: 0.3rem;
+  right: 0.6rem;
+  font-size: 0.68rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.32);
+  pointer-events: none;
+  user-select: none;
 }
 
 .markdown-content :deep(code) {

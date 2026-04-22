@@ -44,6 +44,18 @@ function readBody(request) {
   })
 }
 
+function requireAuth(request, response) {
+  const expectedToken = config.authToken
+  if (!expectedToken) return true
+  const auth = request.headers['authorization'] || ''
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
+  if (token !== expectedToken) {
+    jsonResponse(response, 401, { error: 'Unauthorized' })
+    return false
+  }
+  return true
+}
+
 function getRoute(pathname, method) {
   if (pathname === '/healthz' && method === 'GET') return 'healthz'
   if (pathname === '/readyz' && method === 'GET') return 'readyz'
@@ -121,6 +133,8 @@ async function handler(request, response) {
       jsonResponse(response, 200, { plugins })
       return
     }
+
+    if (url.pathname.startsWith('/api/v1/') && !requireAuth(request, response)) return
 
     if (route === 'backup.list') {
       const items = backups.listBackups()

@@ -1,6 +1,7 @@
 const { ipcMain } = require('electron')
 const fs = require('fs').promises
 const path = require('path')
+import type { IpcMainInvokeEvent } from 'electron'
 import * as storage from '@syntax-senpai/storage'
 
 let registered = false
@@ -28,7 +29,7 @@ export function registerChatIpc() {
     memoryStore = storage.createMemoryStore(dbPath)
   }
 
-  ipcMain.handle('store:createConversation', async (event: any, waifuId: string, title: string) => {
+  ipcMain.handle('store:createConversation', async (_event: IpcMainInvokeEvent, waifuId: string, title: string) => {
     try {
       const conv = await store.createConversation(waifuId, title)
       return { success: true, conversation: conv }
@@ -37,7 +38,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:listConversations', async (event: any, waifuId: string) => {
+  ipcMain.handle('store:listConversations', async (_event: IpcMainInvokeEvent, waifuId: string) => {
     try {
       const convs = await store.listConversations(waifuId)
       return { success: true, conversations: convs }
@@ -46,7 +47,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:addMessage', async (event: any, conversationId: string, message: any) => {
+  ipcMain.handle('store:addMessage', async (_event: IpcMainInvokeEvent, conversationId: string, message: any) => {
     try {
       await store.addMessage(conversationId, message)
       return { success: true }
@@ -55,7 +56,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:getMessages', async (event: any, conversationId: string) => {
+  ipcMain.handle('store:getMessages', async (_event: IpcMainInvokeEvent, conversationId: string) => {
     try {
       const msgs = await store.getMessages(conversationId)
       return { success: true, messages: msgs }
@@ -64,7 +65,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:clearMessages', async (event: any, conversationId: string) => {
+  ipcMain.handle('store:clearMessages', async (_event: IpcMainInvokeEvent, conversationId: string) => {
     try {
       await store.deleteMessages(conversationId)
       if (typeof store.updateConversation === 'function') {
@@ -76,7 +77,18 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:deleteConversation', async (event: any, conversationId: string) => {
+  ipcMain.handle('store:deleteMessage', async (_event: IpcMainInvokeEvent, conversationId: string, messageId: string) => {
+    try {
+      if (typeof (store as any).deleteMessage === 'function') {
+        await (store as any).deleteMessage(conversationId, messageId)
+      }
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('store:deleteConversation', async (_event: IpcMainInvokeEvent, conversationId: string) => {
     try {
       await store.deleteConversation(conversationId)
       return { success: true }
@@ -85,7 +97,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:updateConversation', async (event: any, id: string, updates: any) => {
+  ipcMain.handle('store:updateConversation', async (_event: IpcMainInvokeEvent, id: string, updates: any) => {
     try {
       if (typeof store.updateConversation === 'function') {
         await store.updateConversation(id, updates)
@@ -97,7 +109,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:getConversation', async (event: any, id: string) => {
+  ipcMain.handle('store:getConversation', async (_event: IpcMainInvokeEvent, id: string) => {
     try {
       if (typeof store.getConversation === 'function') {
         const conv = await store.getConversation(id)
@@ -109,7 +121,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:toggleFavorite', async (event: any, id: string) => {
+  ipcMain.handle('store:toggleFavorite', async (_event: IpcMainInvokeEvent, id: string) => {
     try {
       if (typeof store.toggleFavorite === 'function') {
         const favorited = await store.toggleFavorite(id)
@@ -123,7 +135,7 @@ export function registerChatIpc() {
 
   // ── AI Memory IPC handlers ──
 
-  ipcMain.handle('memory:set', async (event: any, key: string, value: string, category?: string) => {
+  ipcMain.handle('memory:set', async (_event: IpcMainInvokeEvent, key: string, value: string, category?: string) => {
     try {
       await memoryStore.setMemory(key, value, category)
       return { success: true }
@@ -132,7 +144,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('memory:get', async (event: any, key: string) => {
+  ipcMain.handle('memory:get', async (_event: IpcMainInvokeEvent, key: string) => {
     try {
       const entry = await memoryStore.getMemory(key)
       return { success: true, entry }
@@ -150,7 +162,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('memory:getByCategory', async (event: any, category: string) => {
+  ipcMain.handle('memory:getByCategory', async (_event: IpcMainInvokeEvent, category: string) => {
     try {
       const entries = await memoryStore.getMemoriesByCategory(category)
       return { success: true, entries }
@@ -159,7 +171,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('memory:delete', async (event: any, key: string) => {
+  ipcMain.handle('memory:delete', async (_event: IpcMainInvokeEvent, key: string) => {
     try {
       await memoryStore.deleteMemory(key)
       return { success: true }
@@ -177,7 +189,33 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:replaceSnapshot', async (_event: any, payload: any) => {
+  ipcMain.handle('store:searchConversations', async (_event: IpcMainInvokeEvent, query: string) => {
+    try {
+      const convs = await store.listConversations()
+      if (!query || query.trim().length < 2) {
+        return { success: true, conversationIds: convs.map((c: any) => c.id) }
+      }
+      const q = query.toLowerCase()
+      const matchingIds: string[] = []
+      for (const conv of convs) {
+        if ((conv.title || '').toLowerCase().includes(q)) {
+          matchingIds.push(conv.id)
+          continue
+        }
+        const messages = await store.getMessages(conv.id)
+        const hasMatch = messages.some((m: any) => {
+          const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '')
+          return content.toLowerCase().includes(q)
+        })
+        if (hasMatch) matchingIds.push(conv.id)
+      }
+      return { success: true, conversationIds: matchingIds }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('store:replaceSnapshot', async (_event: IpcMainInvokeEvent, payload: any) => {
     try {
       const { chatPath, memoryPath } = resolveDataPaths()
       const conversations = Array.isArray(payload?.conversations) ? payload.conversations : []

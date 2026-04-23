@@ -21,6 +21,13 @@ export interface LoadToolPluginsOptions {
   directory: string;
   registry?: ToolRegistry;
   logger?: Pick<Console, 'info' | 'warn' | 'error'>;
+  /**
+   * Optional predicate consulted before each plugin is imported.
+   * Return true to skip the plugin — used by the desktop app to honor
+   * the user-managed disabled list without having to edit each
+   * plugin.json's `enabled` field.
+   */
+  isDisabled?: (pluginName: string) => boolean;
 }
 
 async function readManifest(manifestPath: string): Promise<ToolPluginManifest> {
@@ -31,7 +38,8 @@ async function readManifest(manifestPath: string): Promise<ToolPluginManifest> {
 export async function loadToolPlugins({
   directory,
   registry = toolRegistry,
-  logger = console
+  logger = console,
+  isDisabled
 }: LoadToolPluginsOptions): Promise<LoadedToolPlugin[]> {
   let entries: Awaited<ReturnType<typeof fs.readdir>>
 
@@ -56,6 +64,10 @@ export async function loadToolPlugins({
       const manifest = await readManifest(manifestPath)
       if (manifest.enabled === false) {
         logger.info(`Skipping disabled tool plugin: ${manifest.name}`)
+        continue
+      }
+      if (isDisabled && isDisabled(manifest.name)) {
+        logger.info(`Skipping user-disabled tool plugin: ${manifest.name}`)
         continue
       }
 

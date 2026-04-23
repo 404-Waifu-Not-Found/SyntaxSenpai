@@ -5,7 +5,7 @@ import type { SentimentResult, MilestoneEvent, Waifu } from '@syntax-senpai/waif
 import { AIChatRuntime, withRetry, classifyError, describeError } from '@syntax-senpai/ai-core'
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
-import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, type AgentMode, type TodoItem } from '../agent-tools'
+import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, loadPluginTools, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, type AgentMode, type TodoItem } from '../agent-tools'
 
 // Rough USD cost per 1K tokens, keyed by a substring match on the model id.
 // These are approximations — good enough for "what did this chat cost me".

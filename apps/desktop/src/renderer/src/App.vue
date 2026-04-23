@@ -237,8 +237,11 @@ async function importCustomWaifu() {
       showToast(write?.error || 'Could not save waifu', 'error')
       return
     }
-    showToast(`Imported "${raw.displayName || raw.id}" — restart to load`, 'success')
+    showToast(`Imported "${raw.displayName || raw.id}"`, 'success')
     await refreshCustomWaifus()
+    // Also refresh the store-level copy so the waifu appears in pickers
+    // (sidebar / single-select / group-chat toggles) without restart.
+    await store.refreshCustomWaifus()
   } catch (err: any) {
     showToast(err?.message || String(err), 'error')
   }
@@ -250,6 +253,13 @@ async function deleteCustomWaifu(id: string) {
     if (result?.success) {
       customWaifus.value = customWaifus.value.filter((w) => w.id !== id)
       showToast(`Removed "${id}"`, 'success')
+      // Drop it from the store-level list so pickers update immediately.
+      await store.refreshCustomWaifus()
+      // If the deleted waifu was active, fall back to the first built-in.
+      if (store.selectedWaifuId === id) {
+        const fallback = builtInWaifus[0]?.id
+        if (fallback) store.selectedWaifuId = fallback
+      }
     } else {
       showToast(result?.error || 'Delete failed', 'error')
     }
@@ -1000,6 +1010,9 @@ onMounted(() => {
     store.loadSetup()
     await store.hydrateProviderConfig()
     await loadProviderModels(store.selectedProvider, store.apiKey)
+    // Hydrate user-authored waifus so they appear in pickers from the
+    // first paint, not just after someone opens Settings → Waifus.
+    store.refreshCustomWaifus()
     if (store.isSetup) {
       store.loadConversations()
       store.loadMemories()
@@ -1744,7 +1757,7 @@ async function handleImportData() {
                 v-model="store.selectedWaifuId"
                 class="input-field"
               >
-                <option v-for="w in builtInWaifus" :key="w.id" :value="w.id">
+                <option v-for="w in store.allWaifus" :key="w.id" :value="w.id">
                   {{ w.displayName }}
                 </option>
               </select>
@@ -1778,7 +1791,7 @@ async function handleImportData() {
                 </p>
                 <div class="space-y-2">
                   <label
-                    v-for="w in builtInWaifus"
+                    v-for="w in store.allWaifus"
                     :key="`settings-group-${w.id}`"
                     :class="[
                       'flex items-center gap-2 rounded-lg border px-3 py-2 transition-all duration-150',
@@ -2945,7 +2958,7 @@ async function handleImportData() {
           <p class="text-xs text-neutral-500 mb-2">{{ t('sidebar.selectWaifus') }}</p>
           <div class="space-y-1">
             <label
-              v-for="w in builtInWaifus"
+              v-for="w in store.allWaifus"
               :key="w.id"
               :class="[
                 'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-all duration-150',

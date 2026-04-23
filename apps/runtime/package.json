@@ -9,5 +9,8 @@
     "build": "node scripts/build.mjs",
     "start": "node dist/server.js",
     "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@syntax-senpai/logger": "workspace:*"
   }
 }

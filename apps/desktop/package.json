@@ -19,6 +19,7 @@
   "dependencies": {
     "@syntax-senpai/agent-tools": "workspace:*",
     "@syntax-senpai/ai-core": "workspace:*",
+    "@syntax-senpai/logger": "workspace:*",
     "@syntax-senpai/storage": "workspace:*",
     "@syntax-senpai/ui": "workspace:*",
     "@syntax-senpai/ui-loading-screens": "workspace:*",

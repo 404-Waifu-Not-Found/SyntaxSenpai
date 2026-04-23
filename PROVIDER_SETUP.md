@@ -116,12 +116,10 @@ A full template is available at `.env.example` in the project root.
 | **Perplexity** | API | API Key | ⭐⭐⭐ | $ | 128K | ✅ |
 | **Cohere** | API | API Key | ⭐⭐⭐ | $$ | 128K | ✅ |
 | **Together AI** | API | API Key | ⭐⭐⭐⭐ | Free | 128K | ✅ |
-| **Replicate** | API | API Key | ⭐⭐ | $ | Varies | ❌ |
 | **HuggingFace** | API | API Key | ⭐⭐ | $ | Varies | ❌ |
 | **Ollama** | Local | None | ⭐⭐⭐⭐ | Free | Varies | ❌ |
 | **xAI Grok** | API | API Key | ⭐⭐⭐ | $$ | 128K | ✅ |
 | **Azure OpenAI** | API | API Key | ⭐⭐⭐ | $$$ | 128K | ✅ |
-| **AWS Bedrock** | API | AWS Credentials | ⭐⭐⭐ | $$$ | Varies | ✅ |
 | **Fireworks AI** | API | API Key | ⭐⭐⭐⭐ | Free | 32K | ❌ |
 
 ---
@@ -299,27 +297,7 @@ Cost: FREE tier + credits
 
 ---
 
-### 9. Replicate
-
-**Best for**: Text-to-image, fine-tuned models, specialized tasks
-
-```
-Provider ID: replicate
-Models: Llama 2, Llama 3, custom models
-Context Window: Varies (4K-8K typical)
-Tool Support: ❌ No
-```
-
-**Setup:**
-1. Go to https://replicate.com/account/api-tokens
-2. Create an account
-3. Create an API token
-4. Copy the token
-5. Paste into SyntaxSenpai settings
-
----
-
-### 10. Hugging Face Inference API
+### 9. Hugging Face Inference API
 
 **Best for**: Open source models, community models
 
@@ -433,30 +411,7 @@ Requirements: Azure subscription, OpenAI service deployed
 
 ---
 
-### 14. AWS Bedrock
-
-**Best for**: AWS-integrated deployments, multiple models from one service
-
-```
-Provider ID: aws-bedrock
-Models: Claude 3 Sonnet, Llama 3 70B, Mistral, others
-Context Window: Varies by model
-Tool Support: ✅ Some models
-Requirements: AWS account, Bedrock enabled in your region
-```
-
-**Setup:**
-1. Go to https://console.aws.amazon.com/
-2. Enable Bedrock in your region
-3. Get AWS Access Key ID and Secret Access Key
-4. In SyntaxSenpai:
-   - Provider: AWS Bedrock
-   - AWS Access Key: Your access key
-   - AWS Secret Key: Your secret key
-
----
-
-### 15. Fireworks AI (Free, Fast)
+### 14. Fireworks AI (Free, Fast)
 
 **Best for**: Cost-effective, very fast inference, free tier
 

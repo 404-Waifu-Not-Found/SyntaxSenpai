@@ -1467,6 +1467,10 @@ async function handleImportData() {
 </script>
 
 <template>
+  <!-- Skip link: first focusable element so keyboard users can jump past the
+       sidebar / header directly to the message input. -->
+  <a href="#chat-input" class="skip-link">Skip to chat input</a>
+
   <!-- Rainbow tint overlay — blends every pixel with the cycling hue while keeping luminosity.
        Always mounted so the fade-in/out runs cleanly; visibility is driven by data-rainbow on :root. -->
   <Teleport to="body">
@@ -1620,11 +1624,15 @@ async function handleImportData() {
       <div
         v-if="showSettings"
         class="fixed inset-0 bg-black/50 backdrop-blur-md flex items-end sm:items-center justify-center z-50"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-dialog-title"
         @click.self="showSettings = false"
       >
           <div
             class="settings-glass relative rounded-t-3xl sm:rounded-3xl max-w-6xl w-full mx-0 sm:mx-4 max-h-[92vh] overflow-hidden flex"
           >
+            <h2 id="settings-dialog-title" class="sr-only">Settings</h2>
             <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent z-10" />
             <div class="pointer-events-none absolute inset-0 rounded-t-3xl sm:rounded-3xl ring-1 ring-inset ring-white/5 z-10" />
 
@@ -2970,7 +2978,12 @@ async function handleImportData() {
         :style="secondaryPanelStyle"
       >
         <div class="flex items-center gap-3 min-w-0">
-          <button class="btn-ghost p-2" @click="sidebarOpen = !sidebarOpen">
+          <button
+            class="btn-ghost p-2"
+            :aria-label="sidebarOpen ? 'Close sidebar' : 'Open sidebar'"
+            :aria-expanded="sidebarOpen"
+            @click="sidebarOpen = !sidebarOpen"
+          >
             {{ sidebarOpen ? '←' : '☰' }}
           </button>
           <div class="flex items-center gap-4 min-w-0">
@@ -2998,6 +3011,7 @@ async function handleImportData() {
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             :title="t('sidebar.agent')"
+            :aria-label="t('sidebar.agent')"
             @click="showAgent = true"
           >
             🤖
@@ -3006,6 +3020,7 @@ async function handleImportData() {
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             title="AI Memory"
+            aria-label="Open AI memory"
             @click="showMemory = true"
           >
             🧠
@@ -3014,6 +3029,7 @@ async function handleImportData() {
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             :title="t('sidebar.settings')"
+            :aria-label="t('sidebar.settings')"
             @click="showSettings = true"
           >
             ⚙️
@@ -3156,6 +3172,7 @@ async function handleImportData() {
                 <button
                   class="text-[11px] text-neutral-500 hover:text-primary-300 transition-colors"
                   :title="t('message.regenerateTitle')"
+                  :aria-label="t('message.regenerateTitle')"
                   @click="store.regenerateFromMessage(msg.id)"
                 >
                   {{ t('message.regenerate') }}
@@ -3163,6 +3180,7 @@ async function handleImportData() {
                 <button
                   class="text-[11px] text-neutral-500 hover:text-red-400 transition-colors"
                   :title="t('message.deleteTitle')"
+                  :aria-label="t('message.deleteTitle')"
                   @click="store.deleteMessage(msg.id)"
                 >
                   {{ t('message.delete') }}
@@ -3236,15 +3254,18 @@ async function handleImportData() {
           <button
             class="btn-ghost min-w-fit !px-2"
             :title="t('input.attachImage')"
+            :aria-label="t('input.attachImage')"
             :disabled="store.isLoading"
             @click="fileInputRef?.click()"
           >
             📎
           </button>
           <textarea
+            id="chat-input"
             ref="inputRef"
             v-model="store.inputValue"
             :placeholder="t('chat.inputPlaceholder')"
+            :aria-label="t('chat.inputPlaceholder')"
             :disabled="store.isLoading"
             rows="1"
             :class="[
@@ -3260,6 +3281,7 @@ async function handleImportData() {
           <button
             class="btn-primary themed-btn-primary min-w-fit flex items-center justify-center gap-2"
             :style="primaryButtonStyle"
+            :aria-label="store.isLoading ? t('chat.sending') : t('chat.send')"
             :disabled="(!store.inputValue.trim() && store.pendingAttachments.length === 0) || store.isLoading"
             @click="store.sendMessage(store.inputValue)"
           >
@@ -3275,6 +3297,40 @@ async function handleImportData() {
 </template>
 
 <style scoped>
+/* Accessibility: visually-hidden text for screen readers. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skip link: invisible until focused, then jumps to the main chat input. */
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  padding: 8px 14px;
+  background: #111;
+  color: #fff;
+  border: 1px solid #60a5fa;
+  border-radius: 8px;
+  font-weight: 600;
+  z-index: 100;
+  transform: translateY(-200%);
+  transition: transform 160ms ease;
+}
+.skip-link:focus {
+  transform: translateY(0);
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
 @keyframes startup-float {
   0%, 100% {
     transform: translateY(0) scale(1);

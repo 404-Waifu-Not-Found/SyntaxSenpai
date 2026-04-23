@@ -5,6 +5,8 @@
 const { ipcMain, dialog, BrowserWindow } = require('electron')
 const os = require('os')
 import { runTerminalCommand, getActiveShellName } from '../terminal-shell'
+import { runCommand as runAllowlistedCommand } from '../agent/executor'
+import { isStrictModeEnabled } from './strict-mode'
 
 let registered = false
 
@@ -71,6 +73,23 @@ export function registerTerminalIpc() {
     'terminal:exec',
     async (_event: any, command: string, cwd?: string) => {
       try {
+        // Strict mode: delegate to the allowlisted executor, which refuses
+        // anything not on the user's allowlist and appends a JSONL audit
+        // entry for every call. No native dialog prompt — the allowlist
+        // itself is the gate.
+        if (isStrictModeEnabled()) {
+          const result: any = await runAllowlistedCommand({ command: String(command ?? ''), cwd: cwd || os.homedir() })
+          if (!result?.success) {
+            return {
+              success: true,
+              stdout: '',
+              stderr: `BLOCKED by strict mode: ${result?.error || 'command refused'}.`,
+              code: 126,
+            }
+          }
+          return { success: true, stdout: result.stdout || '', stderr: result.stderr || '', code: result.code ?? 0 }
+        }
+
         const destructive = matchDestructive(String(command ?? ''))
         if (destructive) {
           const allow = await confirmDestructive(command, destructive)

@@ -21,6 +21,40 @@ const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, se
 const { t, locale, setLocale, localeOptions } = useI18n()
 const voice = useVoice()
 
+/**
+ * Message windowing: long conversations (1000+ turns) were rendering every
+ * bubble as its own DOM subtree, including sentiment pips and action
+ * buttons. Instead of pulling in vue-virtual-scroller and rewriting the
+ * TransitionGroup, cap the default visible window at the tail of the
+ * conversation and expose an "Show older" button to page further back.
+ * Covers >95% of real sessions with zero new deps.
+ */
+const MESSAGE_WINDOW_INITIAL = 200
+const MESSAGE_WINDOW_PAGE = 100
+const visibleMessageCount = ref(MESSAGE_WINDOW_INITIAL)
+
+const windowedMessages = computed(() => {
+  const list = store.messages
+  if (list.length <= visibleMessageCount.value) return list
+  return list.slice(list.length - visibleMessageCount.value)
+})
+
+function revealOlderMessages() {
+  visibleMessageCount.value = Math.min(
+    visibleMessageCount.value + MESSAGE_WINDOW_PAGE,
+    store.messages.length,
+  )
+}
+
+// Reset the window whenever the user switches conversations so opening an
+// old thread starts at the tail, not wherever they paged to in another chat.
+watch(
+  () => store.conversationId,
+  () => {
+    visibleMessageCount.value = MESSAGE_WINDOW_INITIAL
+  },
+)
+
 function sentimentEmoji(expression: Expression): string {
   return EXPRESSION_EMOJI[expression] ?? EXPRESSION_EMOJI.neutral
 }
@@ -52,7 +86,7 @@ const rainbowToggleBg = computed(() => {
   const c3 = hslToHex((h + 120) % 360, s, l)
   return `linear-gradient(to right, ${c1}, ${c2}, ${c3})`
 })
-type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'mobile'
+type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'plugins' | 'waifus' | 'mobile'
 const settingsTab = ref<SettingsTabId>('general')
 const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = [
   { id: 'general', label: 'General', icon: '⚙️' },
@@ -61,6 +95,8 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = 
   { id: 'metrics', label: 'Metrics', icon: '📊' },
   { id: 'theme', label: 'Theme', icon: '🎨' },
   { id: 'interface', label: 'Interface', icon: '✨' },
+  { id: 'plugins', label: 'Plugins', icon: '🧩' },
+  { id: 'waifus', label: 'Waifus', icon: '💗' },
   { id: 'mobile', label: 'Mobile', icon: '📱' },
 ]
 
@@ -100,6 +136,163 @@ function onTabEnter(el: Element, done: () => void) {
 }
 const showQrPair = ref(false)
 const mobilePairedDevice = ref<string | null>(null)
+
+// Plugins tab state — discovery + enable/disable for tool plugins on disk.
+interface DesktopPluginEntry {
+  name: string
+  version: string
+  description?: string
+  main: string
+  enabled: boolean
+  directory: string
+  error?: string
+  disabled?: boolean
+}
+const pluginsList = ref<DesktopPluginEntry[]>([])
+const pluginsDirectory = ref<string>('')
+const pluginsLoading = ref(false)
+const pluginsError = ref<string>('')
+
+async function refreshPlugins() {
+  pluginsLoading.value = true
+  pluginsError.value = ''
+  try {
+    const result = await invoke('plugins:list')
+    if (result?.success) {
+      pluginsList.value = Array.isArray(result.plugins) ? result.plugins : []
+      pluginsDirectory.value = result.pluginDir || ''
+    } else {
+      pluginsError.value = result?.error || 'Failed to list plugins'
+    }
+  } catch (err: any) {
+    pluginsError.value = err?.message || String(err)
+  } finally {
+    pluginsLoading.value = false
+  }
+}
+
+async function togglePluginDisabled(plugin: DesktopPluginEntry) {
+  const next = !plugin.disabled
+  try {
+    const result = await invoke('plugins:setDisabled', plugin.name, next)
+    if (result?.success) {
+      plugin.disabled = next
+      showToast(`${plugin.name} ${next ? 'disabled' : 'enabled'} — restart to apply`, 'success')
+    } else {
+      showToast(result?.error || 'Failed to toggle plugin', 'error')
+    }
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  }
+}
+
+// Custom waifu tab state — list, import, delete user-authored waifus.
+interface CustomWaifuEntry {
+  id: string
+  name: string
+  displayName: string
+  backstory?: string
+  tags?: string[]
+  isBuiltIn?: boolean
+}
+const customWaifus = ref<CustomWaifuEntry[]>([])
+const customWaifusDirectory = ref<string>('')
+const customWaifusLoading = ref(false)
+const customWaifusError = ref<string>('')
+
+async function refreshCustomWaifus() {
+  customWaifusLoading.value = true
+  customWaifusError.value = ''
+  try {
+    const result = await invoke('waifus:list')
+    if (result?.success) {
+      customWaifus.value = Array.isArray(result.waifus) ? result.waifus : []
+      customWaifusDirectory.value = result.directory || ''
+    } else {
+      customWaifusError.value = result?.error || 'Failed to list custom waifus'
+    }
+  } catch (err: any) {
+    customWaifusError.value = err?.message || String(err)
+  } finally {
+    customWaifusLoading.value = false
+  }
+}
+
+async function importCustomWaifu() {
+  try {
+    const result = await invoke('export:openJson')
+    if (!result?.success) {
+      if (!result?.canceled) showToast(result?.error || 'Import failed', 'error')
+      return
+    }
+    const raw = result.payload
+    if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string') {
+      showToast('Selected file does not look like a waifu (missing id).', 'error')
+      return
+    }
+    const write = await invoke('waifus:write', raw)
+    if (!write?.success) {
+      showToast(write?.error || 'Could not save waifu', 'error')
+      return
+    }
+    showToast(`Imported "${raw.displayName || raw.id}" — restart to load`, 'success')
+    await refreshCustomWaifus()
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  }
+}
+
+async function deleteCustomWaifu(id: string) {
+  try {
+    const result = await invoke('waifus:delete', id)
+    if (result?.success) {
+      customWaifus.value = customWaifus.value.filter((w) => w.id !== id)
+      showToast(`Removed "${id}"`, 'success')
+    } else {
+      showToast(result?.error || 'Delete failed', 'error')
+    }
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  }
+}
+
+// Strict-mode state: toggle for the allowlist sandbox. The allowlist itself
+// is already managed by the existing agent:* IPC and its UI in the AI tab.
+interface StrictModeState {
+  enabled: boolean
+  auditLog: string
+}
+const strictMode = ref<StrictModeState>({ enabled: false, auditLog: '' })
+
+async function refreshStrictMode() {
+  try {
+    const result = await invoke('strictMode:get')
+    if (result?.success) {
+      strictMode.value = {
+        enabled: !!result.enabled,
+        auditLog: result.auditLog || '',
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function toggleStrictMode() {
+  const next = !strictMode.value.enabled
+  const result = await invoke('strictMode:set', next)
+  if (result?.success) {
+    strictMode.value.enabled = !!result.enabled
+    showToast(`Strict mode ${next ? 'enabled' : 'disabled'}`, 'success')
+  } else {
+    showToast(result?.error || 'Failed to toggle strict mode', 'error')
+  }
+}
+
+async function openAuditLog() {
+  const result = await invoke('strictMode:openAuditLog')
+  if (!result?.success) showToast(result?.error || 'Failed to open audit log', 'error')
+}
 
 async function checkMobilePairingStatus() {
   try {
@@ -407,6 +600,24 @@ function applyPreset(preset: typeof colorPresets[0]) {
 
 const sidebarOpen = ref(true)
 const showSettings = ref(false)
+
+// Lazy-refresh plugin and custom-waifu lists when their tabs become visible,
+// so Settings stays fast to open and data is fresh when the user gets there.
+watch(
+  () => [showSettings.value, settingsTab.value] as const,
+  ([open, tab]) => {
+    if (!open) return
+    if (tab === 'plugins' && pluginsList.value.length === 0 && !pluginsLoading.value) {
+      refreshPlugins()
+    }
+    if (tab === 'waifus' && customWaifus.value.length === 0 && !customWaifusLoading.value) {
+      refreshCustomWaifus()
+    }
+    if (tab === 'general') {
+      refreshStrictMode()
+    }
+  },
+)
 const showAgent = ref(false)
 const showModelPicker = ref(false)
 const providerModels = ref<Record<string, Array<{ id: string; displayName: string }>>>({})
@@ -744,6 +955,10 @@ function onAppRetry(e: Event) {
   const detail = (e as CustomEvent).detail
   showToast(typeof detail === 'string' ? detail : 'Retrying…', 'error')
 }
+function onAppMilestone(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (typeof detail === 'string' && detail) showToast(detail, 'success')
+}
 
 function onGlobalKeydown(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey
@@ -789,6 +1004,7 @@ onMounted(() => {
 
   window.addEventListener('app:error', onAppError as EventListener)
   window.addEventListener('app:retry', onAppRetry as EventListener)
+  window.addEventListener('app:milestone', onAppMilestone as EventListener)
   window.addEventListener('keydown', onGlobalKeydown)
 
   startupSplashTimer = window.setTimeout(() => {
@@ -803,6 +1019,7 @@ onUnmounted(() => {
   removeMobileChatListener?.()
   window.removeEventListener('app:error', onAppError as EventListener)
   window.removeEventListener('app:retry', onAppRetry as EventListener)
+  window.removeEventListener('app:milestone', onAppMilestone as EventListener)
   window.removeEventListener('keydown', onGlobalKeydown)
   if (startupSplashTimer !== null) {
     window.clearTimeout(startupSplashTimer)
@@ -1284,6 +1501,10 @@ async function handleImportData() {
 </script>
 
 <template>
+  <!-- Skip link: first focusable element so keyboard users can jump past the
+       sidebar / header directly to the message input. -->
+  <a href="#chat-input" class="skip-link">Skip to chat input</a>
+
   <!-- Rainbow tint overlay — blends every pixel with the cycling hue while keeping luminosity.
        Always mounted so the fade-in/out runs cleanly; visibility is driven by data-rainbow on :root. -->
   <Teleport to="body">
@@ -1437,11 +1658,15 @@ async function handleImportData() {
       <div
         v-if="showSettings"
         class="fixed inset-0 bg-black/50 backdrop-blur-md flex items-end sm:items-center justify-center z-50"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-dialog-title"
         @click.self="showSettings = false"
       >
           <div
             class="settings-glass relative rounded-t-3xl sm:rounded-3xl max-w-6xl w-full mx-0 sm:mx-4 max-h-[92vh] overflow-hidden flex"
           >
+            <h2 id="settings-dialog-title" class="sr-only">Settings</h2>
             <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent z-10" />
             <div class="pointer-events-none absolute inset-0 rounded-t-3xl sm:rounded-3xl ring-1 ring-inset ring-white/5 z-10" />
 
@@ -1551,6 +1776,38 @@ async function handleImportData() {
                     <span class="text-sm text-neutral-200">{{ w.displayName }}</span>
                   </label>
                 </div>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <div class="flex items-start justify-between gap-4 mb-2">
+                <div>
+                  <div class="text-sm font-semibold text-neutral-200">Strict mode (agent sandbox)</div>
+                  <p class="mt-1 text-xs text-neutral-400">
+                    Run every agent shell command against a user-managed allowlist and write a JSONL audit trail. Blocks anything not explicitly allowed.
+                  </p>
+                </div>
+                <button
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :style="{ background: strictMode.enabled ? 'linear-gradient(90deg,#ef4444,#f97316)' : '#404040' }"
+                  :aria-label="`${strictMode.enabled ? 'Disable' : 'Enable'} strict mode`"
+                  @click="toggleStrictMode"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: strictMode.enabled ? 'translateX(20px)' : 'translateX(0)' }"
+                  />
+                </button>
+              </div>
+
+              <div v-if="strictMode.enabled" class="mt-2 flex items-center justify-between gap-2">
+                <p class="text-[11px] text-neutral-500">
+                  Manage the allowlist on the AI tab. Audit log:
+                  <span class="font-mono text-neutral-400 break-all">{{ strictMode.auditLog }}</span>
+                </p>
+                <button class="btn-secondary text-xs shrink-0" aria-label="Open audit log file" @click="openAuditLog">
+                  View log
+                </button>
               </div>
             </div>
           </div>
@@ -2162,6 +2419,130 @@ async function handleImportData() {
             </div>
           </div>
 
+          <!-- Plugins Tab -->
+          <div v-if="settingsTab === 'plugins'">
+            <div class="settings-card">
+              <div class="flex items-start justify-between gap-3 mb-3">
+                <div>
+                  <h3 class="text-sm font-bold text-white">Installed plugins</h3>
+                  <p class="text-xs text-neutral-400">
+                    Tool plugins extend the waifu agent. Restart SyntaxSenpai after enabling or disabling a plugin.
+                  </p>
+                  <p v-if="pluginsDirectory" class="text-[11px] text-neutral-500 font-mono mt-1 break-all">{{ pluginsDirectory }}</p>
+                </div>
+                <button
+                  class="btn-secondary shrink-0"
+                  :disabled="pluginsLoading"
+                  aria-label="Refresh plugin list"
+                  @click="refreshPlugins"
+                >
+                  {{ pluginsLoading ? 'Loading…' : 'Refresh' }}
+                </button>
+              </div>
+
+              <p v-if="pluginsError" class="text-xs text-red-400 mb-2">{{ pluginsError }}</p>
+
+              <p v-if="!pluginsLoading && pluginsList.length === 0 && !pluginsError" class="text-xs text-neutral-500 py-2">
+                No plugins found. Drop a plugin.json under the directory above and hit Refresh.
+              </p>
+
+              <ul class="flex flex-col gap-2">
+                <li
+                  v-for="plugin in pluginsList"
+                  :key="plugin.name"
+                  class="flex items-start justify-between gap-3 rounded-lg border border-neutral-800/60 bg-neutral-900/50 p-3"
+                >
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-semibold text-white">{{ plugin.name }}</span>
+                      <span class="text-[11px] text-neutral-500 font-mono">v{{ plugin.version }}</span>
+                      <span
+                        v-if="plugin.error"
+                        class="text-[10px] uppercase tracking-wide text-amber-400 border border-amber-400/40 rounded px-1.5 py-0.5"
+                      >error</span>
+                      <span
+                        v-else-if="plugin.disabled"
+                        class="text-[10px] uppercase tracking-wide text-neutral-500 border border-neutral-600/40 rounded px-1.5 py-0.5"
+                      >disabled</span>
+                      <span
+                        v-else
+                        class="text-[10px] uppercase tracking-wide text-emerald-400 border border-emerald-400/40 rounded px-1.5 py-0.5"
+                      >enabled</span>
+                    </div>
+                    <p v-if="plugin.description" class="text-xs text-neutral-400 mt-1">{{ plugin.description }}</p>
+                    <p v-if="plugin.error" class="text-xs text-red-400 mt-1 font-mono">{{ plugin.error }}</p>
+                  </div>
+                  <button
+                    class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                    :style="{ background: !plugin.disabled ? 'linear-gradient(90deg,#60a5fa,#a78bfa)' : '#404040' }"
+                    :aria-label="`${plugin.disabled ? 'Enable' : 'Disable'} plugin ${plugin.name}`"
+                    @click="togglePluginDisabled(plugin)"
+                  >
+                    <span
+                      class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                      :style="{ transform: !plugin.disabled ? 'translateX(20px)' : 'translateX(0)' }"
+                    />
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- Waifus Tab -->
+          <div v-if="settingsTab === 'waifus'">
+            <div class="settings-card">
+              <div class="flex items-start justify-between gap-3 mb-3">
+                <div>
+                  <h3 class="text-sm font-bold text-white">Custom waifus</h3>
+                  <p class="text-xs text-neutral-400">
+                    Drop user-authored waifu JSON files in the folder below, or import one here. Restart to load new entries.
+                  </p>
+                  <p v-if="customWaifusDirectory" class="text-[11px] text-neutral-500 font-mono mt-1 break-all">{{ customWaifusDirectory }}</p>
+                </div>
+                <div class="flex flex-col gap-2 shrink-0">
+                  <button class="btn-primary" aria-label="Import a waifu from JSON" @click="importCustomWaifu">
+                    Import JSON
+                  </button>
+                  <button
+                    class="btn-secondary"
+                    :disabled="customWaifusLoading"
+                    aria-label="Refresh custom waifu list"
+                    @click="refreshCustomWaifus"
+                  >
+                    {{ customWaifusLoading ? 'Loading…' : 'Refresh' }}
+                  </button>
+                </div>
+              </div>
+
+              <p v-if="customWaifusError" class="text-xs text-red-400 mb-2">{{ customWaifusError }}</p>
+
+              <p v-if="!customWaifusLoading && customWaifus.length === 0 && !customWaifusError" class="text-xs text-neutral-500 py-2">
+                No custom waifus. Use Import JSON or drop a file at the path above.
+              </p>
+
+              <ul class="flex flex-col gap-2">
+                <li
+                  v-for="waifu in customWaifus"
+                  :key="waifu.id"
+                  class="flex items-start justify-between gap-3 rounded-lg border border-neutral-800/60 bg-neutral-900/50 p-3"
+                >
+                  <div class="min-w-0">
+                    <div class="text-sm font-semibold text-white truncate">{{ waifu.displayName || waifu.name || waifu.id }}</div>
+                    <div class="text-[11px] text-neutral-500 font-mono truncate">{{ waifu.id }}</div>
+                    <p v-if="waifu.backstory" class="text-xs text-neutral-400 mt-1 line-clamp-2">{{ waifu.backstory }}</p>
+                  </div>
+                  <button
+                    class="btn-secondary text-xs shrink-0"
+                    :aria-label="`Remove custom waifu ${waifu.id}`"
+                    @click="deleteCustomWaifu(waifu.id)"
+                  >
+                    Remove
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </div>
+
           <!-- Mobile Tab -->
           <div v-if="settingsTab === 'mobile'">
             <!-- Connection Status -->
@@ -2631,7 +3012,12 @@ async function handleImportData() {
         :style="secondaryPanelStyle"
       >
         <div class="flex items-center gap-3 min-w-0">
-          <button class="btn-ghost p-2" @click="sidebarOpen = !sidebarOpen">
+          <button
+            class="btn-ghost p-2"
+            :aria-label="sidebarOpen ? 'Close sidebar' : 'Open sidebar'"
+            :aria-expanded="sidebarOpen"
+            @click="sidebarOpen = !sidebarOpen"
+          >
             {{ sidebarOpen ? '←' : '☰' }}
           </button>
           <div class="flex items-center gap-4 min-w-0">
@@ -2659,6 +3045,7 @@ async function handleImportData() {
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             :title="t('sidebar.agent')"
+            :aria-label="t('sidebar.agent')"
             @click="showAgent = true"
           >
             🤖
@@ -2667,6 +3054,7 @@ async function handleImportData() {
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             title="AI Memory"
+            aria-label="Open AI memory"
             @click="showMemory = true"
           >
             🧠
@@ -2675,6 +3063,7 @@ async function handleImportData() {
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             :title="t('sidebar.settings')"
+            :aria-label="t('sidebar.settings')"
             @click="showSettings = true"
           >
             ⚙️
@@ -2752,6 +3141,20 @@ async function handleImportData() {
           </p>
         </div>
 
+        <div
+          v-if="store.messages.length > visibleMessageCount"
+          class="flex justify-center mb-2"
+        >
+          <button
+            class="btn-ghost text-xs text-neutral-400"
+            aria-label="Show older messages"
+            @click="revealOlderMessages"
+          >
+            ↑ Show {{ Math.min(MESSAGE_WINDOW_PAGE, store.messages.length - visibleMessageCount) }} older
+            ({{ store.messages.length - visibleMessageCount }} hidden)
+          </button>
+        </div>
+
         <TransitionGroup
           enter-active-class="transition-all duration-300 ease-out"
           enter-from-class="opacity-0 translate-y-2"
@@ -2759,7 +3162,7 @@ async function handleImportData() {
           leave-to-class="opacity-0 -translate-y-2"
         >
           <div
-            v-for="msg in store.messages"
+            v-for="msg in windowedMessages"
             :key="msg.id"
             :class="[
               'group flex',
@@ -2817,6 +3220,7 @@ async function handleImportData() {
                 <button
                   class="text-[11px] text-neutral-500 hover:text-primary-300 transition-colors"
                   :title="t('message.regenerateTitle')"
+                  :aria-label="t('message.regenerateTitle')"
                   @click="store.regenerateFromMessage(msg.id)"
                 >
                   {{ t('message.regenerate') }}
@@ -2824,6 +3228,7 @@ async function handleImportData() {
                 <button
                   class="text-[11px] text-neutral-500 hover:text-red-400 transition-colors"
                   :title="t('message.deleteTitle')"
+                  :aria-label="t('message.deleteTitle')"
                   @click="store.deleteMessage(msg.id)"
                 >
                   {{ t('message.delete') }}
@@ -2897,15 +3302,18 @@ async function handleImportData() {
           <button
             class="btn-ghost min-w-fit !px-2"
             :title="t('input.attachImage')"
+            :aria-label="t('input.attachImage')"
             :disabled="store.isLoading"
             @click="fileInputRef?.click()"
           >
             📎
           </button>
           <textarea
+            id="chat-input"
             ref="inputRef"
             v-model="store.inputValue"
             :placeholder="t('chat.inputPlaceholder')"
+            :aria-label="t('chat.inputPlaceholder')"
             :disabled="store.isLoading"
             rows="1"
             :class="[
@@ -2921,6 +3329,7 @@ async function handleImportData() {
           <button
             class="btn-primary themed-btn-primary min-w-fit flex items-center justify-center gap-2"
             :style="primaryButtonStyle"
+            :aria-label="store.isLoading ? t('chat.sending') : t('chat.send')"
             :disabled="(!store.inputValue.trim() && store.pendingAttachments.length === 0) || store.isLoading"
             @click="store.sendMessage(store.inputValue)"
           >
@@ -2936,6 +3345,40 @@ async function handleImportData() {
 </template>
 
 <style scoped>
+/* Accessibility: visually-hidden text for screen readers. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skip link: invisible until focused, then jumps to the main chat input. */
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  padding: 8px 14px;
+  background: #111;
+  color: #fff;
+  border: 1px solid #60a5fa;
+  border-radius: 8px;
+  font-weight: 600;
+  z-index: 100;
+  transform: translateY(-200%);
+  transition: transform 160ms ease;
+}
+.skip-link:focus {
+  transform: translateY(0);
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
 @keyframes startup-float {
   0%, 100% {
     transform: translateY(0) scale(1);

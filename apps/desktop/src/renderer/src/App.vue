@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { builtInWaifus } from '@syntax-senpai/waifu-core'
+import { unwrapExport, SchemaError } from '@syntax-senpai/storage'
 import { useChatStore } from './stores/chat'
 import { useTheme } from './composables/use-theme'
 import { useI18n, formatLocalizedCost } from './composables/use-i18n'
@@ -1114,7 +1115,17 @@ async function handleImportData() {
       return
     }
 
-    const payload = result.payload || {}
+    let payload: any
+    try {
+      payload = unwrapExport(result.payload)
+    } catch (err) {
+      if (err instanceof SchemaError) {
+        showToast(err.message, 'error')
+        return
+      }
+      throw err
+    }
+
     const importedConversations = Array.isArray(payload?.data?.conversations) ? payload.data.conversations : []
     const importedMemories = Array.isArray(payload?.data?.memories) ? payload.data.memories : []
 

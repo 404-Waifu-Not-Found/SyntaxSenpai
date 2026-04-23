@@ -2,11 +2,42 @@ const electronModule = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
 
+import { ToolRegistry, loadToolPlugins } from '@syntax-senpai/agent-tools'
+import type { ToolExecutionContext } from '@syntax-senpai/agent-tools'
+import { mainLogger } from '../logger'
+
 const { ipcMain, app } = electronModule
 
 const DISABLED_STORAGE_KEY = 'syntax-senpai-disabled-plugins'
 
 let registered = false
+
+// Module-level registry: populated once at IPC-register time by
+// initPluginRegistry(). Kept in main so plugins run with full Node
+// privileges (fetch, child_process if they need it) and the renderer
+// only sees their ToolDefinitions + execution results.
+const pluginRegistry = new ToolRegistry()
+let pluginRegistryInitialized = false
+
+/**
+ * Broadly-permissive execution context. Plugins are user-installed
+ * and the user can toggle any of them off in Settings; gating each
+ * call per-permission would be security theater without a meaningful
+ * UI to grant/revoke permissions per-plugin.
+ */
+function buildPluginExecContext(): ToolExecutionContext {
+  return {
+    platform: 'desktop',
+    userId: 'local-user',
+    waifuId: '',
+    permissions: {
+      fileRead: true,
+      fileWrite: true,
+      shellExec: true,
+      networkAccess: true,
+    },
+  }
+}
 
 /**
  * Resolve the plugins directory. Precedence:
@@ -92,9 +123,48 @@ function listPluginManifests(pluginDir: string): DesktopPluginManifest[] {
   return manifests
 }
 
+/**
+ * Load every plugin manifest in the plugins directory once and activate
+ * the ones the user hasn't disabled. Tools land in pluginRegistry and
+ * are exposed through plugins:listTools / plugins:execTool. Toggling a
+ * plugin in Settings persists the disabled list but won't re-load until
+ * the next launch — matches the "restart to apply" UX the Settings tab
+ * already advertises.
+ */
+async function initPluginRegistry() {
+  if (pluginRegistryInitialized) return
+  pluginRegistryInitialized = true
+  try {
+    const pluginDir = resolvePluginDir()
+    const disabled = new Set(readDisabledList())
+    const loaded = await loadToolPlugins({
+      directory: pluginDir,
+      registry: pluginRegistry,
+      logger: {
+        info: (msg: string) => mainLogger.info({ pluginDir }, msg),
+        warn: (msg: string) => mainLogger.warn({ pluginDir }, msg),
+        error: (msg: string) => mainLogger.error({ pluginDir }, msg),
+      },
+      isDisabled: (name: string) => disabled.has(name),
+    })
+    mainLogger.info(
+      { count: loaded.length, tools: pluginRegistry.getAll().map((t) => t.definition.name) },
+      'plugins initialized',
+    )
+  } catch (err: any) {
+    mainLogger.error({ err: err?.message || String(err) }, 'plugin init failed')
+  }
+}
+
 export function registerPluginsIpc() {
   if (registered) return
   registered = true
+
+  // Kick off plugin load in the background — the renderer can still
+  // call plugins:list (which only reads manifests) before tools are
+  // ready, and plugins:listTools will simply return [] until the load
+  // promise resolves. First sendMessage happens well after activation.
+  initPluginRegistry()
 
   ipcMain.handle('plugins:list', () => {
     try {
@@ -120,6 +190,36 @@ export function registerPluginsIpc() {
       return { success: false, error: err?.message || String(err) }
     }
   })
+
+  ipcMain.handle('plugins:listTools', () => {
+    try {
+      return { success: true, tools: pluginRegistry.getDefinitions() }
+    } catch (err: any) {
+      return { success: false, error: err?.message || String(err) }
+    }
+  })
+
+  ipcMain.handle(
+    'plugins:execTool',
+    async (_e: any, toolName: string, toolArgs: Record<string, unknown>) => {
+      try {
+        if (typeof toolName !== 'string' || !toolName) {
+          return { success: false, error: 'Tool name is required' }
+        }
+        const result = await pluginRegistry.execute(
+          {
+            id: `plugin-call-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            name: toolName,
+            arguments: toolArgs || {},
+          },
+          buildPluginExecContext(),
+        )
+        return result
+      } catch (err: any) {
+        return { success: false, error: err?.message || String(err) }
+      }
+    },
+  )
 }
 
 module.exports = { registerPluginsIpc }

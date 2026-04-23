@@ -8,6 +8,7 @@ import { useTheme } from './composables/use-theme'
 import { useI18n, formatLocalizedCost } from './composables/use-i18n'
 import { useIpc } from './composables/use-ipc'
 import { useVoice } from './composables/use-voice'
+import { loadPluginTools } from './agent-tools'
 import ChatBubble from './components/ChatBubble.vue'
 import AppAvatar from './components/AppAvatar.vue'
 import TypingDots from './components/TypingDots.vue'
@@ -997,6 +998,9 @@ onMounted(() => {
     // Hydrate user-authored waifus so they appear in pickers from the
     // first paint, not just after someone opens Settings → Waifus.
     store.refreshCustomWaifus()
+    // Ask main for the enabled plugins' tool definitions. Idempotent —
+    // cached after first call — so getToolsForMode() can stay synchronous.
+    loadPluginTools()
     if (store.isSetup) {
       store.loadConversations()
       store.loadMemories()

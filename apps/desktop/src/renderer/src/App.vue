@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { builtInWaifus } from '@syntax-senpai/waifu-core'
+import { builtInWaifus, classifySentiment, EXPRESSION_EMOJI } from '@syntax-senpai/waifu-core'
+import type { Expression } from '@syntax-senpai/waifu-core'
 import { unwrapExport, SchemaError } from '@syntax-senpai/storage'
 import { useChatStore } from './stores/chat'
 import { useTheme } from './composables/use-theme'
@@ -20,9 +21,13 @@ const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, se
 const { t, locale, setLocale, localeOptions } = useI18n()
 const voice = useVoice()
 
-// Speak newly-completed assistant messages in-character. We fire only
-// when a new message is appended AND streaming has finished, so partial
-// chunks don't trigger a rapid cascade of utterances.
+function sentimentEmoji(expression: Expression): string {
+  return EXPRESSION_EMOJI[expression] ?? EXPRESSION_EMOJI.neutral
+}
+
+// After each new assistant message lands (streaming done), speak it in
+// the waifu's voice and attach a sentiment result so the avatar mood-pip
+// reflects what was just said. Fires once per finalized message.
 watch(
   () => [store.messages.length, store.isLoading] as const,
   ([len, loading], prev) => {
@@ -31,7 +36,9 @@ watch(
     if (len <= prevLen) return
     const last: any = store.messages[len - 1]
     if (!last || last.role !== 'assistant' || !last.content) return
-    voice.speak(String(last.content), store.selectedWaifuId)
+    const content = String(last.content)
+    last.sentiment = classifySentiment(content)
+    voice.speak(content, store.selectedWaifuId)
   },
 )
 
@@ -2759,13 +2766,21 @@ async function handleImportData() {
               msg.role === 'user' ? 'justify-end items-end' : 'justify-start items-start',
             ]"
           >
-            <div v-if="msg.role !== 'user'" class="mr-3 shrink-0">
+            <div v-if="msg.role !== 'user'" class="mr-3 shrink-0 relative">
               <div
                 class="themed-assistant-avatar w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white"
                 :title="msg.waifuDisplayName || store.selectedWaifu?.displayName"
               >
                 {{ msg.waifuDisplayName?.[0] || store.selectedWaifu?.displayName?.[0] || 'A' }}
               </div>
+              <span
+                v-if="msg.sentiment && msg.sentiment.expression !== 'neutral'"
+                class="absolute -bottom-1 -right-1 text-[11px] leading-none select-none pointer-events-none transition-all duration-300"
+                :style="{ transform: `scale(${0.85 + (msg.sentiment.intensity ?? 0) * 0.35})` }"
+                :aria-label="`Mood: ${msg.sentiment.expression}`"
+              >
+                {{ sentimentEmoji(msg.sentiment.expression) }}
+              </span>
             </div>
 
             <div :class="msg.role !== 'user' ? 'flex flex-col' : ''">

@@ -222,6 +222,44 @@ async function deleteCustomWaifu(id: string) {
   }
 }
 
+// Strict-mode state: toggle for the allowlist sandbox. The allowlist itself
+// is already managed by the existing agent:* IPC and its UI in the AI tab.
+interface StrictModeState {
+  enabled: boolean
+  auditLog: string
+}
+const strictMode = ref<StrictModeState>({ enabled: false, auditLog: '' })
+
+async function refreshStrictMode() {
+  try {
+    const result = await invoke('strictMode:get')
+    if (result?.success) {
+      strictMode.value = {
+        enabled: !!result.enabled,
+        auditLog: result.auditLog || '',
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function toggleStrictMode() {
+  const next = !strictMode.value.enabled
+  const result = await invoke('strictMode:set', next)
+  if (result?.success) {
+    strictMode.value.enabled = !!result.enabled
+    showToast(`Strict mode ${next ? 'enabled' : 'disabled'}`, 'success')
+  } else {
+    showToast(result?.error || 'Failed to toggle strict mode', 'error')
+  }
+}
+
+async function openAuditLog() {
+  const result = await invoke('strictMode:openAuditLog')
+  if (!result?.success) showToast(result?.error || 'Failed to open audit log', 'error')
+}
+
 async function checkMobilePairingStatus() {
   try {
     const status = await invoke('ws:getPairingStatus')
@@ -540,6 +578,9 @@ watch(
     }
     if (tab === 'waifus' && customWaifus.value.length === 0 && !customWaifusLoading.value) {
       refreshCustomWaifus()
+    }
+    if (tab === 'general') {
+      refreshStrictMode()
     }
   },
 )
@@ -1693,6 +1734,38 @@ async function handleImportData() {
                     <span class="text-sm text-neutral-200">{{ w.displayName }}</span>
                   </label>
                 </div>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <div class="flex items-start justify-between gap-4 mb-2">
+                <div>
+                  <div class="text-sm font-semibold text-neutral-200">Strict mode (agent sandbox)</div>
+                  <p class="mt-1 text-xs text-neutral-400">
+                    Run every agent shell command against a user-managed allowlist and write a JSONL audit trail. Blocks anything not explicitly allowed.
+                  </p>
+                </div>
+                <button
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :style="{ background: strictMode.enabled ? 'linear-gradient(90deg,#ef4444,#f97316)' : '#404040' }"
+                  :aria-label="`${strictMode.enabled ? 'Disable' : 'Enable'} strict mode`"
+                  @click="toggleStrictMode"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: strictMode.enabled ? 'translateX(20px)' : 'translateX(0)' }"
+                  />
+                </button>
+              </div>
+
+              <div v-if="strictMode.enabled" class="mt-2 flex items-center justify-between gap-2">
+                <p class="text-[11px] text-neutral-500">
+                  Manage the allowlist on the AI tab. Audit log:
+                  <span class="font-mono text-neutral-400 break-all">{{ strictMode.auditLog }}</span>
+                </p>
+                <button class="btn-secondary text-xs shrink-0" aria-label="Open audit log file" @click="openAuditLog">
+                  View log
+                </button>
               </div>
             </div>
           </div>

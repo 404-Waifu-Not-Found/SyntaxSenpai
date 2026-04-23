@@ -2,6 +2,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const DATA_FILES = ['chats.json', 'memory.json']
+const SCHEMA_VERSION = 1
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true })
@@ -59,14 +60,17 @@ class BackupManager {
   }
 
   exportBackup(reason = 'manual') {
-    const payload = {
-      createdAt: new Date().toISOString(),
-      reason,
-      files: {}
+    const files = {}
+    for (const file of this.getTrackedFiles()) {
+      files[file.name] = safeReadJson(file.path)
     }
 
-    for (const file of this.getTrackedFiles()) {
-      payload.files[file.name] = safeReadJson(file.path)
+    const payload = {
+      schemaVersion: SCHEMA_VERSION,
+      app: 'SyntaxSenpai-Runtime',
+      exportedAt: new Date().toISOString(),
+      reason,
+      data: { files }
     }
 
     const fileName = `backup-${timestampName()}.json`
@@ -76,7 +80,8 @@ class BackupManager {
 
     return {
       fileName,
-      path: filePath
+      path: filePath,
+      schemaVersion: SCHEMA_VERSION
     }
   }
 
@@ -87,19 +92,38 @@ class BackupManager {
     }
 
     const backup = JSON.parse(fs.readFileSync(filePath, 'utf8'))
-    if (!backup || typeof backup !== 'object' || !backup.files) {
+    if (!backup || typeof backup !== 'object') {
+      throw new Error(`Invalid backup payload: ${fileName}`)
+    }
+
+    // Accept the current schemaVersion-wrapped shape OR the legacy
+    // unversioned shape (files at top-level). Refuse newer versions.
+    let files
+    if (typeof backup.schemaVersion === 'number') {
+      if (backup.schemaVersion > SCHEMA_VERSION) {
+        throw new Error(
+          `Backup is at schemaVersion ${backup.schemaVersion} but this runtime only understands ${SCHEMA_VERSION}. Upgrade the runtime to restore it.`
+        )
+      }
+      files = backup.data && backup.data.files
+    } else if (backup.files) {
+      files = backup.files
+    }
+
+    if (!files || typeof files !== 'object') {
       throw new Error(`Invalid backup payload: ${fileName}`)
     }
 
     for (const file of this.getTrackedFiles()) {
-      const content = backup.files[file.name]
+      const content = files[file.name]
       if (content === undefined) continue
       fs.writeFileSync(file.path, JSON.stringify(content, null, 2), 'utf8')
     }
 
     return {
       restoredFrom: fileName,
-      restoredAt: new Date().toISOString()
+      restoredAt: new Date().toISOString(),
+      schemaVersion: backup.schemaVersion ?? null
     }
   }
 

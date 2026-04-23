@@ -9,6 +9,7 @@ import { AIChatRuntime } from '@syntax-senpai/ai-core'
 import * as storage from '@syntax-senpai/storage'
 import { buildSystemPrompt, builtInWaifus } from '@syntax-senpai/waifu-core'
 import { webSearch } from './agent/executor'
+import { isWebSearchEnabled } from './ipc/agent'
 import type {
   WSMessage,
   PairRequestPayload,
@@ -55,7 +56,7 @@ const MOBILE_AGENT_TOOLS = [
   {
     name: 'terminal',
     description:
-      'Run a shell command on the user\'s desktop computer. Supports the real shell, pipes, redirects, ~, $ENV expansion, and normal console workflows. Use this when the user wants you to inspect files, run commands, or operate their computer.',
+      'Run a shell command on the user\'s desktop computer. Supports the real shell, pipes, redirects, ~, $ENV expansion, and normal console workflows. Use this when the user wants you to inspect files, run commands, operate their computer, or pull realtime/current data from direct CLI/API sources such as wttr.in, worldtimeapi.org, ipinfo.io, npm view, or pnpm view.',
     parameters: {
       type: 'object',
       properties: {
@@ -70,13 +71,13 @@ const MOBILE_AGENT_TOOLS = [
   {
     name: 'web_search',
     description:
-      'Search the public web using DuckDuckGo when current facts or documentation need verification.',
+      'Fetch top public DuckDuckGo result links/snippets for a query. Use only to find links or source candidates. This is not a realtime data source; do not use it to answer weather, stocks, scores, prices, or other live facts directly. Prefer terminal for problem solving, diagnostics, local searches, installs, and verification.',
     parameters: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'The search query to run.',
+          description: 'The DuckDuckGo search query to run.',
         },
         limit: {
           type: 'integer',
@@ -141,6 +142,14 @@ function broadcastMobileChatEvent(payload: Record<string, unknown>) {
 
 function getLatestUserMessage(messages: Array<{ id?: string; role?: string; content?: unknown }>) {
   return [...messages].reverse().find((message) => message.role === 'user' && typeof message.content === 'string' && message.content.trim()) || null
+}
+
+function getFirstUserMessage(messages: Array<{ id?: string; role?: string; content?: unknown }>) {
+  return messages.find((message) => message.role === 'user' && typeof message.content === 'string' && message.content.trim()) || null
+}
+
+function buildConversationLanguageRuleBlock(firstUserText: string) {
+  return `\n\n[Conversation language rule]\nThe first user message in this conversation is:\n"""${firstUserText.slice(0, 500)}"""\nReply only in the language of that first user message. If it is Chinese, all prose and stop_response.final_message must be Chinese. Do not mix in English except for code, command names, URLs, proper nouns, or quoted tool output. If the user explicitly asks to switch languages later, follow that explicit request.`
 }
 
 function buildRequestedWaifuList(primaryWaifuId: string, groupChat?: { enabled?: boolean; waifuIds?: string[] }) {
@@ -260,7 +269,11 @@ function getDesktopSystemPromptBlock() {
     // ignore lookup failures
   }
 
-  return `\n\n[Desktop Execution Environment]\nYou are running on the user's desktop computer right now.\nOS: ${process.platform}\nUsername: ${username}\nHome directory: ${os.homedir()}\n\nWhen the user asks you to inspect files, run console commands, or operate the computer, you MUST use the terminal tool instead of pretending. You may also use web_search when you need current public information. If you use tools, keep going until you're ready to call stop_response with the final answer.`
+  const webSearchStatus = isWebSearchEnabled()
+    ? 'The web_search tool only fetches top DuckDuckGo result links/snippets; it is not a realtime data source, so never present it as actual live weather, stock, score, price, or other realtime info.'
+    : 'The web_search tool is disabled by the user and is not available. Do not try to call it; use terminal or explain that web search must be enabled in Settings to fetch links.'
+
+  return `\n\n[Desktop Execution Environment]\nYou are running on the user's desktop computer right now.\nOS: ${process.platform}\nUsername: ${username}\nHome directory: ${os.homedir()}\n\nPrioritize terminal commands for solving problems. When the user asks you to inspect, diagnose, install, run, verify, search locally, check network behavior, operate the computer, or pull realtime/current public data, use terminal instead of pretending. To perform tasks: identify the concrete user goal, choose the terminal command or other tool that can move it forward, read tool results carefully, try one corrected retry after a failure, verify the outcome when possible, then call stop_response. For realtime data, use direct terminal commands/APIs: weather via wttr.in, for example curl.exe -s "https://wttr.in/Tokyo?format=3" or curl.exe -s "https://wttr.in/Tokyo?format=j1"; infer approximate location with curl.exe -s "https://ipinfo.io/json" only when needed; time/IP/API/package versions via Get-Date, worldtimeapi.org, api.ipify.org, Invoke-RestMethod, npm view, or pnpm view. Full examples live in docs/agent-skills/common-commands.skill. ${webSearchStatus} If no available tool can complete the task, say exactly which capability is missing and give the next best actionable step.`
 }
 
 async function runDesktopTerminalCommand(command: string): Promise<string> {
@@ -294,6 +307,9 @@ async function executeMobileToolCall(toolCall: { name: string; arguments?: Recor
     case 'terminal':
       return await runDesktopTerminalCommand(String(args.command || ''))
     case 'web_search': {
+      if (!isWebSearchEnabled()) {
+        return 'Web search is disabled. Enable it in desktop Settings before using web_search.'
+      }
       const result = await webSearch(String(args.query || ''), Number(args.limit) || 5)
       return result.success ? result.content || 'No search results found.' : `Web search error: ${result.error}`
     }
@@ -307,6 +323,7 @@ async function runMobileWaifuTurn(options: {
   model: string
   systemPrompt: string
   aiHistory: any[]
+  tools: typeof MOBILE_AGENT_TOOLS
 }) {
   const provider = options.runtime.getProvider()
   const localHistory = [...options.aiHistory]
@@ -316,7 +333,7 @@ async function runMobileWaifuTurn(options: {
     const response = await provider.chat({
       model: options.model,
       messages: localHistory,
-      tools: MOBILE_AGENT_TOOLS as any,
+      tools: options.tools as any,
       systemPrompt: options.systemPrompt,
     })
 
@@ -559,7 +576,9 @@ async function handleAgentRequest(socket: WebSocket, msg: WSMessage<AgentRequest
       : getMobileConversationTitle(deviceName, primaryWaifu.displayName),
     isGroupChat ? 'group-chat' : primaryWaifu.id,
   )
-  const userMessage = getLatestUserMessage(messages as Array<{ id?: string; role?: string; content?: unknown }>)
+  const userMessages = messages as Array<{ id?: string; role?: string; content?: unknown }>
+  const userMessage = getLatestUserMessage(userMessages)
+  const firstUserMessage = getFirstUserMessage(userMessages)
 
   if (!userMessage || typeof userMessage.content !== 'string' || !userMessage.content.trim()) {
     const errorPayload: StreamErrorPayload = {
@@ -669,6 +688,9 @@ async function handleAgentRequest(socket: WebSocket, msg: WSMessage<AgentRequest
             }
 
         const assignedTasks = pendingTasks.get(waifu.id) || []
+        const mobileTools = isWebSearchEnabled()
+          ? MOBILE_AGENT_TOOLS
+          : MOBILE_AGENT_TOOLS.filter((tool) => tool.name !== 'web_search')
         const systemPrompt = buildSystemPrompt(
           waifu,
           normalizedRelationship,
@@ -676,9 +698,10 @@ async function handleAgentRequest(socket: WebSocket, msg: WSMessage<AgentRequest
             userId: normalizedRelationship.userId,
             affectionLevel: normalizedRelationship.affectionLevel,
             platform: 'mobile',
-            availableTools: MOBILE_AGENT_TOOLS.map((tool) => tool.name),
+            availableTools: mobileTools.map((tool) => tool.name),
           },
         )
+          + buildConversationLanguageRuleBlock(String(firstUserMessage?.content || userMessage.content))
           + (isGroupChat ? buildGroupChatPromptBlock(waifu, requestedWaifus, assignedTasks, round) : '')
           + getDesktopSystemPromptBlock()
 
@@ -693,6 +716,7 @@ async function handleAgentRequest(socket: WebSocket, msg: WSMessage<AgentRequest
         const { cleanedText, tasks } = await runMobileWaifuTurn({
           runtime,
           model,
+          tools: mobileTools,
           systemPrompt,
           aiHistory: sharedHistory,
         })

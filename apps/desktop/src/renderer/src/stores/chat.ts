@@ -98,6 +98,7 @@ const PROVIDER_PREFERENCES_KEY = 'syntax-senpai-provider-preferences'
 const API_TELEMETRY_HISTORY_KEY = 'syntax-senpai-api-telemetry-history'
 const API_SPIKE_THRESHOLD_STORAGE_KEY = 'syntax-senpai-api-spike-threshold-ms'
 const MAX_TOOL_ITERATIONS_STORAGE_KEY = 'syntax-senpai-max-tool-iterations'
+const WEB_SEARCH_ENABLED_STORAGE_KEY = 'syntax-senpai-web-search-enabled'
 const DEFAULT_API_SPIKE_THRESHOLD_MS = 5000
 const DEFAULT_MAX_TOOL_ITERATIONS = 12
 const API_TELEMETRY_HISTORY_LIMIT = 48
@@ -213,20 +214,40 @@ function createWaifuSystemPrompt(waifu: any, provider: string, model: string, af
   )
 }
 
-function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: string): string {
+function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: string, isWebSearchEnabled: boolean): string {
   const shellLine = shell ? `\n- Shell: ${shell}. Each terminal call is a new process — \`cd\` does NOT persist between calls; use absolute paths or chain with \`&&\`.` : ''
+  const webSearchLine = isWebSearchEnabled
+    ? '- web_search → fetching top DuckDuckGo result links/snippets only. Do not use it as a realtime data source and do not use it to answer weather, stocks, scores, prices, or other live facts directly.'
+    : '- web_search is disabled by the user. Do not try to call it; use terminal or explain that web search must be enabled in Settings to fetch links.'
   return `\n\n[Agent Behavior]
 You can act on the user's machine through tools. Your goal is to actually finish the task, verified, not to sound like you finished it.
 
-Tool selection — pick the RIGHT tool, not the most convenient one:
-- terminal → running programs, git, installs, searches, network, diagnostics. NOT for editing text files.
+Tool selection — prioritize terminal commands for solving problems:
+- terminal → default first choice for problem solving: running programs, git, installs, local searches, diagnostics, network checks, package docs via CLI, and command-line verification. NOT for editing text files.
 - read_file → look at source/config/logs. Always use this before edit_file so you know the exact whitespace.
 - write_file → create a new file, or deliberately replace a whole file.
 - edit_file → change one specific block of an existing file. Exact-string match, must be unique.
-- web_search → docs, recent APIs, error messages you don't recognize.
+${webSearchLine}
 - rename_chat → name the current conversation so the sidebar is useful. Call it once after the user's first message (pick a short, specific title — you are allowed personality) and again whenever the topic clearly shifts. Don't repeat-call it for the same topic.${shellLine}
 
 Workflow for anything non-trivial:
+Important web_search limitation: web_search is disabled unless the user enables it in Settings. When enabled, it only returns top DuckDuckGo search results. It is not a live data provider and does not return authoritative realtime facts; for weather, stocks, scores, or time-sensitive facts, state that limitation and cite search-result uncertainty instead of treating it as actual realtime info.
+
+Realtime data via terminal:
+- For realtime/current public data, use terminal commands against a direct source or API instead of web_search.
+- Weather: use wttr.in from terminal. On Windows PowerShell prefer \`curl.exe\`, e.g. \`curl.exe -s "https://wttr.in/Tokyo?format=3"\` or \`curl.exe -s "https://wttr.in/Tokyo?format=j1"\`; summarize tomorrow from the JSON \`weather[1]\` entry.
+- If the user asks for weather but gives no location, ask for a city or infer an approximate city with \`curl.exe -s "https://ipinfo.io/json"\` before calling wttr.in.
+- Time/IP/network/API checks: use commands like \`Get-Date\`, \`curl.exe -s "https://worldtimeapi.org/api/ip"\`, \`curl.exe -s "https://api.ipify.org"\`, \`Test-NetConnection example.com -Port 443\`, and \`Invoke-RestMethod\`.
+- Package versions and release data: use \`npm view <pkg> version\`, \`pnpm view <pkg> version\`, \`python -m pip index versions <pkg>\`, or direct API calls with \`curl.exe\` / \`Invoke-RestMethod\`.
+- Full command examples live in \`docs/agent-skills/common-commands.skill\`; follow those patterns when choosing terminal commands.
+
+How to perform tasks:
+- Identify the concrete user goal first, then use terminal unless a non-terminal tool is clearly more appropriate.
+- Use terminal for local commands, installs, running apps, diagnostics, network checks, package inspection, and verifying outcomes.
+- Use read_file before editing existing files; use edit_file for small changes and write_file only for new files or full replacements.
+- Use web_search only to gather search result links/snippets that the user can open or that help identify a source. Never present web_search output as actual realtime data.
+- If no available tool can complete the task, say exactly which capability is missing and give the next best actionable step.
+
 1. If the task has more than ~2 steps, write a one-line plan in your thinking before calling any tool. Revise it if a step fails.
 2. Gather before you act. Read files / list dirs / check versions before editing or installing.
 3. Do one thing at a time. Don't batch unrelated commands in one \`&&\` chain — errors get buried.
@@ -409,6 +430,15 @@ function readStoredNumber(key: string, fallback: number, min: number, max: numbe
   }
 }
 
+function readStoredBoolean(key: string, fallback = false): boolean {
+  try {
+    const raw = localStorage.getItem(key)
+    if (raw === null) return fallback
+    return raw === 'true'
+  } catch {
+    return fallback
+  }
+}
 
 function loadGroupChatSettings() {
   try {
@@ -459,6 +489,13 @@ function buildLanguagePromptBlock(): string {
   const name = localeNames[locale]
   return `\n\n[Master's preferred language]
 The Master has set their interface language to ${name}. Default to replying in ${name} unless the Master writes to you in another language, in which case mirror their choice. Tool-call JSON, file contents, code snippets, and terminal commands stay in their original form — language applies to prose, explanations, and the final_message.`
+}
+
+function buildConversationLanguageRuleBlock(firstUserText: string): string {
+  return `\n\n[Conversation language rule]
+The first user message in this conversation is:
+"""${firstUserText.slice(0, 500)}"""
+Reply only in the language of that first user message. If it is Chinese, all prose and stop_response.final_message must be Chinese. Do not mix in English except for code, command names, URLs, proper nouns, or quoted tool output. If the user explicitly asks to switch languages later, follow that explicit request.`
 }
 
 function buildGroupChatPromptBlock(currentWaifu: any, waifus: any[], assignedTasks: string[], round: number) {
@@ -570,6 +607,7 @@ export const useChatStore = defineStore('chat', () => {
     250,
     60000,
   ))
+  const webSearchEnabled = ref(readStoredBoolean(WEB_SEARCH_ENABLED_STORAGE_KEY, false))
 
   // Cumulative token + cost counters for the current conversation. Reset on
   // conversation switch. Stored on the store so App.vue can render them.
@@ -741,6 +779,17 @@ export const useChatStore = defineStore('chat', () => {
         }
   }
 
+  async function setWebSearchEnabled(value: boolean) {
+    const enabled = !!value
+    webSearchEnabled.value = enabled
+    localStorage.setItem(WEB_SEARCH_ENABLED_STORAGE_KEY, enabled ? 'true' : 'false')
+    try {
+      await invoke('agent:webSearchEnabled:set', enabled)
+    } catch {
+      // Main-process persistence is best effort; renderer gating still applies.
+    }
+  }
+
   const selectedWaifu = computed(() =>
     builtInWaifus.find(w => w.id === selectedWaifuId.value) || builtInWaifus[0],
   )
@@ -811,6 +860,19 @@ export const useChatStore = defineStore('chat', () => {
     if (groupChatSettings.waifuIds.length > 0) {
       groupWaifuIds.value = groupChatSettings.waifuIds
     }
+
+    invoke('agent:webSearchEnabled:get')
+      .then((res: any) => {
+        if (res?.success) {
+          webSearchEnabled.value = !!res.enabled
+          localStorage.setItem(WEB_SEARCH_ENABLED_STORAGE_KEY, webSearchEnabled.value ? 'true' : 'false')
+        } else {
+          void setWebSearchEnabled(webSearchEnabled.value)
+        }
+      })
+      .catch(() => {
+        void setWebSearchEnabled(webSearchEnabled.value)
+      })
   }
 
   async function setup(apiKeyValue: string, modelValue?: string) {
@@ -1239,7 +1301,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
       const waifus = activeWaifus.value
 
-      const tools = getToolsForMode(agentMode.value)
+      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value })
       const hasTools = tools.length > 0
       let systemInfo: any = null
 
@@ -1290,6 +1352,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           let systemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, affectionValue)
           systemPrompt += buildMasterContextBlock()
           systemPrompt += buildLanguagePromptBlock()
+          systemPrompt += buildConversationLanguageRuleBlock(messages.value.find((m) => m.role === 'user')?.content || trimmedText)
           systemPrompt += buildMemoryContext()
           systemPrompt += buildAffectionPrompt(affectionValue, waifu.displayName || 'Waifu')
           systemPrompt += buildMilestoneSidecarBlock(waifu.id)
@@ -1301,7 +1364,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             if (systemInfo && systemInfo.homedir) {
               systemPrompt += `\n\n[System Environment]\nOS: ${systemInfo.platform}\nUsername: ${systemInfo.username}\nHome directory: ${systemInfo.homedir}\nShell: ${systemInfo.shell ?? 'unknown'}`
             }
-            systemPrompt += buildAgentBehaviorPrompt(systemInfo?.shell, waifu.displayName || 'your waifu persona')
+            systemPrompt += buildAgentBehaviorPrompt(systemInfo?.shell, waifu.displayName || 'your waifu persona', webSearchEnabled.value)
           }
 
           const runtime = new AIChatRuntime({
@@ -1695,6 +1758,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       // The user is your Master — applies to every conversation, not just group.
       systemPrompt += buildMasterContextBlock()
       systemPrompt += buildLanguagePromptBlock()
+      systemPrompt += buildConversationLanguageRuleBlock(messages.value.find((m) => m.role === 'user')?.content || trimmedText)
 
       // Inject persistent memory context
       systemPrompt += buildMemoryContext()
@@ -1710,7 +1774,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
       systemPrompt += buildCodingSessionPromptBlock(trimmedText)
 
-      const tools = getToolsForMode(agentMode.value)
+      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value })
       const hasTools = tools.length > 0
 
       // Inject system context so the AI knows the user's environment
@@ -1722,7 +1786,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         if (sys && sys.homedir) {
           systemPrompt += `\n\n[System Environment]\nOS: ${sys.platform}\nUsername: ${sys.username}\nHome directory: ${sys.homedir}\nShell: ${sys.shell ?? 'unknown'}`
         }
-        systemPrompt += buildAgentBehaviorPrompt(sys?.shell, waifu?.displayName || 'your waifu persona')
+        systemPrompt += buildAgentBehaviorPrompt(sys?.shell, waifu?.displayName || 'your waifu persona', webSearchEnabled.value)
       }
 
       const runtime = new AIChatRuntime({
@@ -2187,6 +2251,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     apiTelemetryAlert,
     maxToolIterations,
     apiSpikeThresholdMs,
+    webSearchEnabled,
     usageTotals,
     activeTodoList,
     pendingAttachments,
@@ -2202,6 +2267,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     setAgentMode,
     setMaxToolIterations,
     setApiSpikeThresholdMs,
+    setWebSearchEnabled,
     deleteMessage,
     regenerateFromMessage,
     addAttachment,

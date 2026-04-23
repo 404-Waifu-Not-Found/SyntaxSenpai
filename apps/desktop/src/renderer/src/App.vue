@@ -1315,6 +1315,7 @@ async function handleExportData() {
         groupChat: readLocalStorageJson('syntax-senpai-group-chat'),
         providerPreferences: readLocalStorageJson('syntax-senpai-provider-preferences'),
         agentMode: localStorage.getItem('syntax-senpai-agent-mode') || store.agentMode,
+        webSearchEnabled: store.webSearchEnabled,
         affection: readLocalStorageJson('syntax-senpai-affection'),
         apiTelemetryHistory: readLocalStorageJson(API_TELEMETRY_HISTORY_STORAGE_KEY),
         maxToolIterations: store.maxToolIterations,
@@ -1417,6 +1418,9 @@ async function handleImportData() {
     }
     if (payload?.settings?.agentMode) {
       store.setAgentMode(payload.settings.agentMode)
+    }
+    if (typeof payload?.settings?.webSearchEnabled === 'boolean') {
+      store.setWebSearchEnabled(payload.settings.webSearchEnabled)
     }
     if (typeof payload?.settings?.maxToolIterations === 'number') {
       store.setMaxToolIterations(payload.settings.maxToolIterations)
@@ -1814,6 +1818,28 @@ async function handleImportData() {
 
           <!-- AI Tab: provider, API key -->
           <div v-if="settingsTab === 'ai'">
+            <div class="settings-card mb-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-sm font-semibold text-neutral-200">Web search</div>
+                  <p class="mt-1 text-xs text-neutral-400">
+                    Disabled by default. When enabled, the agent can fetch DuckDuckGo result links/snippets only; it should not use web search as realtime data.
+                  </p>
+                </div>
+                <button
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :style="{ background: store.webSearchEnabled ? 'linear-gradient(90deg,#22c55e,#14b8a6)' : '#404040' }"
+                  :aria-label="`${store.webSearchEnabled ? 'Disable' : 'Enable'} web search`"
+                  @click="store.setWebSearchEnabled(!store.webSearchEnabled)"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: store.webSearchEnabled ? 'translateX(20px)' : 'translateX(0)' }"
+                  />
+                </button>
+              </div>
+            </div>
+
             <div class="mb-4">
               <label class="block text-sm font-semibold text-neutral-200 mb-2">{{ t('settings.provider') }}</label>
               <select v-model="store.selectedProvider" class="input-field">

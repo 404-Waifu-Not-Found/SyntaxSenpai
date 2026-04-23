@@ -15,4 +15,7 @@ test("builtInWaifus and system prompt", () => {
   } as any;
   const prompt = buildSystemPrompt(w as any, rel, { userId: "test" } as any);
   if (!prompt || !prompt.includes(w.displayName)) throw new Error("Prompt missing displayName");
+  if (!prompt.includes("When chatting in Chinese, address the user as: 狗秀金")) {
+    throw new Error("Prompt missing Chinese user address rule");
+  }
 });

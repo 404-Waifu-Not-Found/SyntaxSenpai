@@ -3,7 +3,7 @@
  *
  * Tools:
  *  - `terminal`       – run any shell command in a real terminal
- *  - `web_search`     – search the public web using DuckDuckGo
+ *  - `web_search`     – optionally fetch DuckDuckGo result links/snippets
  *  - `stop_response`  – signal the AI is done and deliver a final message
  *
  * The executor routes calls through Electron IPC to the main process
@@ -43,7 +43,7 @@ export const agentTools: ToolDefinition[] = [
   {
     name: 'terminal',
     description:
-      'Run a shell command on the user\'s machine. Use for: listing, searching, running programs, git, installs, network checks. ' +
+      'Run a shell command on the user\'s machine. Use for: listing, searching, running programs, git, installs, network checks, and realtime/current data from direct CLI/API sources such as wttr.in, worldtimeapi.org, ipinfo.io, npm view, or pnpm view. ' +
       'DO NOT use for reading, writing, or editing text files — call read_file / write_file / edit_file instead (shell heredocs and echo redirection routinely corrupt files). ' +
       'Each invocation is a fresh process, so `cd` does not persist between calls — either use absolute paths or chain with `&&`. ' +
       'Returns stdout, stderr, and exit code.',
@@ -212,13 +212,13 @@ export const agentTools: ToolDefinition[] = [
   {
     name: 'web_search',
     description:
-      'Search the public web via DuckDuckGo. Use for: current events, docs, version-specific syntax, third-party APIs, anything past your training cutoff. Do NOT use for local-machine questions — use terminal or read_file for those.',
+      'Fetch top public DuckDuckGo result links/snippets for a query. Use only to find links or source candidates. This is not a realtime data source; do not use it to answer weather, stocks, scores, prices, or other live facts directly. Prefer terminal for problem solving, diagnostics, local searches, installs, and verification.',
     parameters: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'The search query. Be specific — include library + version or error message verbatim when debugging.',
+          description: 'The DuckDuckGo search query. Be specific — include library + version or error message verbatim when debugging.',
         },
         limit: {
           type: 'integer',
@@ -299,9 +299,9 @@ export const agentTools: ToolDefinition[] = [
  * - auto: terminal + stop
  * - full: terminal + stop
  */
-export function getToolsForMode(mode: AgentMode): ToolDefinition[] {
+export function getToolsForMode(mode: AgentMode, options: { webSearchEnabled?: boolean } = {}): ToolDefinition[] {
   // All modes get tools; the system prompt controls safety boundaries
-  return agentTools
+  return agentTools.filter((tool) => tool.name !== 'web_search' || options.webSearchEnabled === true)
 }
 
 /**
@@ -353,6 +353,9 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
     }
 
     case 'web_search': {
+      if (localStorage.getItem('syntax-senpai-web-search-enabled') !== 'true') {
+        return 'Web search is disabled. Enable it in Settings before using web_search.'
+      }
       const res = await ipc.invoke('agent:webSearch', args.query, args.limit || 5)
       if (!res.success) return `Web search error: ${res.error}`
       return res.content || 'No search results found.'

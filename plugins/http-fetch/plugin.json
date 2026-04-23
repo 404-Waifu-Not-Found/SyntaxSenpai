@@ -1,0 +1,7 @@
+{
+  "name": "http-fetch",
+  "version": "0.1.0",
+  "description": "Generic HTTP GET/POST tool for calling REST APIs from the agent",
+  "main": "index.js",
+  "enabled": true
+}

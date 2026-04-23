@@ -30,6 +30,7 @@ import { registerFilesystemIpc } from './ipc/filesystem'
 import { registerSpotifyIpc } from './ipc/spotify'
 import { registerExportIpc } from './ipc/export'
 import { registerWsIpc } from './ipc/ws'
+import { registerPluginsIpc } from './ipc/plugins'
 import { startWsServer } from './ws-server'
 import { mainLogger } from './logger'
 
@@ -188,6 +189,7 @@ app.whenReady().then(() => {
   registerSpotifyIpc()
   registerExportIpc()
   registerWsIpc()
+  registerPluginsIpc()
   startWsServer().catch((err) => mainLogger.error({ err }, 'ws-server failed to start'))
 
   setupTray()

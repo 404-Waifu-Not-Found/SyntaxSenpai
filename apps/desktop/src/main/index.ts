@@ -31,6 +31,7 @@ import { registerSpotifyIpc } from './ipc/spotify'
 import { registerExportIpc } from './ipc/export'
 import { registerWsIpc } from './ipc/ws'
 import { startWsServer } from './ws-server'
+import { mainLogger } from './logger'
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -90,16 +91,16 @@ function setupTray() {
     tray.setContextMenu(menu)
     tray.on('click', () => toggleMainWindow())
   } catch (err) {
-    console.warn('[main] tray setup failed:', err)
+    mainLogger.warn({ err }, 'tray setup failed')
   }
 }
 
 function registerGlobalShortcuts() {
   try {
     const registered = globalShortcut.register('CommandOrControl+Shift+Space', () => toggleMainWindow())
-    if (!registered) console.warn('[main] global shortcut not registered (already bound elsewhere?)')
+    if (!registered) mainLogger.warn('global shortcut not registered (already bound elsewhere?)')
   } catch (err) {
-    console.warn('[main] globalShortcut failed:', err)
+    mainLogger.warn({ err }, 'globalShortcut failed')
   }
 }
 
@@ -144,12 +145,12 @@ function writeCrashLog(kind: string, err: any) {
 }
 
 process.on('uncaughtException', (err: any) => {
-  console.error('[main] uncaughtException:', err)
+  mainLogger.error({ err }, 'uncaughtException')
   writeCrashLog('uncaughtException', err)
 })
 
 process.on('unhandledRejection', (reason: any) => {
-  console.error('[main] unhandledRejection:', reason)
+  mainLogger.error({ reason }, 'unhandledRejection')
   writeCrashLog('unhandledRejection', reason)
 })
 
@@ -187,7 +188,7 @@ app.whenReady().then(() => {
   registerSpotifyIpc()
   registerExportIpc()
   registerWsIpc()
-  startWsServer().catch((err) => console.error('[ws-server] Failed to start:', err))
+  startWsServer().catch((err) => mainLogger.error({ err }, 'ws-server failed to start'))
 
   setupTray()
   registerGlobalShortcuts()

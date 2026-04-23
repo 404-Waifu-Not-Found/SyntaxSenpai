@@ -78,16 +78,17 @@ describe("InMemoryChatStore", () => {
     await store.setRelationship({
       waifuId: "aria",
       userId: "u1",
-      affection: 10,
-      interactions: 1,
-      firstMet: new Date().toISOString(),
-      lastInteraction: new Date().toISOString(),
-    } as any);
+      affectionLevel: 10,
+      selectedAIProvider: "anthropic",
+      selectedModel: "claude-sonnet-4-6",
+      createdAt: new Date().toISOString(),
+      lastInteractedAt: new Date().toISOString(),
+    });
 
     const r = await store.getRelationship("aria", "u1");
-    expect(r?.affection).toBe(10);
+    expect(r?.affectionLevel).toBe(10);
 
-    await store.updateRelationship("aria", "u1", { affection: 42 } as any);
-    expect((await store.getRelationship("aria", "u1"))?.affection).toBe(42);
+    await store.updateRelationship("aria", "u1", { affectionLevel: 42 });
+    expect((await store.getRelationship("aria", "u1"))?.affectionLevel).toBe(42);
   });
 });

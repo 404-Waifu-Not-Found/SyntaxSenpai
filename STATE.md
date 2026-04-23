@@ -1,6 +1,6 @@
 # SyntaxSenpai — Current State
 
-_Consolidates NEXT_STEPS.md, PROJECT_STATUS.md, STATUS_CHECKLIST.md, PHASE_1_COMPLETE.md, IMPLEMENTATION_PLAN.md, IMPLEMENTATION_COMPLETE.md, TODAY_COMPLETED.txt, SESSION_SUMMARY.md (all frozen at an earlier point in development) into a single accurate snapshot. This file is the current source of truth; the older docs remain in the repo for historical reference but should not be trusted for current status._
+_Single source of truth for current project state. The previous status files (NEXT_STEPS, PROJECT_STATUS, STATUS_CHECKLIST, PHASE_1_COMPLETE, IMPLEMENTATION_PLAN, IMPLEMENTATION_COMPLETE, TODAY_COMPLETED, SESSION_SUMMARY, QUICK_START, MODERN_UI_GUIDE) have been moved to `docs/archive/` for historical reference — don't trust them for current facts._
 
 ## Product
 

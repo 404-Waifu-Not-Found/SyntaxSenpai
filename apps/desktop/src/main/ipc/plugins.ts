@@ -3,7 +3,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 import { ToolRegistry, loadToolPlugins } from '@syntax-senpai/agent-tools'
-import type { ToolExecutionContext } from '@syntax-senpai/agent-tools'
+import type { ToolExecutionContext, ToolImplementation } from '@syntax-senpai/agent-tools'
 import { mainLogger } from '../logger'
 
 const { ipcMain, app } = electronModule
@@ -148,7 +148,7 @@ async function initPluginRegistry() {
       isDisabled: (name: string) => disabled.has(name),
     })
     mainLogger.info(
-      { count: loaded.length, tools: pluginRegistry.getAll().map((t) => t.definition.name) },
+      { count: loaded.length, tools: pluginRegistry.getAll().map((t: ToolImplementation) => t.definition.name) },
       'plugins initialized',
     )
   } catch (err: any) {

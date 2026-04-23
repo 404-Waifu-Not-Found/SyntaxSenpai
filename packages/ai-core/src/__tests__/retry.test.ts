@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { classifyError, withRetry, ProviderError } from "../retry";
+import { classifyError, withRetry, ProviderError, hintFor, describeError } from "../retry";
 
 describe("classifyError", () => {
   it("returns the same ProviderError instance", () => {
@@ -94,5 +94,37 @@ describe("withRetry", () => {
       .mockResolvedValueOnce("ok");
     await withRetry(fn, { initialDelayMs: 1, jitter: false, onRetry });
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("hints", () => {
+  it("hintFor generic mentions 'the provider' when unknown", () => {
+    expect(hintFor("auth")).toMatch(/the provider/);
+    expect(hintFor("rate_limit")).toMatch(/rate-limiting/);
+  });
+
+  it("hintFor includes the provider name when given", () => {
+    expect(hintFor("auth", "OpenAI")).toMatch(/OpenAI/);
+  });
+
+  it("classifyError attaches a matching hint by default", () => {
+    const p = classifyError({ status: 401, message: "bad" });
+    expect(p.hint).toMatch(/invalid, expired, or missing/);
+  });
+
+  it("classifyError with provider option populates provider and hint", () => {
+    const p = classifyError({ status: 429, message: "slow" }, { provider: "Anthropic" });
+    expect(p.provider).toBe("Anthropic");
+    expect(p.hint).toMatch(/Anthropic/);
+  });
+
+  it("describeError prefers the hint over the message", () => {
+    const p = classifyError({ status: 401, message: "bad key" });
+    expect(describeError(p)).toBe(p.hint);
+  });
+
+  it("describeError classifies raw errors first", () => {
+    const msg = describeError({ status: 429, message: "slow" });
+    expect(msg).toMatch(/rate-limiting/);
   });
 });

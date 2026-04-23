@@ -13,16 +13,26 @@ export type ProviderErrorKind =
   | "bad_request"
   | "unknown";
 
+export interface ProviderErrorOptions {
+  retryable?: boolean;
+  status?: number;
+  cause?: unknown;
+  hint?: string;
+  provider?: string;
+}
+
 export class ProviderError extends Error {
   readonly kind: ProviderErrorKind;
   readonly retryable: boolean;
   readonly status?: number;
   readonly cause?: unknown;
+  readonly hint?: string;
+  readonly provider?: string;
 
   constructor(
     kind: ProviderErrorKind,
     message: string,
-    opts: { retryable?: boolean; status?: number; cause?: unknown } = {}
+    opts: ProviderErrorOptions = {}
   ) {
     super(message);
     this.name = "ProviderError";
@@ -30,6 +40,8 @@ export class ProviderError extends Error {
     this.retryable = opts.retryable ?? isRetryableKind(kind);
     this.status = opts.status;
     this.cause = opts.cause;
+    this.provider = opts.provider;
+    this.hint = opts.hint ?? hintFor(kind, opts.provider);
   }
 }
 
@@ -37,28 +49,57 @@ function isRetryableKind(kind: ProviderErrorKind): boolean {
   return kind === "rate_limit" || kind === "network" || kind === "timeout" || kind === "server";
 }
 
-export function classifyError(err: unknown): ProviderError {
+/**
+ * Human-readable hint explaining what to do about this error.
+ * Generic by kind; mentions the provider when known.
+ */
+export function hintFor(kind: ProviderErrorKind, provider?: string): string {
+  const who = provider ? provider : "the provider";
+  switch (kind) {
+    case "auth":
+      return `Your API key for ${who} may be invalid, expired, or missing. Check the key in Settings → AI.`;
+    case "rate_limit":
+      return `${who} is rate-limiting this key. Wait a moment or switch models; retrying automatically.`;
+    case "bad_request":
+      return `${who} rejected the request payload — check the model name, message shape, or tool schema.`;
+    case "server":
+      return `${who} returned a server error. This is usually transient; retrying automatically.`;
+    case "timeout":
+      return `The request to ${who} timed out. If this keeps happening, try a smaller message or a faster model.`;
+    case "network":
+      return `Could not reach ${who}. Check your internet connection, VPN, or corporate proxy.`;
+    default:
+      return `${who} returned an unexpected error. See the console for details.`;
+  }
+}
+
+export interface ClassifyOptions {
+  provider?: string;
+}
+
+export function classifyError(err: unknown, options: ClassifyOptions = {}): ProviderError {
   if (err instanceof ProviderError) return err;
 
   const anyErr = err as { status?: number; code?: string; message?: string } | undefined;
   const status = anyErr?.status;
   const code = anyErr?.code;
   const message = anyErr?.message || String(err);
+  const provider = options.provider;
 
   if (status === 401 || status === 403) {
-    return new ProviderError("auth", `Auth failed: ${message}`, { status, retryable: false, cause: err });
+    return new ProviderError("auth", `Auth failed: ${message}`, { status, retryable: false, cause: err, provider });
   }
   if (status === 429) {
-    return new ProviderError("rate_limit", `Rate limited: ${message}`, { status, cause: err });
+    return new ProviderError("rate_limit", `Rate limited: ${message}`, { status, cause: err, provider });
   }
   if (status === 400 || status === 404 || status === 422) {
-    return new ProviderError("bad_request", `Bad request: ${message}`, { status, retryable: false, cause: err });
+    return new ProviderError("bad_request", `Bad request: ${message}`, { status, retryable: false, cause: err, provider });
   }
   if (status !== undefined && status >= 500) {
-    return new ProviderError("server", `Server error ${status}: ${message}`, { status, cause: err });
+    return new ProviderError("server", `Server error ${status}: ${message}`, { status, cause: err, provider });
   }
   if (code === "ETIMEDOUT" || code === "ESOCKETTIMEDOUT" || /timeout/i.test(message)) {
-    return new ProviderError("timeout", `Timeout: ${message}`, { cause: err });
+    return new ProviderError("timeout", `Timeout: ${message}`, { cause: err, provider });
   }
   if (
     code === "ECONNRESET" ||
@@ -67,9 +108,18 @@ export function classifyError(err: unknown): ProviderError {
     code === "EAI_AGAIN" ||
     /network|fetch failed/i.test(message)
   ) {
-    return new ProviderError("network", `Network error: ${message}`, { cause: err });
+    return new ProviderError("network", `Network error: ${message}`, { cause: err, provider });
   }
-  return new ProviderError("unknown", message, { cause: err });
+  return new ProviderError("unknown", message, { cause: err, provider });
+}
+
+/**
+ * Human-readable one-line summary suitable for UI toasts.
+ * Prefers the hint when available; falls back to message.
+ */
+export function describeError(err: unknown): string {
+  const pe = err instanceof ProviderError ? err : classifyError(err);
+  return pe.hint || pe.message;
 }
 
 export interface RetryOptions {

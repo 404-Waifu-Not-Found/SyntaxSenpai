@@ -880,6 +880,10 @@ function onAppRetry(e: Event) {
   const detail = (e as CustomEvent).detail
   showToast(typeof detail === 'string' ? detail : 'Retrying…', 'error')
 }
+function onAppMilestone(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (typeof detail === 'string' && detail) showToast(detail, 'success')
+}
 
 function onGlobalKeydown(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey
@@ -925,6 +929,7 @@ onMounted(() => {
 
   window.addEventListener('app:error', onAppError as EventListener)
   window.addEventListener('app:retry', onAppRetry as EventListener)
+  window.addEventListener('app:milestone', onAppMilestone as EventListener)
   window.addEventListener('keydown', onGlobalKeydown)
 
   startupSplashTimer = window.setTimeout(() => {
@@ -939,6 +944,7 @@ onUnmounted(() => {
   removeMobileChatListener?.()
   window.removeEventListener('app:error', onAppError as EventListener)
   window.removeEventListener('app:retry', onAppRetry as EventListener)
+  window.removeEventListener('app:milestone', onAppMilestone as EventListener)
   window.removeEventListener('keydown', onGlobalKeydown)
   if (startupSplashTimer !== null) {
     window.clearTimeout(startupSplashTimer)

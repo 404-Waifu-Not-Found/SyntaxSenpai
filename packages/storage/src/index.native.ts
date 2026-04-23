@@ -5,3 +5,4 @@
 
 export * from "./types";
 export { APIKeyManager, createAPIKeyManager } from "./keystore";
+export { wrapExport, unwrapExport, SchemaError, MIGRATIONS } from "./export";

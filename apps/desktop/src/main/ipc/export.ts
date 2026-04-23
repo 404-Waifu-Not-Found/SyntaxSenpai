@@ -48,6 +48,9 @@ export function registerExportIpc() {
         ? path.join(app.getPath('documents'), suggestedFileName)
         : defaultExportPath()
 
+      // Note: Electron shows an overwrite prompt by default on all platforms;
+      // the old `showOverwriteConfirmation` property was removed from the type
+      // definitions and is no longer needed.
       const result = await dialog.showSaveDialog({
         title: 'Export SyntaxSenpai data',
         defaultPath,
@@ -55,7 +58,6 @@ export function registerExportIpc() {
         filters: [
           { name: 'JSON', extensions: ['json'] },
         ],
-        showOverwriteConfirmation: true,
       })
 
       if (result.canceled || !result.filePath) {

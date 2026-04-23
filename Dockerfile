@@ -4,6 +4,7 @@ ENV NODE_ENV=production
 
 FROM base AS build
 COPY apps/runtime ./apps/runtime
+COPY packages/logger ./packages/logger
 RUN node apps/runtime/scripts/build.mjs
 
 FROM node:20-alpine AS runtime

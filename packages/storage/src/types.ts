@@ -6,6 +6,21 @@ import type { Message } from "@syntax-senpai/ai-core";
 import type { WaifuRelationship } from "@syntax-senpai/waifu-core";
 
 /**
+ * Current schema version for exports and backups.
+ * Bump when the on-disk shape changes in a non-additive way; supply a
+ * migration step in packages/storage/src/export.ts#MIGRATIONS.
+ */
+export const SCHEMA_VERSION = 1;
+
+export interface ExportEnvelope<T = unknown> {
+  schemaVersion: number;
+  app: string;
+  exportedAt: string;
+  data: T;
+  [extra: string]: unknown;
+}
+
+/**
  * Platform-agnostic keystore interface
  */
 export interface KeystoreAdapter {

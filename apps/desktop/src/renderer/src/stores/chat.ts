@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { buildSystemPrompt, builtInWaifus } from '@syntax-senpai/waifu-core'
-import { AIChatRuntime, withRetry, classifyError } from '@syntax-senpai/ai-core'
+import { AIChatRuntime, withRetry, classifyError, describeError } from '@syntax-senpai/ai-core'
+import type { SentimentResult } from '@syntax-senpai/waifu-core'
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
 import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, type AgentMode, type TodoItem } from '../agent-tools'
@@ -63,6 +64,7 @@ export interface Message {
   waifuId?: string
   waifuDisplayName?: string
   attachments?: MessageAttachment[]
+  sentiment?: SentimentResult
 }
 
 interface ApiTelemetry {
@@ -1439,7 +1441,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       messages.value.push({
         id: `error-${Date.now()}`,
         role: 'assistant',
-        content: `Error: ${err?.message || 'Unknown error'}`,
+        content: `Error: ${describeError(err)}`,
         timestamp: now(),
       })
     } finally {
@@ -1579,7 +1581,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         messages.value.push({
           id: `error-${Date.now()}`,
           role: 'assistant',
-          content: `Error: ${err?.message || 'Unknown error'}`,
+          content: `Error: ${describeError(err)}`,
           timestamp: now(),
         })
       } finally {
@@ -1903,7 +1905,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       messages.value.push({
         id: `error-${Date.now()}`,
         role: 'assistant',
-        content: `Error: ${err?.message || 'Unknown error'}`,
+        content: `Error: ${describeError(err)}`,
         timestamp: now(),
       })
     } finally {

@@ -3,12 +3,18 @@ const path = require('node:path')
 const http = require('node:http')
 const { performance } = require('node:perf_hooks')
 
+const { createLogger, generateRequestId } = require('@syntax-senpai/logger')
 const { loadConfig } = require('./config')
 const { RuntimeMetrics } = require('./metrics')
 const { BackupManager } = require('./backups')
 const { loadPluginManifests } = require('./plugins')
 
 const config = loadConfig()
+
+const logger = createLogger({
+  name: config.serviceName,
+  bindings: { service: config.serviceName, version: config.version }
+})
 
 fs.mkdirSync(config.dataDir, { recursive: true })
 fs.mkdirSync(config.backupDir, { recursive: true })
@@ -44,12 +50,13 @@ function readBody(request) {
   })
 }
 
-function requireAuth(request, response) {
+function requireAuth(request, response, log) {
   const expectedToken = config.authToken
   if (!expectedToken) return true
   const auth = request.headers['authorization'] || ''
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
   if (token !== expectedToken) {
+    log.warn({ reason: 'bad_token' }, 'auth rejected')
     jsonResponse(response, 401, { error: 'Unauthorized' })
     return false
   }
@@ -100,7 +107,11 @@ async function handler(request, response) {
   const method = request.method || 'GET'
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`)
   const route = getRoute(url.pathname, method)
+  const requestId = request.headers['x-request-id'] || generateRequestId()
+  const log = logger.child({ requestId, route, method, path: url.pathname })
   let statusCode = 200
+
+  response.setHeader('x-request-id', requestId)
 
   try {
     if (route === 'healthz') {
@@ -134,7 +145,10 @@ async function handler(request, response) {
       return
     }
 
-    if (url.pathname.startsWith('/api/v1/') && !requireAuth(request, response)) return
+    if (url.pathname.startsWith('/api/v1/') && !requireAuth(request, response, log)) {
+      statusCode = 401
+      return
+    }
 
     if (route === 'backup.list') {
       const items = backups.listBackups()
@@ -149,6 +163,7 @@ async function handler(request, response) {
       const backup = backups.exportBackup(parsed.reason || 'manual')
       metrics.observeBackup('export', 'success')
       metrics.setBackupFileCount(backups.listBackups().length)
+      log.info({ file: backup && backup.fileName }, 'backup exported')
       jsonResponse(response, 201, { backup })
       return
     }
@@ -160,11 +175,13 @@ async function handler(request, response) {
         statusCode = 400
         jsonResponse(response, statusCode, { error: 'fileName is required' })
         metrics.observeBackup('restore', 'error')
+        log.warn('backup restore missing fileName')
         return
       }
 
       const restored = backups.restoreBackup(parsed.fileName)
       metrics.observeBackup('restore', 'success')
+      log.info({ file: parsed.fileName }, 'backup restored')
       jsonResponse(response, 200, restored)
       return
     }
@@ -192,11 +209,14 @@ async function handler(request, response) {
     jsonResponse(response, statusCode, { error: `Route not found: ${method} ${url.pathname}` })
   } catch (error) {
     statusCode = 500
+    log.error({ err: error }, 'request handler threw')
     jsonResponse(response, statusCode, {
       error: error instanceof Error ? error.message : String(error)
     })
   } finally {
-    metrics.observeRequest(method, route, statusCode, performance.now() - startedAt)
+    const durationMs = performance.now() - startedAt
+    metrics.observeRequest(method, route, statusCode, durationMs)
+    log.info({ statusCode, durationMs: Math.round(durationMs) }, 'request handled')
   }
 }
 
@@ -205,8 +225,13 @@ const server = http.createServer((request, response) => {
 })
 
 server.listen(config.port, config.host, () => {
-  console.log(
-    `[syntax-senpai-runtime] listening on http://${config.host}:${config.port} ` +
-    `(data=${path.resolve(config.dataDir)} plugins=${path.resolve(config.pluginDir)})`
+  logger.info(
+    {
+      host: config.host,
+      port: config.port,
+      dataDir: path.resolve(config.dataDir),
+      pluginDir: path.resolve(config.pluginDir)
+    },
+    'runtime listening'
   )
 })

@@ -1,0 +1,7 @@
+{
+  "name": "github-api",
+  "version": "0.1.0",
+  "description": "Read GitHub issues and pull requests. Reads token from GITHUB_TOKEN env.",
+  "main": "index.js",
+  "enabled": true
+}

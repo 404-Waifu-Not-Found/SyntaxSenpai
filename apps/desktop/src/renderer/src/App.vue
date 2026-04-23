@@ -52,7 +52,7 @@ const rainbowToggleBg = computed(() => {
   const c3 = hslToHex((h + 120) % 360, s, l)
   return `linear-gradient(to right, ${c1}, ${c2}, ${c3})`
 })
-type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'mobile'
+type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'plugins' | 'waifus' | 'mobile'
 const settingsTab = ref<SettingsTabId>('general')
 const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = [
   { id: 'general', label: 'General', icon: '⚙️' },
@@ -61,6 +61,8 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = 
   { id: 'metrics', label: 'Metrics', icon: '📊' },
   { id: 'theme', label: 'Theme', icon: '🎨' },
   { id: 'interface', label: 'Interface', icon: '✨' },
+  { id: 'plugins', label: 'Plugins', icon: '🧩' },
+  { id: 'waifus', label: 'Waifus', icon: '💗' },
   { id: 'mobile', label: 'Mobile', icon: '📱' },
 ]
 
@@ -100,6 +102,125 @@ function onTabEnter(el: Element, done: () => void) {
 }
 const showQrPair = ref(false)
 const mobilePairedDevice = ref<string | null>(null)
+
+// Plugins tab state — discovery + enable/disable for tool plugins on disk.
+interface DesktopPluginEntry {
+  name: string
+  version: string
+  description?: string
+  main: string
+  enabled: boolean
+  directory: string
+  error?: string
+  disabled?: boolean
+}
+const pluginsList = ref<DesktopPluginEntry[]>([])
+const pluginsDirectory = ref<string>('')
+const pluginsLoading = ref(false)
+const pluginsError = ref<string>('')
+
+async function refreshPlugins() {
+  pluginsLoading.value = true
+  pluginsError.value = ''
+  try {
+    const result = await invoke('plugins:list')
+    if (result?.success) {
+      pluginsList.value = Array.isArray(result.plugins) ? result.plugins : []
+      pluginsDirectory.value = result.pluginDir || ''
+    } else {
+      pluginsError.value = result?.error || 'Failed to list plugins'
+    }
+  } catch (err: any) {
+    pluginsError.value = err?.message || String(err)
+  } finally {
+    pluginsLoading.value = false
+  }
+}
+
+async function togglePluginDisabled(plugin: DesktopPluginEntry) {
+  const next = !plugin.disabled
+  try {
+    const result = await invoke('plugins:setDisabled', plugin.name, next)
+    if (result?.success) {
+      plugin.disabled = next
+      showToast(`${plugin.name} ${next ? 'disabled' : 'enabled'} — restart to apply`, 'success')
+    } else {
+      showToast(result?.error || 'Failed to toggle plugin', 'error')
+    }
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  }
+}
+
+// Custom waifu tab state — list, import, delete user-authored waifus.
+interface CustomWaifuEntry {
+  id: string
+  name: string
+  displayName: string
+  backstory?: string
+  tags?: string[]
+  isBuiltIn?: boolean
+}
+const customWaifus = ref<CustomWaifuEntry[]>([])
+const customWaifusDirectory = ref<string>('')
+const customWaifusLoading = ref(false)
+const customWaifusError = ref<string>('')
+
+async function refreshCustomWaifus() {
+  customWaifusLoading.value = true
+  customWaifusError.value = ''
+  try {
+    const result = await invoke('waifus:list')
+    if (result?.success) {
+      customWaifus.value = Array.isArray(result.waifus) ? result.waifus : []
+      customWaifusDirectory.value = result.directory || ''
+    } else {
+      customWaifusError.value = result?.error || 'Failed to list custom waifus'
+    }
+  } catch (err: any) {
+    customWaifusError.value = err?.message || String(err)
+  } finally {
+    customWaifusLoading.value = false
+  }
+}
+
+async function importCustomWaifu() {
+  try {
+    const result = await invoke('export:openJson')
+    if (!result?.success) {
+      if (!result?.canceled) showToast(result?.error || 'Import failed', 'error')
+      return
+    }
+    const raw = result.payload
+    if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string') {
+      showToast('Selected file does not look like a waifu (missing id).', 'error')
+      return
+    }
+    const write = await invoke('waifus:write', raw)
+    if (!write?.success) {
+      showToast(write?.error || 'Could not save waifu', 'error')
+      return
+    }
+    showToast(`Imported "${raw.displayName || raw.id}" — restart to load`, 'success')
+    await refreshCustomWaifus()
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  }
+}
+
+async function deleteCustomWaifu(id: string) {
+  try {
+    const result = await invoke('waifus:delete', id)
+    if (result?.success) {
+      customWaifus.value = customWaifus.value.filter((w) => w.id !== id)
+      showToast(`Removed "${id}"`, 'success')
+    } else {
+      showToast(result?.error || 'Delete failed', 'error')
+    }
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  }
+}
 
 async function checkMobilePairingStatus() {
   try {
@@ -407,6 +528,21 @@ function applyPreset(preset: typeof colorPresets[0]) {
 
 const sidebarOpen = ref(true)
 const showSettings = ref(false)
+
+// Lazy-refresh plugin and custom-waifu lists when their tabs become visible,
+// so Settings stays fast to open and data is fresh when the user gets there.
+watch(
+  () => [showSettings.value, settingsTab.value] as const,
+  ([open, tab]) => {
+    if (!open) return
+    if (tab === 'plugins' && pluginsList.value.length === 0 && !pluginsLoading.value) {
+      refreshPlugins()
+    }
+    if (tab === 'waifus' && customWaifus.value.length === 0 && !customWaifusLoading.value) {
+      refreshCustomWaifus()
+    }
+  },
+)
 const showAgent = ref(false)
 const showModelPicker = ref(false)
 const providerModels = ref<Record<string, Array<{ id: string; displayName: string }>>>({})
@@ -2159,6 +2295,130 @@ async function handleImportData() {
               <button class="btn-primary flex-1" @click="showSettings = false">
                 {{ t('theme.done') }}
               </button>
+            </div>
+          </div>
+
+          <!-- Plugins Tab -->
+          <div v-if="settingsTab === 'plugins'">
+            <div class="settings-card">
+              <div class="flex items-start justify-between gap-3 mb-3">
+                <div>
+                  <h3 class="text-sm font-bold text-white">Installed plugins</h3>
+                  <p class="text-xs text-neutral-400">
+                    Tool plugins extend the waifu agent. Restart SyntaxSenpai after enabling or disabling a plugin.
+                  </p>
+                  <p v-if="pluginsDirectory" class="text-[11px] text-neutral-500 font-mono mt-1 break-all">{{ pluginsDirectory }}</p>
+                </div>
+                <button
+                  class="btn-secondary shrink-0"
+                  :disabled="pluginsLoading"
+                  aria-label="Refresh plugin list"
+                  @click="refreshPlugins"
+                >
+                  {{ pluginsLoading ? 'Loading…' : 'Refresh' }}
+                </button>
+              </div>
+
+              <p v-if="pluginsError" class="text-xs text-red-400 mb-2">{{ pluginsError }}</p>
+
+              <p v-if="!pluginsLoading && pluginsList.length === 0 && !pluginsError" class="text-xs text-neutral-500 py-2">
+                No plugins found. Drop a plugin.json under the directory above and hit Refresh.
+              </p>
+
+              <ul class="flex flex-col gap-2">
+                <li
+                  v-for="plugin in pluginsList"
+                  :key="plugin.name"
+                  class="flex items-start justify-between gap-3 rounded-lg border border-neutral-800/60 bg-neutral-900/50 p-3"
+                >
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-semibold text-white">{{ plugin.name }}</span>
+                      <span class="text-[11px] text-neutral-500 font-mono">v{{ plugin.version }}</span>
+                      <span
+                        v-if="plugin.error"
+                        class="text-[10px] uppercase tracking-wide text-amber-400 border border-amber-400/40 rounded px-1.5 py-0.5"
+                      >error</span>
+                      <span
+                        v-else-if="plugin.disabled"
+                        class="text-[10px] uppercase tracking-wide text-neutral-500 border border-neutral-600/40 rounded px-1.5 py-0.5"
+                      >disabled</span>
+                      <span
+                        v-else
+                        class="text-[10px] uppercase tracking-wide text-emerald-400 border border-emerald-400/40 rounded px-1.5 py-0.5"
+                      >enabled</span>
+                    </div>
+                    <p v-if="plugin.description" class="text-xs text-neutral-400 mt-1">{{ plugin.description }}</p>
+                    <p v-if="plugin.error" class="text-xs text-red-400 mt-1 font-mono">{{ plugin.error }}</p>
+                  </div>
+                  <button
+                    class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                    :style="{ background: !plugin.disabled ? 'linear-gradient(90deg,#60a5fa,#a78bfa)' : '#404040' }"
+                    :aria-label="`${plugin.disabled ? 'Enable' : 'Disable'} plugin ${plugin.name}`"
+                    @click="togglePluginDisabled(plugin)"
+                  >
+                    <span
+                      class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                      :style="{ transform: !plugin.disabled ? 'translateX(20px)' : 'translateX(0)' }"
+                    />
+                  </button>
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- Waifus Tab -->
+          <div v-if="settingsTab === 'waifus'">
+            <div class="settings-card">
+              <div class="flex items-start justify-between gap-3 mb-3">
+                <div>
+                  <h3 class="text-sm font-bold text-white">Custom waifus</h3>
+                  <p class="text-xs text-neutral-400">
+                    Drop user-authored waifu JSON files in the folder below, or import one here. Restart to load new entries.
+                  </p>
+                  <p v-if="customWaifusDirectory" class="text-[11px] text-neutral-500 font-mono mt-1 break-all">{{ customWaifusDirectory }}</p>
+                </div>
+                <div class="flex flex-col gap-2 shrink-0">
+                  <button class="btn-primary" aria-label="Import a waifu from JSON" @click="importCustomWaifu">
+                    Import JSON
+                  </button>
+                  <button
+                    class="btn-secondary"
+                    :disabled="customWaifusLoading"
+                    aria-label="Refresh custom waifu list"
+                    @click="refreshCustomWaifus"
+                  >
+                    {{ customWaifusLoading ? 'Loading…' : 'Refresh' }}
+                  </button>
+                </div>
+              </div>
+
+              <p v-if="customWaifusError" class="text-xs text-red-400 mb-2">{{ customWaifusError }}</p>
+
+              <p v-if="!customWaifusLoading && customWaifus.length === 0 && !customWaifusError" class="text-xs text-neutral-500 py-2">
+                No custom waifus. Use Import JSON or drop a file at the path above.
+              </p>
+
+              <ul class="flex flex-col gap-2">
+                <li
+                  v-for="waifu in customWaifus"
+                  :key="waifu.id"
+                  class="flex items-start justify-between gap-3 rounded-lg border border-neutral-800/60 bg-neutral-900/50 p-3"
+                >
+                  <div class="min-w-0">
+                    <div class="text-sm font-semibold text-white truncate">{{ waifu.displayName || waifu.name || waifu.id }}</div>
+                    <div class="text-[11px] text-neutral-500 font-mono truncate">{{ waifu.id }}</div>
+                    <p v-if="waifu.backstory" class="text-xs text-neutral-400 mt-1 line-clamp-2">{{ waifu.backstory }}</p>
+                  </div>
+                  <button
+                    class="btn-secondary text-xs shrink-0"
+                    :aria-label="`Remove custom waifu ${waifu.id}`"
+                    @click="deleteCustomWaifu(waifu.id)"
+                  >
+                    Remove
+                  </button>
+                </li>
+              </ul>
             </div>
           </div>
 

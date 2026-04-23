@@ -1,9 +1,30 @@
-const { ipcMain } = require('electron')
+const { ipcMain, app } = require('electron')
 const fs = require('fs').promises
+const fsSync = require('fs')
 const path = require('path')
 import * as executor from '../agent/executor'
 
 let registered = false
+
+function webSearchSettingsPath(): string {
+  return path.join(app.getPath('userData'), 'agent-web-search.json')
+}
+
+export function isWebSearchEnabled(): boolean {
+  try {
+    const raw = fsSync.readFileSync(webSearchSettingsPath(), 'utf8')
+    const parsed = JSON.parse(raw)
+    return parsed?.enabled === true
+  } catch {
+    return false
+  }
+}
+
+function writeWebSearchEnabled(enabled: boolean) {
+  const file = webSearchSettingsPath()
+  fsSync.mkdirSync(path.dirname(file), { recursive: true })
+  fsSync.writeFileSync(file, JSON.stringify({ enabled, updatedAt: new Date().toISOString() }, null, 2), 'utf8')
+}
 
 export function registerAgentIpc() {
   if (registered) return
@@ -30,7 +51,27 @@ export function registerAgentIpc() {
   })
 
   ipcMain.handle('agent:webSearch', async (_event: any, query: string, limit?: number) => {
+    if (!isWebSearchEnabled()) {
+      return { success: false, error: 'Web search is disabled. Enable it in Settings before using web_search.' }
+    }
     return await executor.webSearch(query, limit)
+  })
+
+  ipcMain.handle('agent:webSearchEnabled:get', async () => {
+    try {
+      return { success: true, enabled: isWebSearchEnabled() }
+    } catch (err: any) {
+      return { success: false, error: err?.message || String(err), enabled: false }
+    }
+  })
+
+  ipcMain.handle('agent:webSearchEnabled:set', async (_event: any, enabled: boolean) => {
+    try {
+      writeWebSearchEnabled(!!enabled)
+      return { success: true, enabled: !!enabled }
+    } catch (err: any) {
+      return { success: false, error: err?.message || String(err) }
+    }
   })
 
   ipcMain.handle('agent:getLog', async (event: any) => {
@@ -125,6 +166,6 @@ export function registerAgentIpc() {
   })
 }
 
-module.exports = { registerAgentIpc }
+module.exports = { registerAgentIpc, isWebSearchEnabled }
 
 export {}

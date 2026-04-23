@@ -1,0 +1,92 @@
+# Common Terminal Commands Skill
+
+Use this skill when the user asks for current public data, local diagnostics, app setup, or other tasks that can be answered by command-line tools.
+
+## Core Rules
+
+- Prefer the `terminal` tool for realtime data and verification.
+- Do not use `web_search` for realtime values such as weather, prices, stock quotes, exchange rates, sports scores, package versions, or service status.
+- `web_search` is only for fetching DuckDuckGo result links/snippets when the user needs links or source candidates.
+- Read command output carefully. If a command fails, try one corrected command, then explain the blocker.
+- Keep outputs concise in the final answer. Report the key result, timestamp/context, and any uncertainty.
+
+## Windows Notes
+
+- In PowerShell, `curl` can be an alias. Prefer `curl.exe` for real curl behavior.
+- Quote URLs with `"` when they contain `?`, `&`, or spaces.
+- For JSON APIs, use `Invoke-RestMethod` when available, or `curl.exe -s`.
+
+## Weather
+
+Use `wttr.in` for quick weather from terminal.
+
+```powershell
+curl.exe -s "https://wttr.in/Tokyo?format=3"
+curl.exe -s "https://wttr.in/Tokyo?format=j1"
+curl.exe -s "https://wttr.in/Tokyo?1"
+curl.exe -s "https://wttr.in/Tokyo?m&format=%l:+%c+%t,+humidity+%h,+wind+%w"
+```
+
+For tomorrow's forecast, fetch JSON and summarize the `weather[1]` entry:
+
+```powershell
+Invoke-RestMethod "https://wttr.in/Tokyo?format=j1" | ConvertTo-Json -Depth 8
+```
+
+If the user does not provide a location, ask for a city or use terminal to infer approximate location from IP:
+
+```powershell
+curl.exe -s "https://ipinfo.io/json"
+curl.exe -s "https://ipapi.co/json/"
+```
+
+## Public IP And Network
+
+```powershell
+curl.exe -s "https://api.ipify.org"
+curl.exe -s "https://ifconfig.me"
+Test-NetConnection example.com -Port 443
+Resolve-DnsName example.com
+```
+
+## Time
+
+```powershell
+Get-Date
+curl.exe -s "https://worldtimeapi.org/api/ip"
+curl.exe -s "https://worldtimeapi.org/api/timezone/Asia/Tokyo"
+```
+
+## HTTP/API Checks
+
+```powershell
+curl.exe -I "https://example.com"
+curl.exe -s "https://api.github.com/repos/OWNER/REPO/releases/latest"
+Invoke-RestMethod "https://api.github.com/repos/OWNER/REPO/releases/latest"
+```
+
+## Package Versions
+
+```powershell
+npm view PACKAGE version
+pnpm view PACKAGE version
+python -m pip index versions PACKAGE
+winget search PACKAGE
+```
+
+## Git And Repo State
+
+```powershell
+git status --short
+git branch --show-current
+git log -1 --oneline
+git diff --stat
+```
+
+## Disk And System
+
+```powershell
+Get-ComputerInfo | Select-Object OsName, OsVersion, CsName
+Get-PSDrive -PSProvider FileSystem
+Get-Process | Sort-Object CPU -Descending | Select-Object -First 10
+```

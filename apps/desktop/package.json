@@ -50,9 +50,10 @@
     "vue-tsc": "^3.2.6",
     "electron-rebuild": "^3.2.0"
   },
-  "build": {
+    "build": {
     "productName": "SyntaxSenpai",
     "appId": "ai.syntaxsenpai",
+    "icon": "build/icon.ico",
     "directories": {
       "output": "dist_electron"
     },
@@ -65,6 +66,13 @@
     "mac": {
       "target": ["dmg", "zip"],
       "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
     },
     "asar": false,
     "publish": []

@@ -1,5 +1,6 @@
 /**
  * Web search via DuckDuckGo Instant Answer API (no key required).
+ * This returns search result links/snippets, not realtime data.
  * Falls back to the HTML results page parsed minimally for topic links.
  */
 
@@ -22,7 +23,7 @@ export const webSearchTool: ToolImplementation<SearchTools.WebSearchInput, {
   definition: {
     name: "web_search",
     description:
-      "Search the web for information. Returns a short summary plus up to N related result links. Use for factual questions or current events.",
+      "Fetch top DuckDuckGo result links/snippets for a query. Use only to find links or source candidates. This is not a realtime data source; do not use it to answer weather, stocks, scores, prices, or other live facts directly.",
     parameters: {
       type: "object",
       properties: {

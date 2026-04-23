@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --prefer-frozen-lockfile
       - name: Build desktop dependencies
-        run: pnpm --filter @syntax-senpai/ai-core --filter @syntax-senpai/storage --filter @syntax-senpai/waifu-core --filter syntax-senpai-desktop run build
+        run: pnpm --filter @syntax-senpai/ai-core --filter @syntax-senpai/agent-tools --filter @syntax-senpai/storage --filter @syntax-senpai/waifu-core --filter syntax-senpai-desktop run build
       - name: Desktop typecheck
         run: pnpm --filter syntax-senpai-desktop run typecheck
       - name: Desktop smoke build complete

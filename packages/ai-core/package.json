@@ -9,7 +9,8 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --ext .ts,.tsx"
+    "lint": "eslint src --ext .ts,.tsx",
+    "test:unit": "vitest run --environment node"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

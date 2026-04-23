@@ -16,7 +16,7 @@
     "dev:runtime": "pnpm --filter syntax-senpai-runtime run dev",
     "build": "turbo run build",
     "test": "turbo run test",
-    "test:unit": "pnpm -w -r --if-present run test:unit",
+    "test:unit": "pnpm -r --if-present run test:unit",
     "lint": "turbo run lint",
     "typecheck": "tsc -p tsconfig.base.json --noEmit",
     "docker:build": "docker build -f Dockerfile -t syntax-senpai-runtime:local .",

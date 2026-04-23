@@ -1,0 +1,11 @@
+{
+  "name": "@syntax-senpai/logger",
+  "version": "0.0.1",
+  "description": "Zero-dependency structured logger (JSON + pretty modes) with child bindings",
+  "private": true,
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "scripts": {
+    "test:unit": "vitest run --environment node"
+  }
+}

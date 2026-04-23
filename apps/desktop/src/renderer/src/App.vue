@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { builtInWaifus } from '@syntax-senpai/waifu-core'
+import { builtInWaifus, classifySentiment, EXPRESSION_EMOJI } from '@syntax-senpai/waifu-core'
+import type { Expression } from '@syntax-senpai/waifu-core'
+import { unwrapExport, SchemaError } from '@syntax-senpai/storage'
 import { useChatStore } from './stores/chat'
 import { useTheme } from './composables/use-theme'
 import { useI18n, formatLocalizedCost } from './composables/use-i18n'
 import { useIpc } from './composables/use-ipc'
+import { useVoice } from './composables/use-voice'
 import ChatBubble from './components/ChatBubble.vue'
 import AppAvatar from './components/AppAvatar.vue'
 import TypingDots from './components/TypingDots.vue'
@@ -16,6 +19,28 @@ const store = useChatStore()
 const { invoke, on } = useIpc()
 const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, setUI, DEFAULT_THEME } = useTheme()
 const { t, locale, setLocale, localeOptions } = useI18n()
+const voice = useVoice()
+
+function sentimentEmoji(expression: Expression): string {
+  return EXPRESSION_EMOJI[expression] ?? EXPRESSION_EMOJI.neutral
+}
+
+// After each new assistant message lands (streaming done), speak it in
+// the waifu's voice and attach a sentiment result so the avatar mood-pip
+// reflects what was just said. Fires once per finalized message.
+watch(
+  () => [store.messages.length, store.isLoading] as const,
+  ([len, loading], prev) => {
+    if (loading) return
+    const prevLen = prev ? (prev as any)[0] : 0
+    if (len <= prevLen) return
+    const last: any = store.messages[len - 1]
+    if (!last || last.role !== 'assistant' || !last.content) return
+    const content = String(last.content)
+    last.sentiment = classifySentiment(content)
+    voice.speak(content, store.selectedWaifuId)
+  },
+)
 
 const rainbowToggleBg = computed(() => {
   if (!theme.value.rainbow.enabled) return 'rgb(64,64,64)'
@@ -1114,7 +1139,17 @@ async function handleImportData() {
       return
     }
 
-    const payload = result.payload || {}
+    let payload: any
+    try {
+      payload = unwrapExport(result.payload)
+    } catch (err) {
+      if (err instanceof SchemaError) {
+        showToast(err.message, 'error')
+        return
+      }
+      throw err
+    }
+
     const importedConversations = Array.isArray(payload?.data?.conversations) ? payload.data.conversations : []
     const importedMemories = Array.isArray(payload?.data?.memories) ? payload.data.memories : []
 
@@ -2094,6 +2129,29 @@ async function handleImportData() {
               </div>
             </div>
 
+            <div v-if="voice.supported" class="settings-card">
+              <div class="flex items-center justify-between mb-1">
+                <div>
+                  <h3 class="text-sm font-bold text-white">Waifu voice (TTS)</h3>
+                  <p class="text-xs text-neutral-400">Reads assistant replies aloud using a per-waifu voice profile.</p>
+                </div>
+                <button
+                  aria-label="Toggle waifu voice"
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :style="{ background: voice.enabled.value ? 'linear-gradient(90deg,#60a5fa,#a78bfa)' : '#404040' }"
+                  @click="voice.setEnabled(!voice.enabled.value)"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: voice.enabled.value ? 'translateX(20px)' : 'translateX(0)' }"
+                  />
+                </button>
+              </div>
+              <p v-if="voice.enabled.value && voice.voices.value.length === 0" class="text-xs text-amber-400 mt-2">
+                No voices are installed on this system. Install a system voice pack or leave this off.
+              </p>
+            </div>
+
             <div class="flex gap-2">
               <button class="btn-secondary flex-1" @click="resetTheme">
                 {{ t('theme.resetDefaults') }}
@@ -2708,13 +2766,21 @@ async function handleImportData() {
               msg.role === 'user' ? 'justify-end items-end' : 'justify-start items-start',
             ]"
           >
-            <div v-if="msg.role !== 'user'" class="mr-3 shrink-0">
+            <div v-if="msg.role !== 'user'" class="mr-3 shrink-0 relative">
               <div
                 class="themed-assistant-avatar w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white"
                 :title="msg.waifuDisplayName || store.selectedWaifu?.displayName"
               >
                 {{ msg.waifuDisplayName?.[0] || store.selectedWaifu?.displayName?.[0] || 'A' }}
               </div>
+              <span
+                v-if="msg.sentiment && msg.sentiment.expression !== 'neutral'"
+                class="absolute -bottom-1 -right-1 text-[11px] leading-none select-none pointer-events-none transition-all duration-300"
+                :style="{ transform: `scale(${0.85 + (msg.sentiment.intensity ?? 0) * 0.35})` }"
+                :aria-label="`Mood: ${msg.sentiment.expression}`"
+              >
+                {{ sentimentEmoji(msg.sentiment.expression) }}
+              </span>
             </div>
 
             <div :class="msg.role !== 'user' ? 'flex flex-col' : ''">

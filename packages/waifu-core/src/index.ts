@@ -7,6 +7,9 @@
 export * from "./types.js";
 export * from "./personality.js";
 export * from "./memory.js";
+export * from "./voice.js";
+export * from "./sentiment.js";
+export * from "./custom-loader.js";
 
 // Built-in waifu roster
 export const builtInWaifus: import("./types").Waifu[] = [

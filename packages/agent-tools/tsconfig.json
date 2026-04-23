@@ -6,11 +6,22 @@
     "declaration": true,
     "declarationMap": true,
     "paths": {
-      "@syntax-senpai/ai-core": ["packages/ai-core/dist"],
-      "@syntax-senpai/ai-core/*": ["packages/ai-core/dist/*"]
+      "@syntax-senpai/ai-core": [
+        "packages/ai-core/dist"
+      ],
+      "@syntax-senpai/ai-core/*": [
+        "packages/ai-core/dist/*"
+      ]
     },
     "noEmit": false,
     "allowImportingTsExtensions": false
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "src/**/__tests__/**",
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts"
+  ]
 }

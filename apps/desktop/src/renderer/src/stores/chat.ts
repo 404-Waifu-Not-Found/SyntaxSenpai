@@ -1,11 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { buildSystemPrompt, builtInWaifus, detectMilestone, describeMilestone } from '@syntax-senpai/waifu-core'
-import type { SentimentResult, MilestoneEvent } from '@syntax-senpai/waifu-core'
+import type { SentimentResult, MilestoneEvent, Waifu } from '@syntax-senpai/waifu-core'
 import { AIChatRuntime, withRetry, classifyError, describeError } from '@syntax-senpai/ai-core'
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
-import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, type AgentMode, type TodoItem } from '../agent-tools'
+import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, loadPluginTools, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, type AgentMode, type TodoItem } from '../agent-tools'
 
 // Rough USD cost per 1K tokens, keyed by a substring match on the model id.
 // These are approximations — good enough for "what did this chat cost me".
@@ -532,6 +532,11 @@ export const useChatStore = defineStore('chat', () => {
 
   const isSetup = ref(false)
   const selectedWaifuId = ref(builtInWaifus[0]?.id || 'aria')
+  // User-authored waifus loaded from <userData>/waifus/*.json via the
+  // waifus:list IPC. Refreshed at store init and after import/delete
+  // so picker + active-waifu resolution see them without restart.
+  const customWaifus = ref<Waifu[]>([])
+  const allWaifus = computed<Waifu[]>(() => [...builtInWaifus, ...customWaifus.value])
   const selectedProvider = ref('anthropic')
   const selectedModel = ref(DEFAULT_MODEL_BY_PROVIDER.anthropic)
   const apiKey = ref('')
@@ -742,7 +747,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const selectedWaifu = computed(() =>
-    builtInWaifus.find(w => w.id === selectedWaifuId.value) || builtInWaifus[0],
+    allWaifus.value.find(w => w.id === selectedWaifuId.value) || allWaifus.value[0],
   )
 
   watch(selectedWaifuId, async (waifuId, previousWaifuId) => {
@@ -957,9 +962,25 @@ export const useChatStore = defineStore('chat', () => {
   const activeWaifus = computed(() => {
     if (!isGroupChat.value) return [selectedWaifu.value]
     return groupWaifuIds.value
-      .map((id) => builtInWaifus.find((w) => w.id === id))
-      .filter(Boolean) as typeof builtInWaifus
+      .map((id) => allWaifus.value.find((w) => w.id === id))
+      .filter(Boolean) as Waifu[]
   })
+
+  /**
+   * Pull user-authored waifus from <userData>/waifus/*.json via the main
+   * process and merge them into allWaifus. Called once at store init and
+   * after Settings-tab import / delete so the picker stays in sync.
+   */
+  async function refreshCustomWaifus() {
+    try {
+      const result: any = await invoke('waifus:list')
+      if (result?.success && Array.isArray(result.waifus)) {
+        customWaifus.value = result.waifus as Waifu[]
+      }
+    } catch {
+      /* non-fatal — custom waifus are optional */
+    }
+  }
 
   async function loadConversations() {
     try {
@@ -1527,7 +1548,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       affection.value = newVal
       const milestone = updateAffectionWithMilestone(selectedWaifuId.value, newVal)
       if (milestone) {
-        const waifu = builtInWaifus.find((w) => w.id === selectedWaifuId.value)
+        const waifu = allWaifus.value.find((w) => w.id === selectedWaifuId.value)
         if (waifu) emitMilestoneToast(waifu, milestone)
       }
       inputValue.value = ''
@@ -1806,7 +1827,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               affection.value = newVal
               const milestone = updateAffectionWithMilestone(selectedWaifuId.value, newVal)
               if (milestone) {
-                const waifu = builtInWaifus.find((w) => w.id === selectedWaifuId.value)
+                const waifu = allWaifus.value.find((w) => w.id === selectedWaifuId.value)
                 if (waifu) emitMilestoneToast(waifu, milestone)
               }
 
@@ -2170,6 +2191,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
   return {
     isSetup,
     selectedWaifuId,
+    customWaifus,
+    allWaifus,
+    refreshCustomWaifus,
     selectedProvider,
     selectedModel,
     apiKey,

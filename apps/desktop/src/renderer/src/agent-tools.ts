@@ -294,14 +294,61 @@ export const agentTools: ToolDefinition[] = [
 ]
 
 /**
+ * Tool definitions contributed by enabled plugins in <userData>/plugins/
+ * (or the repo-local plugins/). Populated lazily by loadPluginTools()
+ * so the synchronous getToolsForMode() can still return a merged list.
+ */
+let pluginToolsCache: ToolDefinition[] = []
+let pluginToolsLoaded = false
+let pluginToolsPromise: Promise<void> | null = null
+
+/**
+ * Ask the main process for plugin tool definitions. Idempotent — returns
+ * the same in-flight promise if called concurrently, and no-ops after the
+ * first successful load. Safe to call on every app mount.
+ */
+export async function loadPluginTools(): Promise<void> {
+  if (pluginToolsLoaded) return
+  if (pluginToolsPromise) return pluginToolsPromise
+  const ipc = (window as any).electron?.ipcRenderer
+  if (!ipc) {
+    pluginToolsLoaded = true
+    return
+  }
+  pluginToolsPromise = (async () => {
+    try {
+      const res = await ipc.invoke('plugins:listTools')
+      if (res?.success && Array.isArray(res.tools)) {
+        pluginToolsCache = res.tools as ToolDefinition[]
+      }
+    } catch {
+      /* plugin system is optional */
+    } finally {
+      pluginToolsLoaded = true
+      pluginToolsPromise = null
+    }
+  })()
+  return pluginToolsPromise
+}
+
+/** Names of currently-loaded plugin tools; used to route execution. */
+function isPluginTool(name: string): boolean {
+  return pluginToolsCache.some((t) => t.name === name)
+}
+
+/**
  * Returns tools available for a given agent mode.
  * - ask:  terminal (read-only commands enforced by prompt) + stop
  * - auto: terminal + stop
  * - full: terminal + stop
+ *
+ * Plugin-contributed tools (loaded via loadPluginTools) are appended
+ * unconditionally — per-plugin enable/disable is handled on the main
+ * side, so anything reaching this cache is already opt-in.
  */
 export function getToolsForMode(mode: AgentMode): ToolDefinition[] {
   // All modes get tools; the system prompt controls safety boundaries
-  return agentTools
+  return [...agentTools, ...pluginToolsCache]
 }
 
 /**
@@ -428,6 +475,20 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
       return args.final_message || ''
 
     default:
+      // Plugin-contributed tool: dispatch to main via plugins:execTool.
+      // Returns a ToolResult<{ success, data? | error }>; we flatten to a
+      // string so the AI loop sees a consistent shape.
+      if (isPluginTool(toolCall.name)) {
+        try {
+          const res = await ipc.invoke('plugins:execTool', toolCall.name, toolCall.arguments)
+          if (!res?.success) return `Tool error: ${res?.error || 'plugin execution failed'}`
+          const display = res.data?.displayText || res.displayText
+          if (typeof display === 'string' && display) return display
+          return typeof res.data === 'string' ? res.data : JSON.stringify(res.data ?? '')
+        } catch (err: any) {
+          return `Tool error: ${err?.message || String(err)}`
+        }
+      }
       return `Unknown tool: ${toolCall.name}`
   }
 }

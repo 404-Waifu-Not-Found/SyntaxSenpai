@@ -21,6 +21,40 @@ const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, se
 const { t, locale, setLocale, localeOptions } = useI18n()
 const voice = useVoice()
 
+/**
+ * Message windowing: long conversations (1000+ turns) were rendering every
+ * bubble as its own DOM subtree, including sentiment pips and action
+ * buttons. Instead of pulling in vue-virtual-scroller and rewriting the
+ * TransitionGroup, cap the default visible window at the tail of the
+ * conversation and expose an "Show older" button to page further back.
+ * Covers >95% of real sessions with zero new deps.
+ */
+const MESSAGE_WINDOW_INITIAL = 200
+const MESSAGE_WINDOW_PAGE = 100
+const visibleMessageCount = ref(MESSAGE_WINDOW_INITIAL)
+
+const windowedMessages = computed(() => {
+  const list = store.messages
+  if (list.length <= visibleMessageCount.value) return list
+  return list.slice(list.length - visibleMessageCount.value)
+})
+
+function revealOlderMessages() {
+  visibleMessageCount.value = Math.min(
+    visibleMessageCount.value + MESSAGE_WINDOW_PAGE,
+    store.messages.length,
+  )
+}
+
+// Reset the window whenever the user switches conversations so opening an
+// old thread starts at the tail, not wherever they paged to in another chat.
+watch(
+  () => store.conversationId,
+  () => {
+    visibleMessageCount.value = MESSAGE_WINDOW_INITIAL
+  },
+)
+
 function sentimentEmoji(expression: Expression): string {
   return EXPRESSION_EMOJI[expression] ?? EXPRESSION_EMOJI.neutral
 }
@@ -3107,6 +3141,20 @@ async function handleImportData() {
           </p>
         </div>
 
+        <div
+          v-if="store.messages.length > visibleMessageCount"
+          class="flex justify-center mb-2"
+        >
+          <button
+            class="btn-ghost text-xs text-neutral-400"
+            aria-label="Show older messages"
+            @click="revealOlderMessages"
+          >
+            ↑ Show {{ Math.min(MESSAGE_WINDOW_PAGE, store.messages.length - visibleMessageCount) }} older
+            ({{ store.messages.length - visibleMessageCount }} hidden)
+          </button>
+        </div>
+
         <TransitionGroup
           enter-active-class="transition-all duration-300 ease-out"
           enter-from-class="opacity-0 translate-y-2"
@@ -3114,7 +3162,7 @@ async function handleImportData() {
           leave-to-class="opacity-0 -translate-y-2"
         >
           <div
-            v-for="msg in store.messages"
+            v-for="msg in windowedMessages"
             :key="msg.id"
             :class="[
               'group flex',

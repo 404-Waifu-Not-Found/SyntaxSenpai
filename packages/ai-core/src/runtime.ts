@@ -316,8 +316,6 @@ export function createProviderConfigFromEnv(
       return { type: "groq", apiKey: getRequired(env, "GROQ_API_KEY") };
     case "perplexity":
       return { type: "perplexity", apiKey: getRequired(env, "PERPLEXITY_API_KEY") };
-    case "replicate":
-      return { type: "replicate", apiKey: getRequired(env, "REPLICATE_API_KEY") };
     case "huggingface":
       return { type: "huggingface", apiKey: getRequired(env, "HUGGINGFACE_API_KEY") };
     case "ollama":
@@ -351,8 +349,6 @@ export function createProviderConfigFromEnv(
         apiKey: getRequired(env, "AZURE_OPENAI_API_KEY"),
         resourceName: getRequired(env, "AZURE_OPENAI_RESOURCE_NAME"),
       };
-    case "aws-bedrock":
-      return { type: "aws-bedrock", apiKey: getRequired(env, "AWS_BEDROCK_API_KEY") };
     case "fireworks":
       return { type: "fireworks", apiKey: getRequired(env, "FIREWORKS_API_KEY") };
     default:

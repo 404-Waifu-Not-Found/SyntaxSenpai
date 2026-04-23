@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import { buildSystemPrompt, builtInWaifus } from '@syntax-senpai/waifu-core'
+import { buildSystemPrompt, builtInWaifus, detectMilestone, describeMilestone } from '@syntax-senpai/waifu-core'
+import type { SentimentResult, MilestoneEvent } from '@syntax-senpai/waifu-core'
 import { AIChatRuntime, withRetry, classifyError, describeError } from '@syntax-senpai/ai-core'
-import type { SentimentResult } from '@syntax-senpai/waifu-core'
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
 import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, type AgentMode, type TodoItem } from '../agent-tools'
@@ -144,6 +144,31 @@ function saveAffection(waifuId: string, value: number) {
 
 function clampAffection(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)))
+}
+
+/**
+ * Milestone queue keyed by waifuId. When the AI adjusts affection and
+ * crosses a tier boundary, the event sits here until the next turn's
+ * system prompt picks it up and injects a one-shot sidecar.
+ */
+const pendingMilestones = new Map<string, MilestoneEvent>()
+
+function updateAffectionWithMilestone(
+  waifuId: string,
+  nextValue: number
+): MilestoneEvent | null {
+  const before = loadAffection(waifuId)
+  const after = clampAffection(nextValue)
+  saveAffection(waifuId, after)
+  const event = detectMilestone(waifuId, before, after)
+  if (event) pendingMilestones.set(waifuId, event)
+  return event
+}
+
+function consumePendingMilestone(waifuId: string): MilestoneEvent | null {
+  const event = pendingMilestones.get(waifuId)
+  if (event) pendingMilestones.delete(waifuId)
+  return event ?? null
 }
 
 function extractExplicitTerminalCommand(text: string): string | null {
@@ -300,6 +325,40 @@ What changes 好感度:
 IMPORTANT: You are ${waifuName}. Your personality shifts based on 好感度 but you stay in character. A tsundere at low affection is extra prickly; at high affection they're secretly sweet. A genki character at low affection is less energetic; at high affection they're overflowing with energy for the user specifically.
 _
 You must perform this affection check on every single message. Small natural changes are better than dramatic swings unless something major happened.`
+}
+
+/**
+ * If the user just crossed an affection tier (e.g. Acquaintance → Friend),
+ * inject a short one-shot sidecar into the next turn's system prompt.
+ * Consuming the event clears it from the queue so it won't re-fire.
+ */
+function buildMilestoneSidecarBlock(waifuId: string): string {
+  const event = consumePendingMilestone(waifuId)
+  if (!event) return ''
+  const direction = event.direction === 'up' ? 'reached a new' : 'fell back to a previous'
+  return `\n\n[Affection Milestone — one-shot]
+The user just ${direction} relationship tier with you: ${event.from.label} → ${event.to.label}.
+Tier guidance for this turn only: ${event.to.sidecar}
+Acknowledge the shift subtly and in character — do not narrate the meter change.`
+}
+
+/**
+ * Fires a CustomEvent that App.vue picks up to show a milestone toast.
+ * Keeps the chat store free of direct DOM/toast coupling.
+ */
+function emitMilestoneToast(
+  waifu: { id: string; displayName?: string; name?: string },
+  event: MilestoneEvent
+) {
+  try {
+    window.dispatchEvent(
+      new CustomEvent('app:milestone', {
+        detail: describeMilestone(waifu.displayName || waifu.name || waifu.id, event),
+      })
+    )
+  } catch {
+    /* non-browser test env */
+  }
 }
 
 function createEmptyApiTelemetry(): ApiTelemetry {
@@ -1233,6 +1292,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           systemPrompt += buildLanguagePromptBlock()
           systemPrompt += buildMemoryContext()
           systemPrompt += buildAffectionPrompt(affectionValue, waifu.displayName || 'Waifu')
+          systemPrompt += buildMilestoneSidecarBlock(waifu.id)
           systemPrompt += buildApiTelemetryPrompt()
           systemPrompt += buildGroupChatPromptBlock(waifu, waifus, pendingTasks.get(waifu.id) || [], round)
           systemPrompt += buildCodingSessionPromptBlock(trimmedText)
@@ -1299,10 +1359,11 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
                 if (toolCall.name === SET_AFFECTION_TOOL_NAME) {
                   const newVal = clampAffection(Number((toolCall.arguments as any).value ?? affectionValue))
-                  saveAffection(waifu.id, newVal)
+                  const milestone = updateAffectionWithMilestone(waifu.id, newVal)
                   if (selectedWaifuId.value === waifu.id) {
                     affection.value = newVal
                   }
+                  if (milestone) emitMilestoneToast(waifu, milestone)
 
                   aiHistory.push({
                     id: `tool-result-${Date.now()}-${toolCall.id}`,
@@ -1464,7 +1525,11 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     if (setMeterMatch) {
       const newVal = clampAffection(Number(setMeterMatch[1]))
       affection.value = newVal
-      saveAffection(selectedWaifuId.value, newVal)
+      const milestone = updateAffectionWithMilestone(selectedWaifuId.value, newVal)
+      if (milestone) {
+        const waifu = builtInWaifus.find((w) => w.id === selectedWaifuId.value)
+        if (waifu) emitMilestoneToast(waifu, milestone)
+      }
       inputValue.value = ''
 
       const assistantId = `assistant-${Date.now()}`
@@ -1637,6 +1702,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       // Inject 好感度 system
       systemPrompt += buildAffectionPrompt(affection.value, waifu?.displayName || 'Waifu')
 
+      // One-shot sidecar when the user just crossed an affection tier.
+      systemPrompt += buildMilestoneSidecarBlock(waifu.id)
+
       // Let the waifu know how fast the last API reply was.
       systemPrompt += buildApiTelemetryPrompt()
 
@@ -1736,7 +1804,11 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             if (tc.name === SET_AFFECTION_TOOL_NAME) {
               const newVal = Math.max(0, Math.min(100, Math.round(+(tc.arguments as any).value || affection.value)))
               affection.value = newVal
-              saveAffection(selectedWaifuId.value, newVal)
+              const milestone = updateAffectionWithMilestone(selectedWaifuId.value, newVal)
+              if (milestone) {
+                const waifu = builtInWaifus.find((w) => w.id === selectedWaifuId.value)
+                if (waifu) emitMilestoneToast(waifu, milestone)
+              }
 
               aiHistory.push({
                 id: `tool-result-${Date.now()}-${tc.id}`,

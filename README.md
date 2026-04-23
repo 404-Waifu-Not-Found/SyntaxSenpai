@@ -19,7 +19,7 @@ An AI-powered companion app where users pick a personalized "waifu" through a da
 
 Every interaction is delivered in-character, blending emotional engagement with real productivity.
 
-> **Current status:** see [STATE.md](./STATE.md) for an accurate snapshot of what's built. Older `*_COMPLETE.md`, `*_STATUS.md`, `NEXT_STEPS.md`, `IMPLEMENTATION_PLAN.md`, `SESSION_SUMMARY.md`, `TODAY_COMPLETED.txt` predate the current state and are kept only for history.
+> **Current status:** see [STATE.md](./STATE.md) for an accurate snapshot of what's built. Earlier status documents have been moved to [`docs/archive/`](./docs/archive/) for historical reference only.
 
 ## Features
 

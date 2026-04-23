@@ -17,7 +17,6 @@ export { CohereProvider, createCohereProvider } from "./cohere";
 export { TogetherProvider, createTogetherProvider } from "./together-ai";
 export { GroqProvider, createGroqProvider } from "./groq";
 export { PerplexityProvider, createPerplexityProvider } from "./perplexity";
-export { ReplicateProvider, createReplicateProvider } from "./replicate";
 export { HuggingFaceProvider, createHuggingFaceProvider } from "./huggingface";
 export { DeepSeekProvider, createDeepSeekProvider } from "./deepseek";
 export { MiniMaxGlobalProvider, createMiniMaxGlobalProvider } from "./minimax-global";
@@ -27,7 +26,6 @@ export { OpenAICodexProvider, createOpenAICodexProvider } from "./openai-codex";
 export { GitHubModelsProvider, createGitHubModelsProvider } from "./github-models";
 export { XAIGrokProvider, createXAIGrokProvider } from "./xai-grok";
 export { AzureOpenAIProvider, createAzureOpenAIProvider } from "./azure-openai";
-export { AWSBedrockProvider, createAWSBedrockProvider } from "./aws-bedrock";
 export { FireworksProvider, createFireworksProvider } from "./fireworks-ai";
 
 import type { AIProvider, CreateProviderOptions } from "../types";
@@ -39,7 +37,6 @@ import { CohereProvider } from "./cohere";
 import { TogetherProvider } from "./together-ai";
 import { GroqProvider } from "./groq";
 import { PerplexityProvider } from "./perplexity";
-import { ReplicateProvider } from "./replicate";
 import { HuggingFaceProvider } from "./huggingface";
 import { DeepSeekProvider } from "./deepseek";
 import { MiniMaxGlobalProvider } from "./minimax-global";
@@ -51,7 +48,6 @@ import { OllamaProvider } from "./ollama";
 import { LMStudioProvider } from "./lmstudio";
 import { XAIGrokProvider } from "./xai-grok";
 import { AzureOpenAIProvider } from "./azure-openai";
-import { AWSBedrockProvider } from "./aws-bedrock";
 import { FireworksProvider } from "./fireworks-ai";
 
 /**
@@ -66,7 +62,6 @@ export type ProviderConfig =
   | { type: "together"; apiKey: string }
   | { type: "groq"; apiKey: string }
   | { type: "perplexity"; apiKey: string }
-  | { type: "replicate"; apiKey: string }
   | { type: "huggingface"; apiKey: string }
   | { type: "deepseek"; apiKey: string }
   | { type: "minimax-global"; apiKey: string }
@@ -78,7 +73,6 @@ export type ProviderConfig =
   | { type: "openai-codex"; apiKey: string }
   | { type: "github-models"; apiKey: string }
   | { type: "azure-openai"; apiKey: string; resourceName: string }
-  | { type: "aws-bedrock"; apiKey: string }
   | { type: "fireworks"; apiKey: string };
 
 export function createProvider(config: ProviderConfig): AIProvider {
@@ -99,8 +93,6 @@ export function createProvider(config: ProviderConfig): AIProvider {
       return new GroqProvider({ apiKey: config.apiKey });
     case "perplexity":
       return new PerplexityProvider({ apiKey: config.apiKey });
-    case "replicate":
-      return new ReplicateProvider({ apiKey: config.apiKey });
     case "huggingface":
       return new HuggingFaceProvider({ apiKey: config.apiKey });
     case "deepseek":
@@ -126,8 +118,6 @@ export function createProvider(config: ProviderConfig): AIProvider {
         apiKey: config.apiKey,
         baseUrl: `https://${config.resourceName}.openai.azure.com/v1`,
       });
-    case "aws-bedrock":
-      return new AWSBedrockProvider({ apiKey: config.apiKey });
     case "fireworks":
       return new FireworksProvider({ apiKey: config.apiKey });
     default:
@@ -148,7 +138,6 @@ export function getAllProviderMetadata() {
     new TogetherProvider({ apiKey: "dummy" }),
     new GroqProvider({ apiKey: "dummy" }),
     new PerplexityProvider({ apiKey: "dummy" }),
-    new ReplicateProvider({ apiKey: "dummy" }),
     new HuggingFaceProvider({ apiKey: "dummy" }),
     new DeepSeekProvider({ apiKey: "dummy" }),
     new MiniMaxGlobalProvider({ apiKey: "dummy" }),
@@ -160,7 +149,6 @@ export function getAllProviderMetadata() {
     new OpenAICodexProvider({ apiKey: "dummy" }),
     new GitHubModelsProvider({ apiKey: "dummy" }),
     new AzureOpenAIProvider({ apiKey: "dummy", baseUrl: "https://dummy.openai.azure.com" }),
-    new AWSBedrockProvider({ apiKey: "dummy" }),
     new FireworksProvider({ apiKey: "dummy" }),
   ].map((p) => ({
     id: p.id,

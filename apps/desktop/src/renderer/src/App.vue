@@ -6,6 +6,7 @@ import { useChatStore } from './stores/chat'
 import { useTheme } from './composables/use-theme'
 import { useI18n, formatLocalizedCost } from './composables/use-i18n'
 import { useIpc } from './composables/use-ipc'
+import { useVoice } from './composables/use-voice'
 import ChatBubble from './components/ChatBubble.vue'
 import AppAvatar from './components/AppAvatar.vue'
 import TypingDots from './components/TypingDots.vue'
@@ -17,6 +18,22 @@ const store = useChatStore()
 const { invoke, on } = useIpc()
 const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, setUI, DEFAULT_THEME } = useTheme()
 const { t, locale, setLocale, localeOptions } = useI18n()
+const voice = useVoice()
+
+// Speak newly-completed assistant messages in-character. We fire only
+// when a new message is appended AND streaming has finished, so partial
+// chunks don't trigger a rapid cascade of utterances.
+watch(
+  () => [store.messages.length, store.isLoading] as const,
+  ([len, loading], prev) => {
+    if (loading) return
+    const prevLen = prev ? (prev as any)[0] : 0
+    if (len <= prevLen) return
+    const last: any = store.messages[len - 1]
+    if (!last || last.role !== 'assistant' || !last.content) return
+    voice.speak(String(last.content), store.selectedWaifuId)
+  },
+)
 
 const rainbowToggleBg = computed(() => {
   if (!theme.value.rainbow.enabled) return 'rgb(64,64,64)'
@@ -2103,6 +2120,29 @@ async function handleImportData() {
                   />
                 </button>
               </div>
+            </div>
+
+            <div v-if="voice.supported" class="settings-card">
+              <div class="flex items-center justify-between mb-1">
+                <div>
+                  <h3 class="text-sm font-bold text-white">Waifu voice (TTS)</h3>
+                  <p class="text-xs text-neutral-400">Reads assistant replies aloud using a per-waifu voice profile.</p>
+                </div>
+                <button
+                  aria-label="Toggle waifu voice"
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :style="{ background: voice.enabled.value ? 'linear-gradient(90deg,#60a5fa,#a78bfa)' : '#404040' }"
+                  @click="voice.setEnabled(!voice.enabled.value)"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: voice.enabled.value ? 'translateX(20px)' : 'translateX(0)' }"
+                  />
+                </button>
+              </div>
+              <p v-if="voice.enabled.value && voice.voices.value.length === 0" class="text-xs text-amber-400 mt-2">
+                No voices are installed on this system. Install a system voice pack or leave this off.
+              </p>
             </div>
 
             <div class="flex gap-2">

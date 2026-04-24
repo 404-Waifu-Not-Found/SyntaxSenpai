@@ -26,6 +26,8 @@ SyntaxSenpai is an Electron desktop app ("waifu"-themed AI chatbot) with:
 
 ## Providers
 
+The registry in `packages/ai-core/src/providers/index.ts` exposes 20 IDs.
+
 ### Fully implemented (work end-to-end)
 
 | ID | File |
@@ -43,16 +45,23 @@ SyntaxSenpai is an Electron desktop app ("waifu"-themed AI chatbot) with:
 | `huggingface` | providers/huggingface.ts |
 | `github-models` | providers/github-models.ts |
 | `minimax-global` / `minimax-cn` | providers/minimax-*.ts |
-| `fireworks` | providers/fireworks-ai.ts |
-| `azure-openai` | providers/azure-openai.ts |
+| `cohere` | providers/cohere.ts |
 | `ollama` (keyless) | providers/ollama.ts |
 | `lmstudio` (keyless) | providers/lmstudio.ts |
 
-### Stubs (throw on call — not exposed in the desktop UI picker)
+### Stubs (chat/stream throw "not yet fully implemented")
 
-- `cohere` — providers/cohere.ts
-- `replicate` — providers/replicate.ts
-- `aws-bedrock` — providers/aws-bedrock.ts
+- `azure-openai` — providers/azure-openai.ts (`chat()` / `stream()` throw)
+- `fireworks` — providers/fireworks-ai.ts (`chat()` / `stream()` throw)
+
+Hide these from the desktop provider picker unless/until implemented.
+
+### Removed (no longer in the registry, per PR #12)
+
+- Replicate — file deleted
+- AWS Bedrock — file deleted
+
+Do not reintroduce either without a real implementation. Earlier drafts of this document listed `cohere`, `replicate`, and `aws-bedrock` as the stubs — that list is wrong: `cohere` has a full implementation (its `throw` sites are response-error paths, not "not implemented"), and the other two no longer exist.
 
 ## Agent tools (renderer-side)
 
@@ -122,6 +131,6 @@ pnpm typecheck
 
 ## Known gaps / intentional dormant code
 
-- `apps/desktop/src/main/agent/executor.ts` — allowlist + JSONL audit log for agent commands exists but is NOT wired. The live path is `ipc/terminal.ts` + `ipc/filesystem.ts`, which gate destructive patterns with a native dialog. `executor.ts` is kept as a starting point for a future corporate / "strict ask" mode.
-- `packages/agent-tools/src/builtin/*` (clipboard, fs-read, notify, web-search) are shared built-ins that the desktop renderer does not import — it re-implements its own tool defs. They're kept because mobile + future non-Electron clients may use them.
-- Cohere / Replicate / AWS Bedrock providers are registered but throw on invocation. None are exposed in the desktop provider dropdown.
+- `apps/desktop/src/main/agent/executor.ts` — **is wired** (correcting an earlier note that said it wasn't). It exports `webSearch` (consumed by `ws-server.ts`) and an allowlist-based `runCommand` that `ipc/terminal.ts` delegates to when strict-mode is on; the full surface is imported by `ipc/agent.ts` and `ipc/strict-mode.ts`. Destructive-pattern gating (native dialog) is a separate layer in `ipc/terminal.ts`. Strict-mode toggle lives in Settings → General.
+- `packages/agent-tools/src/builtin/*` (clipboard, fs-read, notify, web-search) are shared built-ins that the desktop renderer does not import — it re-implements its own tool defs in `apps/desktop/src/renderer/src/agent-tools.ts`. Desktop still depends on `@syntax-senpai/agent-tools` for `ToolRegistry` + `loadToolPlugins` (used by `ipc/plugins.ts`). The built-ins are kept because mobile + future non-Electron clients may use them.
+- Stub providers: `azure-openai` and `fireworks` both throw "... provider not yet fully implemented" from `chat()` / `stream()`. Hide from the picker.

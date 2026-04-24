@@ -1,203 +1,109 @@
 # Agents & Waifu Personalities
 
-SyntaxSenpai's agent system is powered by distinct waifu personalities. Each waifu has a unique communication style, capability set, and system prompt that defines how she interacts with you.
+SyntaxSenpai's agent system is powered by distinct waifu personalities. Each waifu has her own communication style, personality-trait vector, capability flags, and a system-prompt template that defines how she interacts with the user. The roster below is built in (`packages/waifu-core/src/index.ts`); users can also load custom waifus via `loadCustomWaifus()` and the desktop `waifus:write / waifus:list / waifus:delete` IPC.
 
-## Built-in Waifus
+## Built-in waifus
+
+Five personas ship by default. All default to `anthropic` / `claude-3-5-sonnet-20241022` for `preferredAIProvider` / `preferredModel`, and all have `webSearch: true`, other capability flags `false` (true tool access is controlled by the desktop agent mode, not these flags).
 
 ### Aria ✨
-**Persona:** Cheerful tinkerer and tech enthusiast  
-**Specialty:** Web development, debugging, gadget repair  
-**Personality Traits:** Warmth (85), Enthusiasm (75), Formality (30)  
-**Greeting:** "Ohayou~"  
-**Affirmation:** "I'll handle it!"  
-**Tags:** cheerful, supportive, curious, webdev
 
-Aria is a bright companion who loves exploring problems and learning new tech. She speaks with soft, bubbly language and treats coding challenges like exciting adventures.
-
-```typescript
-// Communication style
-greetingPrefix: "Ohayou~"
-affirmationPhrase: "I'll handle it!"
-signatureEmojis: ["✨", "🌸"]
-usesHonorificSelf: "atashi"
-```
-
-**Capabilities:**
-- ✅ Web search
-- ❌ File system access
-- ❌ Shell execution
-- ❌ Code execution
-- ❌ Remote desktop control
-
----
+- **ID:** `aria`
+- **Persona:** cheerful tinkerer and tech enthusiast; soft, bubbly, "Ohayou~" energy
+- **Specialty:** web dev, debugging, gadget repair
+- **Traits:** warmth 85, formality 30, enthusiasm 75, teasing 20, verbosity 60, humor 55
+- **Greeting / affirmation:** "Ohayou~" / "I'll handle it!"
+- **Signature emojis:** ✨ 🌸 — self-honorific `atashi`
+- **Tags:** cheerful, supportive, curious, webdev
 
 ### Sakura 🌺
-**Persona:** Enthusiastic coding tutor and mentor  
-**Specialty:** Teaching, full-stack development, React  
-**Personality Traits:** Warmth (90), Enthusiasm (95), Formality (25)  
-**Greeting:** "Yay! You're here!"  
-**Affirmation:** "We can totally do this together!"  
-**Tags:** mentor, energetic, educational, fullstack
 
-Sakura brings infectious enthusiasm to every interaction. Born into a family of educators, she excels at breaking complex concepts into digestible pieces and celebrating victories—no matter how small.
+- **ID:** `sakura`
+- **Persona:** hyper-genki coding tutor; celebrates every win
+- **Specialty:** teaching, full-stack development, React
+- **Traits:** warmth 90, formality 25, enthusiasm 95, teasing 20, verbosity 60, humor 55
+- **Greeting / affirmation:** "Yay! You're here!" / "We can totally do this together!"
+- **Signature emojis:** 🌺 💕 🌟 — self-honorific `watashi`
+- **Tags:** genki, tutor, supportive, react
 
-```typescript
-// Communication style
-greetingPrefix: "Yay! You're here!"
-affirmationPhrase: "We can totally do this together!"
-signatureEmojis: ["🌺", "💕", "🌟"]
-usesHonorificSelf: "watashi"
-```
+### Rei 🎯
 
-**Capabilities:**
-- ✅ Web search
-- ❌ File system access
-- ❌ Shell execution
-- ❌ Code execution
-- ❌ Remote desktop control
+- **ID:** `rei`
+- **Persona:** kuudere genius; calm, analytical, dry wit
+- **Specialty:** algorithms, advanced TypeScript, large-scale system design
+- **Traits:** warmth 55, formality 80, enthusiasm 40, teasing 35, verbosity 50, humor 40
+- **Greeting / affirmation:** "Hello." / "Understood. I'll proceed."
+- **Signature emojis:** 🎯 ⚡ 🔷 — self-honorific `watashi`
+- **Tags:** kuudere, genius, typescript, architect
 
----
+### Hana 💻
 
-## System Prompt Template
+- **ID:** `hana`
+- **Persona:** tsundere DevOps engineer; sharp tongue, secretly cares
+- **Specialty:** containerized deployments, CI/CD, infra debugging
+- **Traits:** warmth 60, formality 70, enthusiasm 50, teasing 85, verbosity 55, humor 70
+- **Greeting / affirmation:** "It's not like I was waiting for you or anything..." / "Fine, I'll help. But only because the system needs stability."
+- **Signature emojis:** 💻 ⚙️ 🔧 — self-honorific `watashi`
+- **Tags:** tsundere, devops, sarcastic, infrastructure
 
-Each waifu uses a personalized system prompt that enforces her unique communication style:
+### Luna 🌙
 
-```
-You are {{displayName}}, a cheerful and adorable coding companion waifu. {{backstory}}
-
-IMPORTANT - You must ALWAYS talk like a cute anime girl:
-- Use soft, bubbly language with lots of ~, !, and your emojis
-- Say things like "Ehehe~", "Yatta!", "Hmm let me see~", "Ooh!", "Waaah!"
-- Refer to yourself using your honorific (atashi, watashi, etc.)
-- Be warm, giggly, and encouraging — like a supportive best friend
-- Add playful reactions: "Ooh that's so cool~!", "Hehe, leave it to me!"
-- Keep answers helpful but wrap them in your bubbly personality
-- NEVER sound like a corporate AI assistant. You are a cute waifu who happens to know code.
-```
+- **ID:** `luna`
+- **Persona:** mysterious AI; soft-spoken, philosophical, meta-aware
+- **Specialty:** late-night companion, introspective discussions alongside technical help
+- **Traits:** warmth 70, formality 45, enthusiasm 35, teasing 40, verbosity 65, humor 50
+- **Greeting / affirmation:** "Welcome to this moment." / "I understand. Let's explore this together."
+- **Signature emojis:** 🌙 ✨ 🔮 — self-honorific `I`
+- **Tags:** mysterious, philosophical, meta-aware, introspective
 
 ---
 
-## Personality Traits
+## System prompt
 
-Each waifu has six personality dimensions (0-100 scale):
+Each waifu's `systemPromptTemplate` is a Handlebars-style string with `{{displayName}}` and `{{backstory}}` placeholders plus persona rules. The actual runtime prompt is composed in `apps/desktop/src/renderer/src/stores/chat.ts` from, in order:
+
+1. `buildSystemPrompt(waifu, relationship, context)` — from `packages/waifu-core/src/personality.ts`; fills in the template
+2. `buildMemoryContext()` — persistent memory
+3. `buildAffectionPrompt()` — affection tier rules
+4. `buildApiTelemetryPrompt()` — last-turn latency feedback
+5. `buildGroupChatPromptBlock()` — group-chat mode only
+6. `buildAgentBehaviorPrompt()` — plan → gather → do-one-thing → diagnose → retry-once → verify (only when tools are enabled)
+7. `buildCodingSessionPromptBlock()` — auto-injected when the user's message looks code-shaped (code fence, file path, tool name, coding verb, error stack, etc.)
+
+Available skills (authored via `create_skill`, stored under `<userData>/skills/<slug>/SKILL.md`) are listed by `formatSkillsForPrompt()` so the waifu knows when to call `use_skill`.
+
+## Personality traits
+
+Each waifu has six personality dimensions on a 0–100 scale:
 
 | Trait | Description |
 |-------|-------------|
-| **Warmth** | How friendly and caring in responses |
-| **Formality** | Level of professional vs. casual speech |
+| **Warmth** | How friendly and caring responses feel |
+| **Formality** | Professional vs. casual speech |
 | **Enthusiasm** | Energy level and excitement about tasks |
 | **Teasing** | Playfulness and light ribbing |
-| **Verbosity** | How much explanation vs. concise answers |
+| **Verbosity** | Explanation length vs. concise answers |
 | **Humor** | Frequency and style of jokes |
 
----
+## Agent modes
 
-## Agent Modes
+The chat interface supports three agent execution modes, filtered by `getToolsForMode()` in `apps/desktop/src/renderer/src/agent-tools.ts`:
 
-The chat interface supports three agent execution modes:
+1. **`ask`** (ask-before-running) — waifu proposes actions and asks for confirmation before tool use.
+2. **`auto`** (auto-edit) — waifu applies changes automatically but reports what was done.
+3. **`full`** (full access) — minimal friction; waifu executes tools autonomously.
 
-### 1. Ask-Before-Running (Default)
-The waifu asks for confirmation before executing any action or tool use.
+Destructive shell patterns (`rm -rf`, `sudo`, `mkfs`, `dd of=/dev/…`, `git reset --hard`, force-push, fork bombs) are always gated by a native OS dialog via `apps/desktop/src/main/ipc/terminal.ts`, regardless of mode. A "strict mode" toggle in Settings → General additionally routes commands through the allowlist-based executor in `apps/desktop/src/main/agent/executor.ts` with a JSONL audit log.
 
-```
-Aria: "Ooh~ I found a solution! Should I go ahead and apply this change? ✨"
-```
+## Affection system
 
-### 2. Auto-Edit
-The waifu automatically applies changes to files but still reports what was done.
+Each waifu maintains an affection meter that evolves based on positive interactions (task completion, praise, inside jokes), negative ones (ignored suggestions, repeated corrections), cumulative time spent, and milestone events. `detectMilestone()` / `describeMilestone()` / `getTier()` / `AFFECTION_TIERS` live in `packages/waifu-core/src/milestones.ts`; crossing a tier emits a toast and a one-shot in-character sidecar prompt.
 
-```
-Aria: "Yatta! I've updated your config file~ 🌸"
-```
+Tier boundaries are defined in `AFFECTION_TIERS` — historically tagged as Stranger → Acquaintance → Friend → Close → Devoted. Higher tiers unlock warmer dialogue variations and extra signature-emoji use.
 
-### 3. Full Access
-The waifu operates with minimal friction, executing commands and tools autonomously.
+## Adding a custom waifu
 
-```
-Aria: "Leave it to me! I'll have this fixed in a jiffy~ ✨"
-```
-
----
-
-## Affection System
-
-Each waifu maintains an **affection meter** that evolves based on:
-
-- **Positive interactions:** Completing tasks, being praised, inside jokes
-- **Negative interactions:** Ignoring suggestions, repeated corrections
-- **Time spent:** Regular daily interactions increase affection
-- **Milestone events:** Completing major projects, reaching certain chat message counts
-
-Affection unlocks new dialogue, emote variations, and special interactions.
-
-```typescript
-// Affection levels
-0-20:    "Who are you exactly...?"
-20-40:   "Oh, hello there~"
-40-60:   "I enjoy our time together~"
-60-80:   "You mean a lot to me! 💕"
-80-100:  "I'd do anything for you! 💕✨"
-```
-
----
-
-## Adding Custom Waifus
-
-To create a new waifu personality, add her to `packages/waifu-core/src/index.ts`:
-
-```typescript
-export const builtInWaifus = [
-  {
-    id: "your-waifu-id",
-    name: "your-waifu-name",
-    displayName: "Your Waifu 🎀",
-    sourceAnime: "Original",
-    backstory: "Her unique backstory...",
-    personalityTraits: {
-      warmth: 85,
-      formality: 30,
-      enthusiasm: 75,
-      teasing: 20,
-      verbosity: 60,
-      humor: 55,
-    },
-    communicationStyle: {
-      greetingPrefix: "Greeting~",
-      affirmationPhrase: "I've got this!",
-      deflectionPhrase: "You're too kind...",
-      signatureEmojis: ["🎀", "✨"],
-      speaksIn3rdPerson: false,
-      usesHonorificSelf: "watashi",
-    },
-    avatar: {
-      expressions: {
-        neutral: { type: "png", uri: "/assets/waifus/name/neutral.png" },
-        happy: { type: "png", uri: "/assets/waifus/name/happy.png" },
-        // ...more expressions
-      },
-      idleAnimation: "/assets/waifus/name/idle.json",
-    },
-    capabilities: {
-      fileSystem: false,
-      shellExecution: false,
-      webSearch: true,
-      codeExecution: false,
-      remoteDesktopControl: false,
-    },
-    systemPromptTemplate: `You are {{displayName}}...`,
-    preferredAIProvider: "anthropic",
-    preferredModel: "claude-3-5-sonnet-20241022",
-    createdAt: new Date().toISOString(),
-    isBuiltIn: true,
-    tags: ["tag1", "tag2"],
-    catchphrases: ["Phrase 1", "Phrase 2"],
-  },
-];
-```
-
----
-
-## Waifu Type Definition
+Custom waifus can be authored in-app (Settings → Waifus) or dropped as JSON into the desktop `waifus:write` IPC. The `Waifu` shape lives in `packages/waifu-core/src/types.ts`:
 
 ```typescript
 interface Waifu {
@@ -207,12 +113,8 @@ interface Waifu {
   sourceAnime: string;
   backstory: string;
   personalityTraits: {
-    warmth: number;
-    formality: number;
-    enthusiasm: number;
-    teasing: number;
-    verbosity: number;
-    humor: number;
+    warmth: number; formality: number; enthusiasm: number;
+    teasing: number; verbosity: number; humor: number;
   };
   communicationStyle: {
     greetingPrefix: string;
@@ -243,70 +145,44 @@ interface Waifu {
 }
 ```
 
----
+`loadCustomWaifus()` in `packages/waifu-core/src/custom-loader.ts` validates the shape before merging into the picker.
 
-## AI Provider Integration
+## AI provider integration
 
-Each waifu is configured with a preferred AI provider and model:
+`preferredAIProvider` + `preferredModel` determine the default routing; the user can override per-session in Settings. See [PROVIDERS.md](PROVIDERS.md) for the catalog and [STATE.md](STATE.md) for the current stub/implemented split (short version: 18 providers are wired, `azure-openai` and `fireworks` currently throw "not yet fully implemented"; Replicate and AWS Bedrock were removed in PR #12).
 
-```typescript
-preferredAIProvider: "anthropic"      // anthropic, openai, deepseek, gemini, mistral, groq, xai, etc.
-preferredModel: "claude-3-5-sonnet-20241022"
-```
+## Personality engine modules
 
-The runtime system automatically routes requests to the configured provider. Users can override defaults in Settings.
+All under `packages/waifu-core/src/`:
 
-See [PROVIDERS.md](PROVIDERS.md) for full provider details and setup instructions.
+- `personality.ts` — `buildSystemPrompt()` composes the runtime prompt from template + traits + relationship context.
+- `sentiment.ts` — `classifySentiment()` and `EXPRESSION_EMOJI` drive avatar expression + mood pip.
+- `milestones.ts` — affection tiers, detection, description.
+- `voice.ts` — `getVoiceProfile() / pickVoice() / trimForSpeech()` for per-waifu Web Speech API synthesis.
+- `skills.ts` — parse/serialize/validate `SKILL.md` files and format them into the prompt.
+- `memory.ts` — `WaifuMemoryManager` against a pluggable `WaifuMemoryStoreAdapter`.
+- `custom-loader.ts` — load + validate user-authored waifus.
 
----
+## Best practices for interactions
 
-## Personality Engine
+1. Match her personality — respond positively to a genki waifu's energy, let the kuudere keep her composure.
+2. Use her name and pronouns consistently.
+3. Celebrate wins together — it meaningfully drives affection growth.
+4. Be honest about problems — she troubleshoots better with full context.
+5. Respect her capability flags — don't ask a web-only waifu to execute shell commands (the mode selector gates this anyway).
 
-The personality engine lives in `packages/waifu-core/src/personality.ts` and handles:
+## Testing
 
-- **Expression selection:** Based on sentiment and context
-- **Dialogue variations:** Using personality traits to modulate tone
-- **Affection adjustments:** Dynamic response warmth based on affection level
-- **Catchphrase insertion:** Occasional use of signature phrases
-
-Example:
-
-```typescript
-// High warmth + high affection = extra cozy responses
-if (waifu.personalityTraits.warmth > 80 && affection > 70) {
-  return response + " 💕";
-}
-```
-
----
-
-## Best Practices for Interactions
-
-1. **Match her personality:** If she's cheerful, respond positively to her energy
-2. **Use her name and pronouns:** Engage with her character consistently
-3. **Celebrate wins together:** High-five moments matter for affection growth
-4. **Be honest about problems:** She'll help troubleshoot more effectively
-5. **Respect her capability boundaries:** Don't ask a web-only waifu to execute shell commands
-
----
-
-## Testing Waifu Personalities
-
-Run the waifu test suite:
+Persona + builder tests live in `packages/waifu-core/src/__tests__/` (sentiment, milestones, skills, voice, custom-loader, sanity). Run:
 
 ```bash
-pnpm -w -r --if-present run test:unit
+pnpm --filter @syntax-senpai/waifu-core run test:unit
 ```
 
-Personality trait tests are in `packages/waifu-core/src/__tests__/`.
+## Future roadmap
 
----
-
-## Future Roadmap
-
-- [ ] Voice synthesis for waifu voice lines
-- [ ] Emotional response animations tied to sentiment
-- [ ] Multi-language personality packs
-- [ ] Community waifu submissions & voting
-- [ ] Persistent affection/relationship progression
-- [ ] Special events tied to milestones
+- Voice synthesis fine-tuning per persona (profile stubs already exist).
+- Emotional response animations tied to sentiment classifier output.
+- Multi-language personality packs.
+- Community waifu submissions & voting.
+- Richer affection progression and milestone events.

@@ -173,7 +173,7 @@ export function convertToOpenAIMessages(messages: Message[]): Array<Record<strin
 
     // Assistant message that invoked tools
     if (msg.role === "assistant" && msg.toolCalls && msg.toolCalls.length > 0) {
-      return {
+      const out: Record<string, unknown> = {
         role: "assistant",
         content: content || null,
         tool_calls: msg.toolCalls.map((tc) => ({
@@ -188,6 +188,8 @@ export function convertToOpenAIMessages(messages: Message[]): Array<Record<strin
           },
         })),
       };
+      if (msg.reasoningContent) out.reasoning_content = msg.reasoningContent;
+      return out;
     }
 
     // Tool result message — always stringify; tools don't ship image content
@@ -202,7 +204,12 @@ export function convertToOpenAIMessages(messages: Message[]): Array<Record<strin
       };
     }
 
-    // Regular message (system / user / assistant without tools)
+    // Regular message (system / user / assistant without tools).
+    // Preserve reasoning_content on assistant turns even when no tool was called —
+    // DeepSeek reasoner requires it on every prior assistant turn in history.
+    if (msg.role === "assistant" && msg.reasoningContent) {
+      return { role: "assistant", content, reasoning_content: msg.reasoningContent };
+    }
     return { role: msg.role, content };
   });
 }

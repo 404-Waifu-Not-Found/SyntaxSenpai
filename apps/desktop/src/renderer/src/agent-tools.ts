@@ -18,6 +18,16 @@ export const STOP_TOOL_NAME = 'stop_response'
 export const SET_AFFECTION_TOOL_NAME = 'set_affection'
 export const TODO_WRITE_TOOL_NAME = 'todo_write'
 export const RENAME_CHAT_TOOL_NAME = 'rename_chat'
+export const RENDER_CARD_TOOL_NAME = 'render_card'
+
+export const CARD_MARKER_FENCE = 'syntax-senpai-card'
+
+export type RenderCardType = 'weather' | 'table' | 'link_preview' | 'code_comparison'
+
+export interface RenderCardPayload {
+  type: RenderCardType
+  data: Record<string, unknown>
+}
 
 export interface TodoItem { id: string; text: string; status: 'pending' | 'in_progress' | 'done' }
 
@@ -275,6 +285,34 @@ export const agentTools: ToolDefinition[] = [
     },
   },
   {
+    name: RENDER_CARD_TOOL_NAME,
+    description:
+      'Render a rich visual card inline in the chat. Use for information that benefits from structured display: current weather, side-by-side comparisons, tabular data with >2 rows, and link previews. ' +
+      'Do NOT use for plain prose, jokes, greetings, or simple yes/no answers. ' +
+      'Supported types: "weather" (current + forecast), "table" (rows/columns), "link_preview" (title/url/description), "code_comparison" (before/after code snippets). ' +
+      'Call this ONCE per piece of content you want visualized — then continue with normal text or call stop_response. The card is displayed to the user immediately; you do not need to repeat its contents in your final_message.',
+    parameters: {
+      type: 'object',
+      properties: {
+        type: {
+          type: 'string',
+          enum: ['weather', 'table', 'link_preview', 'code_comparison'],
+          description: 'Which card template to render.',
+        },
+        data: {
+          type: 'object',
+          description:
+            'Card payload. Schemas:\n' +
+            '- weather: { location, temperature_c, conditions, emoji?, humidity_pct?, wind_kph?, forecast?: [{ day, high_c, low_c, conditions, emoji? }] }\n' +
+            '- table: { title?, headers: string[], rows: string[][], caption? }\n' +
+            '- link_preview: { url, title, description?, site?, image_url? }\n' +
+            '- code_comparison: { title?, before: { label?, language?, code }, after: { label?, language?, code } }',
+        },
+      },
+      required: ['type', 'data'],
+    },
+  },
+  {
     name: STOP_TOOL_NAME,
     description:
       'Call this ONLY after you have verified the task is actually done — e.g. the file you edited reads back as expected, the command you ran exited 0, the tests you ran passed. ' +
@@ -411,6 +449,15 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
       // return success so the model doesn't retry.
       const title = String((args as any).title ?? '').trim()
       return title ? `Chat renamed to: ${title}` : 'Error: rename_chat requires a non-empty title.'
+    }
+
+    case RENDER_CARD_TOOL_NAME: {
+      // Rendering is handled by the chat store loop (which owns the visible
+      // assistant message). If we reach here the caller did not intercept —
+      // return success so the model doesn't retry.
+      const type = String((toolCall.arguments as any)?.type ?? '').trim()
+      if (!type) return 'Error: render_card requires a non-empty type.'
+      return `Rendered ${type} card.`
     }
 
     case 'spotify_now_playing': {

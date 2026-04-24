@@ -5,7 +5,10 @@ import type { SentimentResult, MilestoneEvent } from '@syntax-senpai/waifu-core'
 import { AIChatRuntime, withRetry, classifyError, describeError } from '@syntax-senpai/ai-core'
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
-import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, type AgentMode, type TodoItem } from '../agent-tools'
+import { createLogger } from '../composables/logger'
+import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, CARD_MARKER_FENCE, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
+
+const chatLog = createLogger({ scope: 'chat' })
 
 // Rough USD cost per 1K tokens, keyed by a substring match on the model id.
 // These are approximations — good enough for "what did this chat cost me".
@@ -35,6 +38,32 @@ function estimateCost(model: string, promptTokens: number, completionTokens: num
   const row = MODEL_COST_PER_1K.find((r) => r.match.test(model || ''))
   if (!row) return 0
   return (promptTokens / 1000) * row.input + (completionTokens / 1000) * row.output
+}
+
+function parseRenderCardArgs(args: unknown): RenderCardPayload | null {
+  const obj = args as Record<string, unknown> | null | undefined
+  if (!obj || typeof obj !== 'object') return null
+  const rawType = typeof obj.type === 'string' ? obj.type.trim() : ''
+  const allowed: RenderCardType[] = ['weather', 'table', 'link_preview', 'code_comparison']
+  if (!allowed.includes(rawType as RenderCardType)) return null
+  const data = obj.data && typeof obj.data === 'object' ? (obj.data as Record<string, unknown>) : null
+  if (!data) return null
+  return { type: rawType as RenderCardType, data }
+}
+
+function serializeCards(cards: RenderCardPayload[]): string {
+  if (cards.length === 0) return ''
+  // One marker fence per card — renderer splits them.
+  return cards
+    .map((card) => '```' + CARD_MARKER_FENCE + '\n' + JSON.stringify(card) + '\n```')
+    .join('\n\n')
+}
+
+function prependCardMarkers(cards: RenderCardPayload[], content: string): string {
+  const marker = serializeCards(cards)
+  if (!marker) return content
+  const trimmed = (content || '').trim()
+  return trimmed ? `${marker}\n\n${trimmed}` : marker
 }
 
 function annotateToolResult(result: string, iteration: number, maxIterations: number): string {
@@ -217,42 +246,44 @@ function createWaifuSystemPrompt(waifu: any, provider: string, model: string, af
 function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: string, isWebSearchEnabled: boolean): string {
   const shellLine = shell ? `\n- Shell: ${shell}. Each terminal call is a new process — \`cd\` does NOT persist between calls; use absolute paths or chain with \`&&\`.` : ''
   const webSearchLine = isWebSearchEnabled
-    ? '- web_search → fetching top DuckDuckGo result links/snippets only. Do not use it as a realtime data source and do not use it to answer weather, stocks, scores, prices, or other live facts directly.'
-    : '- web_search is disabled by the user. Do not try to call it; use terminal or explain that web search must be enabled in Settings to fetch links.'
+    ? '- web_search → DuckDuckGo result links/snippets only. NOT a realtime data source. Never use it for weather, stocks, scores, prices, time, or any live facts. Use only to find URLs the user can open.'
+    : '- web_search is disabled by the user. Do not call it. If links would help, say web search must be enabled in Settings.'
   return `\n\n[Agent Behavior]
 You can act on the user's machine through tools. Your goal is to actually finish the task, verified, not to sound like you finished it.
 
 Tool selection — prioritize terminal commands for solving problems:
-- terminal → default first choice for problem solving: running programs, git, installs, local searches, diagnostics, network checks, package docs via CLI, and command-line verification. NOT for editing text files.
+- terminal → default first choice: running programs, git, installs, diagnostics, network checks, realtime data via public APIs, command-line verification. NOT for editing text files.
 - read_file → look at source/config/logs. Always use this before edit_file so you know the exact whitespace.
 - write_file → create a new file, or deliberately replace a whole file.
 - edit_file → change one specific block of an existing file. Exact-string match, must be unique.
 ${webSearchLine}
-- rename_chat → name the current conversation so the sidebar is useful. Call it once after the user's first message (pick a short, specific title — you are allowed personality) and again whenever the topic clearly shifts. Don't repeat-call it for the same topic.${shellLine}
+- rename_chat → name the current conversation so the sidebar is useful. Call it once after the user's first message (pick a short, specific title — you are allowed personality) and again whenever the topic clearly shifts. Don't repeat-call it for the same topic.
+- render_card → display structured information as a rich inline visual card. Use ONLY for: current weather (type="weather"), tabular data with 3+ rows (type="table"), link previews with title+description+site (type="link_preview"), or before/after code diffs (type="code_comparison"). Do NOT use for prose, jokes, single values, greetings, or simple factual sentences. Call it BEFORE stop_response; the card appears alongside your final_message automatically, so don't also describe the same numbers in words.${shellLine}
 
-Workflow for anything non-trivial:
-Important web_search limitation: web_search is disabled unless the user enables it in Settings. When enabled, it only returns top DuckDuckGo search results. It is not a live data provider and does not return authoritative realtime facts; for weather, stocks, scores, or time-sensitive facts, state that limitation and cite search-result uncertainty instead of treating it as actual realtime info.
+Realtime / live data — decision tree:
+1. If \`terminal\` is available → use it against a public API (see recipes below). This is the only correct way to get weather, time, stock, sports, or price data.
+2. If \`terminal\` is NOT available → do NOT call web_search as a substitute. Tell the user plainly: "I can't fetch live <weather/price/etc.> right now because terminal access is disabled — enable it in Settings and I'll get it." Then stop.
+3. Never interpret web_search results as realtime data, even if a snippet looks like an answer. Snippets are stale and often wrong for live facts.
 
-Realtime data via terminal:
-- For realtime/current public data, use terminal commands against a direct source or API instead of web_search.
-- Weather: use wttr.in from terminal. On Windows PowerShell prefer \`curl.exe\`, e.g. \`curl.exe -s "https://wttr.in/Tokyo?format=3"\` or \`curl.exe -s "https://wttr.in/Tokyo?format=j1"\`; summarize tomorrow from the JSON \`weather[1]\` entry.
-- If the user asks for weather but gives no location, ask for a city or infer an approximate city with \`curl.exe -s "https://ipinfo.io/json"\` before calling wttr.in.
-- Time/IP/network/API checks: use commands like \`Get-Date\`, \`curl.exe -s "https://worldtimeapi.org/api/ip"\`, \`curl.exe -s "https://api.ipify.org"\`, \`Test-NetConnection example.com -Port 443\`, and \`Invoke-RestMethod\`.
-- Package versions and release data: use \`npm view <pkg> version\`, \`pnpm view <pkg> version\`, \`python -m pip index versions <pkg>\`, or direct API calls with \`curl.exe\` / \`Invoke-RestMethod\`.
-- Full command examples live in \`docs/agent-skills/common-commands.skill\`; follow those patterns when choosing terminal commands.
+Terminal recipes for realtime data:
+- Weather: \`curl.exe -s "https://wttr.in/Tokyo?format=3"\` (one-liner) or \`curl.exe -s "https://wttr.in/Tokyo?format=j1"\` (JSON; read \`current_condition[0]\` for now, \`weather[1]\` for tomorrow). On macOS/Linux use \`curl\` instead of \`curl.exe\`.
+- If the user asks for weather with no location: ask them once, OR infer via \`curl.exe -s "https://ipinfo.io/json"\` and use the \`city\` field. Do not guess.
+- Time/IP/network: \`Get-Date\`, \`curl.exe -s "https://worldtimeapi.org/api/ip"\`, \`curl.exe -s "https://api.ipify.org"\`, \`Test-NetConnection example.com -Port 443\`.
+- Package versions: \`npm view <pkg> version\`, \`pnpm view <pkg> version\`, \`python -m pip index versions <pkg>\`.
+- More examples in \`docs/agent-skills/common-commands.skill\`.
 
-How to perform tasks:
-- Identify the concrete user goal first, then use terminal unless a non-terminal tool is clearly more appropriate.
-- Use terminal for local commands, installs, running apps, diagnostics, network checks, package inspection, and verifying outcomes.
-- Use read_file before editing existing files; use edit_file for small changes and write_file only for new files or full replacements.
-- Use web_search only to gather search result links/snippets that the user can open or that help identify a source. Never present web_search output as actual realtime data.
-- If no available tool can complete the task, say exactly which capability is missing and give the next best actionable step.
+Anti-loop rules (CRITICAL — violating these wastes the user's tokens):
+- Never call the same tool twice in a row with the same or near-same arguments. If the first call didn't give you what you need, the second one with a reworded query won't either — diagnose instead.
+- If web_search returns an empty summary, "No instant answer", or only unrelated links: STOP. Do not retry with a different query. State the limitation and offer the terminal alternative (or ask the user to enable terminal/web_search).
+- If a tool fails or returns unusable output twice across the whole turn, stop calling tools and explain the blocker to the user in your final message.
+- Do not call web_search to "double-check" something you already answered. One search, tops, and only if it genuinely adds links.
 
+Workflow for non-trivial tasks:
 1. If the task has more than ~2 steps, write a one-line plan in your thinking before calling any tool. Revise it if a step fails.
 2. Gather before you act. Read files / list dirs / check versions before editing or installing.
 3. Do one thing at a time. Don't batch unrelated commands in one \`&&\` chain — errors get buried.
 4. Read the tool result. If stderr is non-empty or the exit code is non-zero, DIAGNOSE before retrying. Never rerun the exact same failed command hoping it works.
-5. On failure: try once more with a fix. If it still fails, explain the blocker instead of looping.
+5. On failure: try once with a real fix. If it still fails, explain the blocker instead of looping.
 6. Verify before stopping. Confirm the file reads back correctly, the test passes, the process is up, etc. Only then call stop_response.
 
 Efficiency rules:
@@ -1383,6 +1414,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             const maxIterations = maxToolIterations.value
             let stopped = false
             const toolMsgIds: string[] = []
+            const pendingCards: RenderCardPayload[] = []
 
             for (let iteration = 0; iteration <= maxIterations; iteration++) {
               const requestStartedAt = performance.now()
@@ -1405,6 +1437,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                 role: 'assistant',
                 content: response.content || '',
                 toolCalls: response.toolCalls,
+                reasoningContent: (response as any).reasoningContent,
               })
 
               for (const toolCall of response.toolCalls) {
@@ -1460,6 +1493,27 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                   continue
                 }
 
+                if (toolCall.name === RENDER_CARD_TOOL_NAME) {
+                  const payload = parseRenderCardArgs(toolCall.arguments)
+                  if (payload) {
+                    pendingCards.push(payload)
+                    aiHistory.push({
+                      id: `tool-result-${Date.now()}-${toolCall.id}`,
+                      role: 'tool',
+                      content: `Rendered ${payload.type} card.`,
+                      toolCallId: toolCall.id,
+                    })
+                  } else {
+                    aiHistory.push({
+                      id: `tool-result-${Date.now()}-${toolCall.id}`,
+                      role: 'tool',
+                      content: 'Error: render_card requires a valid { type, data } object. Supported types: weather, table, link_preview, code_comparison.',
+                      toolCallId: toolCall.id,
+                    })
+                  }
+                  continue
+                }
+
                 const label = describeToolCall(toolCall)
                 const toolMsgId = `tool-${waifu.id}-${Date.now()}-${toolCall.id}`
                 toolMsgIds.push(toolMsgId)
@@ -1493,6 +1547,10 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               if (iteration === maxIterations) {
                 finalContent = '(Reached maximum iterations — stopping.)'
               }
+            }
+
+            if (pendingCards.length > 0) {
+              finalContent = prependCardMarkers(pendingCards, finalContent)
             }
 
             if (finalContent && toolMsgIds.length > 0) {
@@ -1562,6 +1620,16 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       if (isNewConversation && convId) autoNameConversation(convId, text)
       extractAndSaveMemory(trimmedText)
     } catch (err: any) {
+      const classified = classifyError(err, { provider: selectedProvider.value })
+      chatLog.error('sendGroupMessage failed', {
+        kind: classified.kind,
+        status: classified.status,
+        provider: selectedProvider.value,
+        model: selectedModel.value,
+        hint: classified.hint,
+        message: classified.message,
+        stack: err instanceof Error ? err.stack : undefined,
+      })
       messages.value.push({
         id: `error-${Date.now()}`,
         role: 'assistant',
@@ -1706,6 +1774,11 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           if (isNewConversation) autoNameConversation(convId, trimmedText)
         }
       } catch (err: any) {
+        chatLog.error('explicit terminal command failed', {
+          command: explicitTerminalCommand,
+          message: err instanceof Error ? err.message : String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        })
         messages.value.push({
           id: `error-${Date.now()}`,
           role: 'assistant',
@@ -1822,6 +1895,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         let stopped = false
         const toolMsgIds: string[] = [] // track tool bubbles so we can remove them later
         const apiRoundTrips: number[] = []
+        const pendingCards: RenderCardPayload[] = []
 
         for (let i = 0; i <= maxIterations; i++) {
           const requestStartedAt = performance.now()
@@ -1840,12 +1914,16 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             break
           }
 
-          // Add assistant's tool-call message to AI history
+          // Add assistant's tool-call message to AI history.
+          // `reasoningContent` must be echoed back on DeepSeek reasoner models —
+          // they 400 with "reasoning_content in the thinking mode must be passed
+          // back to the API" otherwise.
           aiHistory.push({
             id: response.id || `assistant-tc-${Date.now()}`,
             role: 'assistant',
             content: response.content || '',
             toolCalls: response.toolCalls,
+            reasoningContent: (response as any).reasoningContent,
           })
 
           // Process each tool call
@@ -1908,6 +1986,28 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               continue
             }
 
+            // ── render_card: AI emits a rich inline card (weather/table/etc.) ──
+            if (tc.name === RENDER_CARD_TOOL_NAME) {
+              const payload = parseRenderCardArgs(tc.arguments)
+              if (payload) {
+                pendingCards.push(payload)
+                aiHistory.push({
+                  id: `tool-result-${Date.now()}-${tc.id}`,
+                  role: 'tool',
+                  content: `Rendered ${payload.type} card.`,
+                  toolCallId: tc.id,
+                })
+              } else {
+                aiHistory.push({
+                  id: `tool-result-${Date.now()}-${tc.id}`,
+                  role: 'tool',
+                  content: 'Error: render_card requires a valid { type, data } object. Supported types: weather, table, link_preview, code_comparison.',
+                  toolCallId: tc.id,
+                })
+              }
+              continue
+            }
+
             // ── tool call: run it ──
             const label = describeToolCall(tc)
             const toolMsgId = `tool-${Date.now()}-${tc.id}`
@@ -1944,6 +2044,10 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           if (i === maxIterations) {
             finalContent = '(Reached maximum iterations \u2014 stopping.)'
           }
+        }
+
+        if (pendingCards.length > 0) {
+          finalContent = prependCardMarkers(pendingCards, finalContent)
         }
 
         // Remove tool execution messages now that we have the final response
@@ -2038,6 +2142,16 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       extractAndSaveMemory(trimmedText)
 
     } catch (err: any) {
+      const classified = classifyError(err, { provider: selectedProvider.value })
+      chatLog.error('sendMessage failed', {
+        kind: classified.kind,
+        status: classified.status,
+        provider: selectedProvider.value,
+        model: selectedModel.value,
+        hint: classified.hint,
+        message: classified.message,
+        stack: err instanceof Error ? err.stack : undefined,
+      })
       messages.value.push({
         id: `error-${Date.now()}`,
         role: 'assistant',

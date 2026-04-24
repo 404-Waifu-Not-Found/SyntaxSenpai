@@ -10,6 +10,14 @@ export interface Message {
   content: string | ContentPart[];
   toolCallId?: string; // for role=tool responses
   toolCalls?: ToolCall[]; // for assistant messages that invoke tools
+  /**
+   * DeepSeek "thinking" / reasoner models return a separate `reasoning_content`
+   * field alongside the final answer. When the assistant turn is fed back in a
+   * subsequent request the API REQUIRES this field to be echoed back, otherwise
+   * it rejects with `The reasoning_content in the thinking mode must be passed
+   * back to the API.` Carry it through multi-turn + tool-call loops.
+   */
+  reasoningContent?: string;
   createdAt?: string; // ISO 8601
 }
 
@@ -84,6 +92,8 @@ export interface ChatResponse {
   id: string;
   content: string;
   toolCalls?: ToolCall[];
+  /** DeepSeek reasoner returns chain-of-thought here; must be echoed on next call. */
+  reasoningContent?: string;
   usage: TokenUsage;
   finishReason: "stop" | "tool_calls" | "length" | "error";
 }

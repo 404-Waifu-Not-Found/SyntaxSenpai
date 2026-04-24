@@ -22,6 +22,9 @@ export const RENDER_CARD_TOOL_NAME = 'render_card'
 export const GIT_COMMIT_TOOL_NAME = 'git_commit'
 export const GIT_PUSH_TOOL_NAME = 'git_push'
 export const GITHUB_PR_CREATE_TOOL_NAME = 'github_pr_create'
+export const CREATE_SKILL_TOOL_NAME = 'create_skill'
+export const USE_SKILL_TOOL_NAME = 'use_skill'
+export const PROPOSE_TOOL_TOOL_NAME = 'propose_tool'
 
 const CODING_MODE_TOOLS = new Set<string>([
   GIT_COMMIT_TOOL_NAME,
@@ -367,6 +370,52 @@ export const agentTools: ToolDefinition[] = [
     },
   },
   {
+    name: CREATE_SKILL_TOOL_NAME,
+    description:
+      'Save a reusable skill to your personal skill library. Use this when you discover a recipe / procedure / style you want to remember across sessions — e.g. "how this user prefers Python code formatted", "debug ritual for their test suite", "the tone they like for PR descriptions". ' +
+      'The slug must be lowercase letters, digits, - or _ (<= 64 chars). Body should be concrete instructions you can follow yourself later — include examples if they help. Do NOT duplicate skills the Available Skills list already shows; update the existing one by overwriting the same slug.',
+    parameters: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string', description: 'URL-safe identifier, e.g. "python-style" or "user_onboarding".' },
+        name: { type: 'string', description: 'Short human title for the skill.' },
+        description: { type: 'string', description: 'One-sentence summary shown in the Available Skills list.' },
+        body: { type: 'string', description: 'The full skill content. Markdown is fine. Write it so future-you can execute the skill without extra context.' },
+      },
+      required: ['slug', 'name', 'description', 'body'],
+    },
+  },
+  {
+    name: USE_SKILL_TOOL_NAME,
+    description:
+      'Load a saved skill\'s full content into your working context for this turn. Call this before acting on a task the skill covers. Only pull skills you actually need — each one costs tokens.',
+    parameters: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string', description: 'The skill slug (as shown in Available Skills).' },
+      },
+      required: ['slug'],
+    },
+  },
+  {
+    name: PROPOSE_TOOL_TOOL_NAME,
+    description:
+      'Propose a NEW plugin tool for the user to review and approve. Use this when you realize a repeated task would be cleaner with a dedicated tool (e.g. an API wrapper, a custom parser) that doesn\'t exist yet. ' +
+      'You are writing untrusted JavaScript that the user must explicitly approve before it runs — write cautiously, include the same safety checks real plugins do (reject non-http(s) URLs, cap response sizes, handle errors). The code must `module.exports = { activate({ registerTool }) { registerTool({...}) } }` — the same shape as the shipped plugins. ' +
+      'After calling this, tell the user you\'ve proposed a tool and ask them to approve it in Settings → Plugins → Pending. Do NOT imply the tool is active or try to use it in the current turn — it cannot run until they approve and restart the app.',
+    parameters: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string', description: 'URL-safe plugin identifier, e.g. "weather-lookup".' },
+        name: { type: 'string', description: 'Human-readable plugin name.' },
+        version: { type: 'string', description: 'Semver string, default "0.1.0" if unsure.' },
+        description: { type: 'string', description: 'What the plugin does and why it\'s useful.' },
+        code: { type: 'string', description: 'Full JavaScript source of the plugin module. Limited to 64 KB.' },
+      },
+      required: ['slug', 'name', 'description', 'code'],
+    },
+  },
+  {
     name: STOP_TOOL_NAME,
     description:
       'Call this ONLY after you have verified the task is actually done — e.g. the file you edited reads back as expected, the command you ran exited 0, the tests you ran passed. ' +
@@ -656,6 +705,45 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
       return `Spotify: ${args.action} executed successfully.`
     }
 
+    case CREATE_SKILL_TOOL_NAME: {
+      const res = await ipc.invoke('skills:write', {
+        slug: args.slug,
+        name: args.name,
+        description: args.description,
+        body: args.body,
+      })
+      if (!res?.success) return `create_skill failed: ${res?.error || 'unknown error'}`
+      // Surface the create event so the renderer can refresh its skill
+      // list without requiring a Settings-tab open.
+      try {
+        window.dispatchEvent(new CustomEvent('app:skill-created', { detail: { slug: res.slug } }))
+      } catch { /* non-browser test env */ }
+      return `Skill "${args.slug}" saved. It will appear in Available Skills on the next turn.`
+    }
+
+    case USE_SKILL_TOOL_NAME: {
+      const res = await ipc.invoke('skills:read', args.slug)
+      if (!res?.success || !res.skill) return `use_skill failed: ${res?.error || 'skill not found'}`
+      // Hand the skill content back verbatim — the AI reads it as its
+      // own tool result and can act on the instructions this turn.
+      return `[Skill loaded: ${res.skill.name}]\n\n${res.skill.body}`
+    }
+
+    case PROPOSE_TOOL_TOOL_NAME: {
+      const res = await ipc.invoke('pending-plugins:write', {
+        slug: args.slug,
+        name: args.name,
+        version: args.version,
+        description: args.description,
+        code: args.code,
+      })
+      if (!res?.success) return `propose_tool failed: ${res?.error || 'unknown error'}`
+      try {
+        window.dispatchEvent(new CustomEvent('app:tool-proposed', { detail: { slug: res.slug, name: args.name } }))
+      } catch { /* non-browser test env */ }
+      return `Proposed tool "${args.slug}" for user review. They must approve it in Settings → Plugins → Pending and restart before it becomes available. Do NOT attempt to call this tool this turn.`
+    }
+
     case STOP_TOOL_NAME:
       // Handled by the loop — should not arrive here
       return args.final_message || ''
@@ -718,6 +806,12 @@ export function describeToolCall(toolCall: ToolCall): string {
       return 'spotify_now_playing()'
     case 'spotify_control':
       return `spotify_control(${args.action ?? ''})`
+    case CREATE_SKILL_TOOL_NAME:
+      return `create_skill(${String((args as any).slug ?? '')})`
+    case USE_SKILL_TOOL_NAME:
+      return `use_skill(${String((args as any).slug ?? '')})`
+    case PROPOSE_TOOL_TOOL_NAME:
+      return `propose_tool(${String((args as any).slug ?? '')})`
     default:
       return `${toolCall.name}(${Object.keys(args).join(', ')})`
   }

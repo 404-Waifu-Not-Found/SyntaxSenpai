@@ -1,6 +1,9 @@
 # SyntaxSenpai AI Providers Reference
 
-SyntaxSenpai includes **15+ AI providers** with support for:
+> **Status freshness:** this document is a long-form marketing/catalog reference. For the ground-truth list of which providers are actually wired right now, see [STATE.md](./STATE.md). Descriptions below are kept for feature comparison, but several "partial" labels from earlier revisions no longer reflect the code.
+
+SyntaxSenpai's provider registry (`packages/ai-core/src/providers/index.ts`) exposes 20 IDs. Features vary per provider but the platform supports:
+
 - ✅ Streaming responses
 - ✅ Tool/function calling (most providers)
 - ✅ Multiple models per provider
@@ -9,26 +12,25 @@ SyntaxSenpai includes **15+ AI providers** with support for:
 
 ---
 
-## 📊 Provider Status
+## 📊 Provider Status (as of the current tree)
 
-### ✅ Fully Implemented (Ready to Use)
-1. **Anthropic Claude** - Production ready
-2. **OpenAI GPT** - Production ready
-3. **Ollama (Local)** - Production ready
+### ✅ Fully Implemented (in registry, chat/stream work)
 
-### 🔧 Partially Implemented (Core API works, needs testing)
-- Google Gemini
-- Mistral AI
-- Cohere
-- Together AI (OpenAI-compatible)
-- Groq (OpenAI-compatible)
-- Perplexity (OpenAI-compatible)
-- Replicate
-- HuggingFace Inference
-- xAI Grok
-- Azure OpenAI
-- AWS Bedrock
-- Fireworks AI
+Anthropic, OpenAI, OpenAI Codex, Google Gemini, Mistral, Cohere, Together AI, Groq, Perplexity, Hugging Face, DeepSeek, MiniMax (Global + CN), xAI + xAI Grok, GitHub Models, Ollama (local, keyless), LM Studio (local, keyless) — 18 providers.
+
+### ⚠️ Stubs (registered but throw "not yet fully implemented")
+
+- **Azure OpenAI** — `providers/azure-openai.ts`
+- **Fireworks AI** — `providers/fireworks-ai.ts`
+
+Both throw from `chat()` and `stream()` until fully implemented. They should be hidden from the desktop picker.
+
+### ❌ Removed (per PR #12)
+
+- **Replicate** — file deleted
+- **AWS Bedrock** — file deleted
+
+Earlier revisions of this file listed both as "partially implemented". They no longer exist in the codebase and should not be reintroduced without a real implementation.
 
 ---
 
@@ -203,21 +205,9 @@ SyntaxSenpai includes **15+ AI providers** with support for:
 
 ---
 
-### 10. Replicate 🔧
+### 10. Replicate ❌ (removed)
 
-**Strengths:**
-- Access to 10000+ models
-- Great for specialized tasks
-- Text-to-image, voice, etc.
-- Easy to use
-- Pay-per-use
-
-**Models:**
-- `meta/llama-3-70b-instruct`
-- `meta/llama-3-8b`
-- Custom models available
-
-**Pricing:** Pay per API call (varies)
+Replicate was removed from the codebase in PR #12. No `providers/replicate.ts` exists. Do not reintroduce without a real implementation.
 
 ---
 
@@ -255,47 +245,21 @@ SyntaxSenpai includes **15+ AI providers** with support for:
 
 ---
 
-### 13. Azure OpenAI 🔧
+### 13. Azure OpenAI ⚠️ (stub)
 
-**Strengths:**
-- Enterprise security and compliance
-- Integration with Azure ecosystem
-- SOC2, ISO, HIPAA certified
-- Regional data residency options
-- Great for large organizations
+`providers/azure-openai.ts` is registered but `chat()` and `stream()` currently throw `"Azure OpenAI provider not yet fully implemented"`. Constructor requires `baseUrl` with your resource name.
 
-**Models:**
-- Same as OpenAI (GPT-4o, GPT-4, etc.)
-- Deployed in your Azure subscription
-
-**Pricing:** Same as OpenAI (through Azure)
-
-**Requirements:** Azure subscription, OpenAI service deployed
+**Requirements (once implemented):** Azure subscription, OpenAI service deployed.
 
 ---
 
-### 14. AWS Bedrock 🔧
+### 14. AWS Bedrock ❌ (removed)
 
-**Strengths:**
-- Multiple models in one service
-- Enterprise security
-- Integration with AWS services
-- Managed service
-- Great for AWS-native deployments
-
-**Models:**
-- `anthropic.claude-3-sonnet` (Claude)
-- `meta.llama3-70b` (Llama)
-- `mistral.mistral-7b` (Mistral)
-- And more...
-
-**Pricing:** Pay per token, varies by model
-
-**Requirements:** AWS account, Bedrock enabled in region
+AWS Bedrock was removed from the codebase in PR #12. No `providers/aws-bedrock.ts` exists. Do not reintroduce without a real implementation.
 
 ---
 
-### 15. Fireworks AI 🔧
+### 15. Fireworks AI ⚠️ (stub)
 
 **Strengths:**
 - ⚡ Very fast inference
@@ -331,10 +295,10 @@ SyntaxSenpai includes **15+ AI providers** with support for:
 → **Google Gemini** (1M tokens!)
 
 ### For Cost-Conscious Users
-→ **Groq, Fireworks, or Together AI** (free tiers)
+→ **Groq or Together AI** (free tiers). Fireworks is currently a stub.
 
 ### For Enterprise
-→ **Azure OpenAI or AWS Bedrock** (security, compliance)
+→ **Azure OpenAI** once the stub is implemented. AWS Bedrock support has been removed.
 
 ---
 
@@ -364,13 +328,16 @@ Switch providers in settings anytime. Each provider uses its own API key.
 | Perplexity | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Cohere | ✅ | ✅ | ❌ | ✅ | ❌ |
 | Together | ✅ | ✅ | ❌ | ✅ | ❌ |
-| Replicate | ✅ | ❌ | ❌ | ✅ | ❌ |
 | HuggingFace | ✅ | ❌ | ❌ | ✅ | ❌ |
 | **Ollama** | ✅ | ❌ | ❌ | ✅ | ✅ |
-| xAI Grok | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Azure OpenAI | ✅ | ✅ | ✅ | ❌ | ❌ |
-| AWS Bedrock | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Fireworks | ✅ | ❌ | ❌ | ✅ | ❌ |
+| **LM Studio** | ✅ | ❌ | ❌ | ✅ | ✅ |
+| DeepSeek | ✅ | ✅ | ❌ | ❌ | ❌ |
+| MiniMax (Global / CN) | ✅ | ✅ | ❌ | ❌ | ❌ |
+| OpenAI Codex | ✅ | ✅ | ❌ | ❌ | ❌ |
+| GitHub Models | ✅ | ✅ | ❌ | ✅ | ❌ |
+| xAI / xAI Grok | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Azure OpenAI ⚠️ stub | — | — | — | — | — |
+| Fireworks ⚠️ stub | — | — | — | — | — |
 
 ---
 
@@ -398,7 +365,7 @@ For Ollama:
 
 ---
 
-**Last Updated:** 2026-04-07  
-**Total Providers Available:** 15+  
-**Fully Implemented:** 3 (Anthropic, OpenAI, Ollama)  
-**Ready for Full Implementation:** 12 more
+**Total registered providers:** 20  
+**Fully implemented:** 18  
+**Stubs:** 2 (Azure OpenAI, Fireworks)  
+**Removed:** Replicate, AWS Bedrock (PR #12)

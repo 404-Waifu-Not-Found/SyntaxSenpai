@@ -23,7 +23,7 @@ Every interaction is delivered in-character, blending emotional engagement with 
 
 ## Features
 
-- **19 AI providers** — Anthropic, OpenAI, OpenAI Codex, Gemini, Mistral, Groq, DeepSeek, Perplexity, Together, xAI (2 endpoints), Hugging Face, GitHub Models, MiniMax (global + CN), Fireworks, Azure OpenAI, Ollama, LM Studio
+- **20 AI providers registered, 18 live** — Anthropic, OpenAI, OpenAI Codex, Gemini, Mistral, Cohere, Groq, DeepSeek, Perplexity, Together, xAI (2 endpoints), Hugging Face, GitHub Models, MiniMax (global + CN), Ollama, LM Studio. Azure OpenAI and Fireworks are registered but currently throw "not yet fully implemented" (see [STATE.md](./STATE.md))
 - **Waifu personalities** — distinct characters with unique tones and backstories
 - **Agent modes** — ask / auto / full; plan-and-verify workflow with iteration-budget feedback
 - **Agent tools** — terminal (with destructive-pattern gating), read/write/edit_file, clipboard, git_status / git_diff, web_search, todo_write, Spotify

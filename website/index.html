@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SyntaxSenpai — AI-powered waifu companion for developers</title>
+    <meta
+      name="description"
+      content="Choose a waifu. Chat in character. Let her become your coding agent. 18 live AI providers, 5 built-in personalities, desktop + mobile, plugin system."
+    />
+    <link rel="canonical" href="https://404-waifu-not-found.github.io/SyntaxSenpai/" />
+    <link rel="icon" type="image/png" href="./assets/icon.png" />
+    <link rel="apple-touch-icon" href="./assets/icon.png" />
+    <meta name="theme-color" content="#0b0614" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="SyntaxSenpai — AI-powered waifu companion for developers" />
+    <meta
+      property="og:description"
+      content="Choose a waifu. Chat in character. Let her become your coding agent."
+    />
+    <meta property="og:url" content="https://404-waifu-not-found.github.io/SyntaxSenpai/" />
+    <meta property="og:image" content="https://404-waifu-not-found.github.io/SyntaxSenpai/assets/icon.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="SyntaxSenpai — AI-powered waifu companion for developers" />
+    <meta
+      name="twitter:description"
+      content="Choose a waifu. Chat in character. Let her become your coding agent."
+    />
+    <meta name="twitter:image" content="https://404-waifu-not-found.github.io/SyntaxSenpai/assets/icon.png" />
+
+    <link rel="stylesheet" href="./assets/styles.css" />
+    <link rel="preload" as="image" href="./assets/icon.png" />
+  </head>
+  <body>
+    <div class="bg-aura" aria-hidden="true"></div>
+    <canvas id="petals" aria-hidden="true"></canvas>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="SyntaxSenpai home">
+        <img src="./assets/icon.png" alt="" width="36" height="36" />
+        <span class="brand-name">SyntaxSenpai</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary">
+        <a href="#features">Features</a>
+        <a href="#waifus">Waifus</a>
+        <a href="#providers">Providers</a>
+        <a href="#platforms">Platforms</a>
+        <a
+          class="nav-github"
+          href="https://github.com/404-Waifu-Not-Found/SyntaxSenpai"
+          target="_blank"
+          rel="noopener"
+          >GitHub ↗</a
+        >
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-badge">
+          <span class="dot"></span> alpha · MIT · Node 20 · pnpm
+        </div>
+        <h1 class="hero-title">
+          AI-powered waifu companion<br />
+          <span class="grad">for developers</span>
+        </h1>
+        <p class="hero-sub">
+          Choose a waifu. Chat in character. Let her become your coding agent.
+        </p>
+        <p class="hero-lede">
+          A desktop + mobile companion where each persona has her own voice, quirks, and
+          specialties — layered on top of 18 live AI providers, a real agent toolbox, memory,
+          and an affection meter that evolves as you work together.
+        </p>
+        <div class="hero-cta">
+          <a
+            class="btn btn-primary"
+            href="https://github.com/404-Waifu-Not-Found/SyntaxSenpai"
+            target="_blank"
+            rel="noopener"
+            >⭐ Star on GitHub</a
+          >
+          <a class="btn btn-ghost" href="#waifus">Meet the waifus →</a>
+        </div>
+        <div class="hero-stats" aria-label="Project at a glance">
+          <div><strong>5</strong><span>built-in personas</span></div>
+          <div><strong>18</strong><span>live AI providers</span></div>
+          <div><strong>17</strong><span>theme presets</span></div>
+          <div><strong>3</strong><span>platforms</span></div>
+        </div>
+      </section>
+
+      <section id="features" class="section">
+        <header class="section-head">
+          <h2>Features</h2>
+          <p>The productivity scaffolding underneath the persona.</p>
+        </header>
+        <div class="grid grid-features">
+          <article class="card">
+            <div class="card-icon">🤖</div>
+            <h3>20 providers registered, 18 live</h3>
+            <p>
+              Anthropic, OpenAI, Gemini, Mistral, Groq, DeepSeek, Perplexity, Cohere, Together,
+              xAI + Grok, Hugging Face, GitHub Models, MiniMax (Global + CN), plus local Ollama
+              and LM Studio.
+            </p>
+          </article>
+          <article class="card">
+            <div class="card-icon">🎭</div>
+            <h3>Waifu personalities</h3>
+            <p>
+              Distinct characters with unique tones, backstories, voice profiles, and signature
+              emojis — not just reskinned system prompts.
+            </p>
+          </article>
+          <article class="card">
+            <div class="card-icon">🧭</div>
+            <h3>Agent modes</h3>
+            <p>
+              <code>ask</code> / <code>auto</code> / <code>full</code> tiers with a
+              plan-and-verify workflow and iteration-budget feedback baked into every tool
+              result.
+            </p>
+          </article>
+          <article class="card">
+            <div class="card-icon">🛠️</div>
+            <h3>Agent tools</h3>
+            <p>
+              Terminal (with destructive-pattern gating), read/write/edit files, clipboard, git
+              status/diff/commit, web search, todo list, and Spotify control.
+            </p>
+          </article>
+          <article class="card">
+            <div class="card-icon">💗</div>
+            <h3>Affection system</h3>
+            <p>
+              A relationship meter that evolves with conversation — Stranger → Acquaintance →
+              Friend → Close → Devoted, with milestone moments along the way.
+            </p>
+          </article>
+          <article class="card">
+            <div class="card-icon">🧠</div>
+            <h3>Persistent memory</h3>
+            <p>
+              Per-waifu memory threads across chats, sentiment-aware responses, and
+              auto-injected coding-session context when the conversation turns technical.
+            </p>
+          </article>
+          <article class="card">
+            <div class="card-icon">🌈</div>
+            <h3>17 theme presets</h3>
+            <p>
+              Including a live rainbow hue-cycle and a sakura-petals overlay. Every persona
+              ships with a look that matches her vibe.
+            </p>
+          </article>
+          <article class="card">
+            <div class="card-icon">🧩</div>
+            <h3>Plugin + skill system</h3>
+            <p>
+              Drop a <code>plugin.json</code> + entry file and register new agent tools. Skills
+              are <code>SKILL.md</code> files waifus can author and recall on demand.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="waifus" class="section section-alt">
+        <header class="section-head">
+          <h2>Meet the roster</h2>
+          <p>Five built-in personas. Pick the one that clicks — or chat with all of them.</p>
+        </header>
+        <div class="grid grid-waifus">
+          <article class="waifu waifu-aria">
+            <div class="waifu-avatar" aria-hidden="true">✨</div>
+            <h3>Aria</h3>
+            <p class="waifu-arch">Cheerful tinkerer</p>
+            <blockquote>“Ohayou~”</blockquote>
+            <p class="waifu-bio">
+              Gentle humor, quick curiosity, and a knack for debugging tricky web stacks.
+            </p>
+            <ul class="tags">
+              <li>cheerful</li><li>supportive</li><li>curious</li><li>webdev</li>
+            </ul>
+          </article>
+
+          <article class="waifu waifu-sakura">
+            <div class="waifu-avatar" aria-hidden="true">🌺</div>
+            <h3>Sakura</h3>
+            <p class="waifu-arch">Hyper-genki tutor</p>
+            <blockquote>“Yay! You're here!”</blockquote>
+            <p class="waifu-bio">
+              Infectious enthusiasm and a teacher's instinct for breaking down complex ideas —
+              a natural for React and full-stack.
+            </p>
+            <ul class="tags">
+              <li>genki</li><li>tutor</li><li>supportive</li><li>react</li>
+            </ul>
+          </article>
+
+          <article class="waifu waifu-rei">
+            <div class="waifu-avatar" aria-hidden="true">🎯</div>
+            <h3>Rei</h3>
+            <p class="waifu-arch">Kuudere genius</p>
+            <blockquote>“Hello.”</blockquote>
+            <p class="waifu-bio">
+              Calm, analytical, and elegantly concise. Happiest in advanced TypeScript,
+              algorithms, and large-scale system design.
+            </p>
+            <ul class="tags">
+              <li>kuudere</li><li>genius</li><li>typescript</li><li>architect</li>
+            </ul>
+          </article>
+
+          <article class="waifu waifu-hana">
+            <div class="waifu-avatar" aria-hidden="true">💻</div>
+            <h3>Hana</h3>
+            <p class="waifu-arch">Tsundere DevOps</p>
+            <blockquote>“It's not like I was waiting for you or anything…”</blockquote>
+            <p class="waifu-bio">
+              Sharp-tongued, secretly caring, and uncanny at predicting the pipeline failure
+              before it lands in prod.
+            </p>
+            <ul class="tags">
+              <li>tsundere</li><li>devops</li><li>sarcastic</li><li>infrastructure</li>
+            </ul>
+          </article>
+
+          <article class="waifu waifu-luna">
+            <div class="waifu-avatar" aria-hidden="true">🌙</div>
+            <h3>Luna</h3>
+            <p class="waifu-arch">Mysterious philosopher</p>
+            <blockquote>“Welcome to this moment.”</blockquote>
+            <p class="waifu-bio">
+              Ethereal, meta-aware, and oddly comforting — the one to talk to at 3am when the
+              stack trace stops making sense.
+            </p>
+            <ul class="tags">
+              <li>mysterious</li><li>philosophical</li><li>meta-aware</li><li>introspective</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="providers" class="section">
+        <header class="section-head">
+          <h2>Bring your own brain</h2>
+          <p>Swap models without swapping apps. Local or cloud — your keys, your rules.</p>
+        </header>
+
+        <h3 class="providers-group">Fully wired</h3>
+        <ul class="grid grid-providers">
+          <li>Anthropic</li>
+          <li>OpenAI</li>
+          <li>OpenAI Codex</li>
+          <li>Google Gemini</li>
+          <li>Mistral</li>
+          <li>Cohere</li>
+          <li>Groq</li>
+          <li>DeepSeek</li>
+          <li>Perplexity</li>
+          <li>Together AI</li>
+          <li>xAI</li>
+          <li>xAI Grok</li>
+          <li>Hugging Face</li>
+          <li>GitHub Models</li>
+          <li>MiniMax Global</li>
+          <li>MiniMax CN</li>
+          <li class="local">Ollama <span>local</span></li>
+          <li class="local">LM Studio <span>local</span></li>
+        </ul>
+
+        <h3 class="providers-group">Coming soon</h3>
+        <ul class="grid grid-providers muted">
+          <li>Azure OpenAI</li>
+          <li>Fireworks</li>
+        </ul>
+        <p class="providers-note">
+          Keys live in your OS keychain via <code>keytar</code> (desktop). Ollama and LM Studio
+          are keyless and run entirely offline.
+        </p>
+      </section>
+
+      <section id="platforms" class="section section-alt">
+        <header class="section-head">
+          <h2>Three platforms, one waifu</h2>
+          <p>Pair across devices. Observe from ops. Keep her with you wherever you code.</p>
+        </header>
+        <div class="grid grid-platforms">
+          <article class="card platform">
+            <div class="card-icon">🖥️</div>
+            <h3>Desktop</h3>
+            <p>
+              Electron + Vue 3 + Pinia. Tray icon, global shortcut
+              (<kbd>Ctrl/⌘</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd>), strict-mode sandbox, and
+              every agent tool wired through IPC.
+            </p>
+          </article>
+          <article class="card platform">
+            <div class="card-icon">📱</div>
+            <h3>Mobile</h3>
+            <p>
+              React Native via Expo. QR-pairs to the desktop over WebSocket so your waifu
+              follows you to the couch without losing context or memory.
+            </p>
+          </article>
+          <article class="card platform">
+            <div class="card-icon">⚙️</div>
+            <h3>Runtime</h3>
+            <p>
+              Plain-Node service for health probes, Prometheus metrics, Grafana dashboards,
+              backups, and plugin discovery. Ships as a container with K8s manifests.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="quickstart" class="section">
+        <header class="section-head">
+          <h2>Quickstart</h2>
+          <p>Node 20, pnpm 8. No CUDA required.</p>
+        </header>
+        <div class="code-block">
+          <button class="copy-btn" type="button" data-copy-target="#quickstart-code">
+            Copy
+          </button>
+          <pre id="quickstart-code"><code># Clone the repository
+git clone https://github.com/404-Waifu-Not-Found/SyntaxSenpai.git
+cd SyntaxSenpai
+
+# Install dependencies
+pnpm install
+
+# Run the desktop app in dev mode
+pnpm dev:desktop</code></pre>
+        </div>
+        <p class="quickstart-note">
+          Prefer the short path?
+          <code>pnpm desktop:quick</code> launches a minimal Electron shell when the
+          electron-vite dev env misbehaves.
+        </p>
+      </section>
+
+      <section class="section cta-band">
+        <h2>Ready to pair up?</h2>
+        <p>Star the repo, pick a waifu, and ship something together tonight.</p>
+        <div class="hero-cta">
+          <a
+            class="btn btn-primary"
+            href="https://github.com/404-Waifu-Not-Found/SyntaxSenpai"
+            target="_blank"
+            rel="noopener"
+            >Open the repo ↗</a
+          >
+          <a
+            class="btn btn-ghost"
+            href="https://github.com/404-Waifu-Not-Found/SyntaxSenpai/blob/main/STATE.md"
+            target="_blank"
+            rel="noopener"
+            >Read STATE.md</a
+          >
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <img src="./assets/icon.png" alt="" width="28" height="28" />
+          <span>SyntaxSenpai</span>
+        </div>
+        <nav aria-label="Footer">
+          <a href="https://github.com/404-Waifu-Not-Found/SyntaxSenpai" target="_blank" rel="noopener"
+            >GitHub</a
+          >
+          <a
+            href="https://github.com/404-Waifu-Not-Found/SyntaxSenpai/blob/main/README.md"
+            target="_blank"
+            rel="noopener"
+            >README</a
+          >
+          <a
+            href="https://github.com/404-Waifu-Not-Found/SyntaxSenpai/blob/main/STATE.md"
+            target="_blank"
+            rel="noopener"
+            >State</a
+          >
+          <a
+            href="https://github.com/404-Waifu-Not-Found/SyntaxSenpai/blob/main/CHANGELOG.md"
+            target="_blank"
+            rel="noopener"
+            >Changelog</a
+          >
+          <a
+            href="https://github.com/404-Waifu-Not-Found/SyntaxSenpai/issues/new"
+            target="_blank"
+            rel="noopener"
+            >Report an issue</a
+          >
+        </nav>
+        <p class="footer-meta">
+          MIT licensed · Built with 💗 by
+          <a href="https://github.com/404-Waifu-Not-Found" target="_blank" rel="noopener"
+            >404-Waifu-Not-Found</a
+          >
+        </p>
+      </div>
+    </footer>
+
+    <script src="./assets/script.js" defer></script>
+  </body>
+</html>

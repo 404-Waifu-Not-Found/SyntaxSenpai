@@ -34,7 +34,13 @@
   </head>
   <body>
     <div class="bg-aura" aria-hidden="true"></div>
+    <div class="aurora" aria-hidden="true">
+      <span class="blob b1"></span>
+      <span class="blob b2"></span>
+      <span class="blob b3"></span>
+    </div>
     <canvas id="petals" aria-hidden="true"></canvas>
+    <canvas id="sparkles" aria-hidden="true"></canvas>
 
     <header class="site-header">
       <a class="brand" href="#top" aria-label="SyntaxSenpai home">
@@ -84,19 +90,20 @@
           <a class="btn btn-ghost" href="#waifus">Meet the waifus →</a>
         </div>
         <div class="hero-stats" aria-label="Project at a glance">
-          <div><strong>5</strong><span>built-in personas</span></div>
-          <div><strong>18</strong><span>live AI providers</span></div>
-          <div><strong>17</strong><span>theme presets</span></div>
-          <div><strong>3</strong><span>platforms</span></div>
+          <div><strong data-count="5">0</strong><span>built-in personas</span></div>
+          <div><strong data-count="18">0</strong><span>live AI providers</span></div>
+          <div><strong data-count="17">0</strong><span>theme presets</span></div>
+          <div><strong data-count="3">0</strong><span>platforms</span></div>
         </div>
+        <div class="scroll-hint" aria-hidden="true"></div>
       </section>
 
-      <section id="features" class="section">
+      <section id="features" class="section" data-reveal>
         <header class="section-head">
           <h2>Features</h2>
           <p>The productivity scaffolding underneath the persona.</p>
         </header>
-        <div class="grid grid-features">
+        <div class="grid grid-features" data-reveal-stagger>
           <article class="card">
             <div class="card-icon">🤖</div>
             <h3>20 providers registered, 18 live</h3>
@@ -166,12 +173,12 @@
         </div>
       </section>
 
-      <section id="waifus" class="section section-alt">
+      <section id="waifus" class="section section-alt" data-reveal>
         <header class="section-head">
           <h2>Meet the roster</h2>
           <p>Five built-in personas. Pick the one that clicks — or chat with all of them.</p>
         </header>
-        <div class="grid grid-waifus">
+        <div class="grid grid-waifus" data-reveal-stagger>
           <article class="waifu waifu-aria">
             <div class="waifu-avatar" aria-hidden="true">✨</div>
             <h3>Aria</h3>
@@ -243,14 +250,14 @@
         </div>
       </section>
 
-      <section id="providers" class="section">
+      <section id="providers" class="section" data-reveal>
         <header class="section-head">
           <h2>Bring your own brain</h2>
           <p>Swap models without swapping apps. Local or cloud — your keys, your rules.</p>
         </header>
 
         <h3 class="providers-group">Fully wired</h3>
-        <ul class="grid grid-providers">
+        <ul class="grid grid-providers" data-reveal-stagger>
           <li>Anthropic</li>
           <li>OpenAI</li>
           <li>OpenAI Codex</li>
@@ -282,12 +289,12 @@
         </p>
       </section>
 
-      <section id="platforms" class="section section-alt">
+      <section id="platforms" class="section section-alt" data-reveal>
         <header class="section-head">
           <h2>Three platforms, one waifu</h2>
           <p>Pair across devices. Observe from ops. Keep her with you wherever you code.</p>
         </header>
-        <div class="grid grid-platforms">
+        <div class="grid grid-platforms" data-reveal-stagger>
           <article class="card platform">
             <div class="card-icon">🖥️</div>
             <h3>Desktop</h3>
@@ -316,7 +323,7 @@
         </div>
       </section>
 
-      <section id="quickstart" class="section">
+      <section id="quickstart" class="section" data-reveal>
         <header class="section-head">
           <h2>Quickstart</h2>
           <p>Node 20, pnpm 8. No CUDA required.</p>
@@ -342,7 +349,7 @@ pnpm dev:desktop</code></pre>
         </p>
       </section>
 
-      <section class="section cta-band">
+      <section class="section cta-band" data-reveal>
         <h2>Ready to pair up?</h2>
         <p>Star the repo, pick a waifu, and ship something together tonight.</p>
         <div class="hero-cta">

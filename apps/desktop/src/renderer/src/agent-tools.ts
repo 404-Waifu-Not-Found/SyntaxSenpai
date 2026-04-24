@@ -19,6 +19,15 @@ export const SET_AFFECTION_TOOL_NAME = 'set_affection'
 export const TODO_WRITE_TOOL_NAME = 'todo_write'
 export const RENAME_CHAT_TOOL_NAME = 'rename_chat'
 export const RENDER_CARD_TOOL_NAME = 'render_card'
+export const GIT_COMMIT_TOOL_NAME = 'git_commit'
+export const GIT_PUSH_TOOL_NAME = 'git_push'
+export const GITHUB_PR_CREATE_TOOL_NAME = 'github_pr_create'
+
+const CODING_MODE_TOOLS = new Set<string>([
+  GIT_COMMIT_TOOL_NAME,
+  GIT_PUSH_TOOL_NAME,
+  GITHUB_PR_CREATE_TOOL_NAME,
+])
 
 export const CARD_MARKER_FENCE = 'syntax-senpai-card'
 
@@ -181,6 +190,51 @@ export const agentTools: ToolDefinition[] = [
     },
   },
   {
+    name: GIT_COMMIT_TOOL_NAME,
+    description:
+      'Create a git commit in the active coding-mode repository. Stages the paths you pass (or all modified tracked files if paths is omitted) and commits with the given message. Call git_diff first to verify what will land. Do NOT commit lockfiles, .env, or secrets unless the user explicitly asked. Never amend or rewrite history with this tool — use terminal directly for those.',
+    parameters: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'Commit message. Subject line ≤ 60 chars, lowercase conventional style (feat:/fix:/refactor:/docs:/chore:). Body optional, separated by a blank line.' },
+        paths: { type: 'array', items: { type: 'string' }, description: 'Optional list of paths to stage (relative to repo). Defaults to `git add -u` (all modified tracked files, no new untracked files).' },
+        cwd: { type: 'string', description: 'Absolute repo path. Defaults to the active coding-mode repo.' },
+      },
+      required: ['message'],
+    },
+  },
+  {
+    name: GIT_PUSH_TOOL_NAME,
+    description:
+      'Push the current branch to the remote. Defaults to `origin <current-branch>`. Use force:true ONLY when the user explicitly typed "force" or "--force". If the branch has no upstream, -u is set automatically.',
+    parameters: {
+      type: 'object',
+      properties: {
+        remote: { type: 'string', description: 'Remote name. Defaults to "origin".' },
+        branch: { type: 'string', description: 'Branch to push. Defaults to the current branch.' },
+        force: { type: 'boolean', description: 'Force push using --force-with-lease. Default false. Require explicit user confirmation before setting true.' },
+        cwd: { type: 'string', description: 'Absolute repo path. Defaults to the active coding-mode repo.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: GITHUB_PR_CREATE_TOOL_NAME,
+    description:
+      'Open a GitHub pull request for the active coding-mode repo using the `gh` CLI. The branch must already be pushed. Requires gh to be installed and authenticated. Use for code review requests on GitHub-hosted repos only.',
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'PR title. ≤ 70 chars. No emoji unless the repo style uses them.' },
+        body: { type: 'string', description: 'PR body as markdown. Include a "## Summary" section (1–3 bullets) and "## Test plan" section (checkboxes).' },
+        base: { type: 'string', description: 'Base branch. Defaults to the repo default branch (often main or master).' },
+        draft: { type: 'boolean', description: 'Open as draft. Default false.' },
+        cwd: { type: 'string', description: 'Absolute repo path. Defaults to the active coding-mode repo.' },
+      },
+      required: ['title', 'body'],
+    },
+  },
+  {
     name: RENAME_CHAT_TOOL_NAME,
     description:
       'Rename the current conversation shown in the sidebar. Call this once after the user\'s first message (a short, specific title that captures what the chat is really about), and again whenever the topic clearly shifts. Keep it under ~60 characters, no trailing punctuation. You can add personality but do NOT paste a whole sentence — it\'s a sidebar label.',
@@ -337,9 +391,18 @@ export const agentTools: ToolDefinition[] = [
  * - auto: terminal + stop
  * - full: terminal + stop
  */
-export function getToolsForMode(mode: AgentMode, options: { webSearchEnabled?: boolean } = {}): ToolDefinition[] {
-  // All modes get tools; the system prompt controls safety boundaries
-  return agentTools.filter((tool) => tool.name !== 'web_search' || options.webSearchEnabled === true)
+export function getToolsForMode(
+  mode: AgentMode,
+  options: { webSearchEnabled?: boolean; codingMode?: boolean } = {},
+): ToolDefinition[] {
+  // All modes get tools; the system prompt controls safety boundaries.
+  // Coding-mode tools (git_commit / git_push / github_pr_create) only appear when /code is active.
+  void mode
+  return agentTools.filter((tool) => {
+    if (tool.name === 'web_search') return options.webSearchEnabled === true
+    if (CODING_MODE_TOOLS.has(tool.name)) return options.codingMode === true
+    return true
+  })
 }
 
 /**
@@ -436,6 +499,75 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
       return res.stdout || '(no changes)'
     }
 
+    case GIT_COMMIT_TOOL_NAME: {
+      const a = toolCall.arguments as { message?: string; paths?: string[]; cwd?: string }
+      const message = (a.message ?? '').trim()
+      if (!message) return 'Error: git_commit requires a non-empty message.'
+      const cwd = a.cwd || ''
+      const cwdFlag = cwd ? `cd ${JSON.stringify(cwd)} && ` : ''
+      const pathsArg = Array.isArray(a.paths) && a.paths.length > 0
+        ? a.paths.map((p) => JSON.stringify(p)).join(' ')
+        : '-u'
+      // HEREDOC-safe: base64-encode the message and pipe into git commit -F -
+      const b64 = btoa(unescape(encodeURIComponent(message)))
+      const cmd = `${cwdFlag}git add ${pathsArg} && echo "${b64}" | base64 --decode | git commit -F -`
+      const res = await ipc.invoke('terminal:exec', cmd)
+      if (!res.success) return `git_commit error: ${res.error}`
+      if (res.code && res.code !== 0) return `git_commit failed (exit ${res.code}):\n${res.stderr || res.stdout}`
+      const shaRes = await ipc.invoke('terminal:exec', `${cwdFlag}git rev-parse HEAD`)
+      const sha = (shaRes?.stdout || '').trim().slice(0, 12)
+      return `Committed${sha ? ` ${sha}` : ''}: ${message.split('\n')[0]}`
+    }
+
+    case GIT_PUSH_TOOL_NAME: {
+      const a = toolCall.arguments as { remote?: string; branch?: string; force?: boolean; cwd?: string }
+      const cwdFlag = a.cwd ? `cd ${JSON.stringify(a.cwd)} && ` : ''
+      const remote = a.remote || 'origin'
+      const remoteSafe = JSON.stringify(remote)
+      let branch = (a.branch || '').trim()
+      if (!branch) {
+        const b = await ipc.invoke('terminal:exec', `${cwdFlag}git rev-parse --abbrev-ref HEAD`)
+        branch = (b?.stdout || '').trim()
+      }
+      if (!branch) return 'git_push error: could not determine current branch.'
+      const branchSafe = JSON.stringify(branch)
+      // Detect upstream to choose between `git push` and `git push -u origin <branch>`
+      const upstreamCheck = await ipc.invoke('terminal:exec', `${cwdFlag}git rev-parse --abbrev-ref --symbolic-full-name '@{u}'`)
+      const hasUpstream = upstreamCheck?.success && upstreamCheck?.code === 0
+      const flags = a.force ? '--force-with-lease' : ''
+      const cmd = hasUpstream
+        ? `${cwdFlag}git push ${flags} ${remoteSafe} ${branchSafe}`.replace(/\s+/g, ' ').trim()
+        : `${cwdFlag}git push -u ${flags} ${remoteSafe} ${branchSafe}`.replace(/\s+/g, ' ').trim()
+      const res = await ipc.invoke('terminal:exec', cmd)
+      if (!res.success) return `git_push error: ${res.error}`
+      const tail = (res.stderr || res.stdout || '').split('\n').slice(-20).join('\n')
+      if (res.code && res.code !== 0) return `git_push failed (exit ${res.code}):\n${tail}`
+      return `Pushed ${branch} → ${remote}${a.force ? ' (--force-with-lease)' : ''}\n${tail}`
+    }
+
+    case GITHUB_PR_CREATE_TOOL_NAME: {
+      const a = toolCall.arguments as { title?: string; body?: string; base?: string; draft?: boolean; cwd?: string }
+      const title = (a.title ?? '').trim()
+      const body = (a.body ?? '').trim()
+      if (!title) return 'Error: github_pr_create requires a title.'
+      if (!body) return 'Error: github_pr_create requires a body.'
+      const cwdFlag = a.cwd ? `cd ${JSON.stringify(a.cwd)} && ` : ''
+      const ghCheck = await ipc.invoke('terminal:exec', 'gh --version')
+      if (!ghCheck?.success || (ghCheck.code && ghCheck.code !== 0)) {
+        return 'github_pr_create error: the `gh` CLI is not installed or not on PATH. Ask the user to install it from https://cli.github.com and run `gh auth login`.'
+      }
+      const titleB64 = btoa(unescape(encodeURIComponent(title)))
+      const bodyB64 = btoa(unescape(encodeURIComponent(body)))
+      const baseFlag = a.base ? ` --base ${JSON.stringify(a.base)}` : ''
+      const draftFlag = a.draft ? ' --draft' : ''
+      const cmd = `${cwdFlag}TITLE=$(echo "${titleB64}" | base64 --decode) && BODY=$(echo "${bodyB64}" | base64 --decode) && gh pr create --title "$TITLE" --body "$BODY"${baseFlag}${draftFlag}`
+      const res = await ipc.invoke('terminal:exec', cmd)
+      if (!res.success) return `github_pr_create error: ${res.error}`
+      if (res.code && res.code !== 0) return `github_pr_create failed (exit ${res.code}):\n${res.stderr || res.stdout}`
+      const url = (res.stdout || '').split('\n').map((l: string) => l.trim()).find((l: string) => l.startsWith('http')) || res.stdout
+      return `PR opened: ${url}`
+    }
+
     case TODO_WRITE_TOOL_NAME: {
       const items = parseTodoList((args as any).items)
       if (items.length === 0) return 'Error: todo_write requires a non-empty items array.'
@@ -507,6 +639,12 @@ export function describeToolCall(toolCall: ToolCall): string {
       return `git_status(${args.cwd ?? ''})`
     case 'git_diff':
       return `git_diff(${args.staged ? '--staged, ' : ''}${args.cwd ?? ''}${args.path ? `, ${args.path}` : ''})`
+    case GIT_COMMIT_TOOL_NAME:
+      return `git_commit("${String((args as any).message ?? '').split('\n')[0].slice(0, 60)}")`
+    case GIT_PUSH_TOOL_NAME:
+      return `git_push(${(args as any).remote ?? 'origin'} ${(args as any).branch ?? ''}${(args as any).force ? ' --force' : ''})`
+    case GITHUB_PR_CREATE_TOOL_NAME:
+      return `github_pr_create("${String((args as any).title ?? '').slice(0, 60)}"${(args as any).draft ? ', draft' : ''})`
     case TODO_WRITE_TOOL_NAME:
       return `todo_write(${Array.isArray((args as any).items) ? (args as any).items.length : 0} items)`
     case RENAME_CHAT_TOOL_NAME:

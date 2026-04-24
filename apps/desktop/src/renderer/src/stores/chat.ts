@@ -7,6 +7,7 @@ import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
 import { createLogger } from '../composables/logger'
 import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, CARD_MARKER_FENCE, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
+import type { ActiveCodingRepo } from '../types/coding-session'
 
 const chatLog = createLogger({ scope: 'chat' })
 
@@ -312,6 +313,43 @@ function isCodingSession(userText: string): boolean {
   return CODING_TRIGGERS.some((pattern) => pattern.test(userText))
 }
 
+function buildActiveCodingRepoPromptBlock(repo: ActiveCodingRepo): string {
+  const langs = repo.languages.length ? repo.languages.join(', ') : 'unknown'
+  const dirty = repo.isDirty ? 'dirty (uncommitted changes)' : 'clean'
+  const ahead = repo.aheadBehind
+    ? ` (ahead ${repo.aheadBehind.ahead}, behind ${repo.aheadBehind.behind})`
+    : ''
+  const pm = repo.packageManager ? `\n- Package manager: ${repo.packageManager}` : ''
+  const startCmd = repo.defaultStartCommand ? `\n- Likely dev command: \`${repo.defaultStartCommand}\`` : ''
+  return `\n\n[Coding Mode — Active Repository]
+The user activated coding mode and scoped this conversation to a specific repository. You're paired with them as their coding partner. Your personality stays 100% yours — character flavor in prose, precision in code. Every file read, write, edit, and terminal command MUST stay inside this repository unless the user explicitly asks otherwise.
+
+Repository:
+- Name: ${repo.name}
+- Path: ${repo.path}
+- Branch: ${repo.branch ?? 'detached HEAD'}${ahead}
+- Working tree: ${dirty}
+- Languages: ${langs}${pm}${startCmd}
+
+Rules for this session:
+- Treat ${repo.path} as the project root. All relative paths in tool calls must resolve inside it.
+- For terminal commands, always cd to the repo as the first step of a compound command (e.g. \`cd "${repo.path}" && pnpm test\`). The git_commit / git_push / github_pr_create tools already scope to this path — just pass \`cwd\` unset or the repo path.
+- Before edits: read_file the target first. Follow the repo's existing patterns (indentation, quoting, import order) — do not reformat untouched lines.
+- Prefer edit_file over write_file for partial changes. Use write_file only for new files or intentional full rewrites.
+- Verify before stop_response: if the repo has a typecheck/lint/test relevant to your change, run it. Fix failures; do not report success over a broken build.
+
+Git authoring rules (ONLY act when the user has explicitly asked):
+- git_commit: first call git_diff to confirm what's staged, then write a concise message that explains the *why* in 1–2 sentences. Subject ≤ 60 chars, lowercase conventional-commit style (feat:/fix:/refactor:/docs:/chore:) unless the repo's git log uses a different convention. Never commit lockfiles or .env files unless the user asked.
+- git_push: never force-push unless the user literally types the word "force" or "--force" in their message. Never push to main/master without the user saying "to main" or similar explicit confirmation. Default remote = origin, default branch = current.
+- github_pr_create: draft a short title (≤ 70 chars) and a body with a Summary (1–3 bullets) + Test plan (checklist). Ask before running if you haven't pushed yet — PRs need a pushed branch. Do NOT include "🤖 Generated with" footers; this repo's PRs don't use them.
+- Any of the above for work the user didn't specifically request: ask first, don't just do it.
+
+Staying in character:
+- Answer in your usual voice, pet names, emojis, quirks. Technical claims inside are literal.
+- stop_response.final_message: in character AS ALWAYS, but name the files you touched (\`path:line\` format), the commands you ran, and any follow-ups (install deps, restart dev server, review the PR).
+- If the user's request clearly lives outside this repo, say so in character and ask before wandering off.`
+}
+
 function buildCodingSessionPromptBlock(userText: string): string {
   if (!isCodingSession(userText)) return ''
   return `\n\n[Coding Session]
@@ -610,6 +648,9 @@ export const useChatStore = defineStore('chat', () => {
   const conversations = ref<any[]>([])
   const recentMessageId = ref<string | null>(null)
   const pendingClearVerification = ref(false)
+  const activeCodingRepo = ref<ActiveCodingRepo | null>(null)
+  const showCodeModal = ref(false)
+  const codeModalMode = ref<'initial' | 'switch'>('initial')
   const initialGroupChatSettings = loadGroupChatSettings()
   const agentMode = ref<AgentMode>(
     (localStorage.getItem('syntax-senpai-agent-mode') as AgentMode) || 'ask',
@@ -964,6 +1005,7 @@ export const useChatStore = defineStore('chat', () => {
     conversationId.value = null
     resetUsageTotals()
     activeTodoList.value = []
+    activeCodingRepo.value = null
 
     // Eagerly create a new conversation so it appears in the sidebar immediately.
     const newId = await createConversation()
@@ -1068,6 +1110,7 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = []
     resetUsageTotals()
     activeTodoList.value = []
+    activeCodingRepo.value = null
     try {
       const res = await invoke('store:getMessages', id)
       if (res?.success) {
@@ -1090,6 +1133,7 @@ export const useChatStore = defineStore('chat', () => {
         if (conversationId.value === id) {
           conversationId.value = null
           messages.value = []
+          activeCodingRepo.value = null
         }
       }
     } catch (err) {
@@ -1332,7 +1376,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
       const waifus = activeWaifus.value
 
-      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value })
+      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value })
       const hasTools = tools.length > 0
       let systemInfo: any = null
 
@@ -1389,7 +1433,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           systemPrompt += buildMilestoneSidecarBlock(waifu.id)
           systemPrompt += buildApiTelemetryPrompt()
           systemPrompt += buildGroupChatPromptBlock(waifu, waifus, pendingTasks.get(waifu.id) || [], round)
-          systemPrompt += buildCodingSessionPromptBlock(trimmedText)
+          systemPrompt += activeCodingRepo.value
+            ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
+            : buildCodingSessionPromptBlock(trimmedText)
 
           if (hasTools) {
             if (systemInfo && systemInfo.homedir) {
@@ -1675,6 +1721,32 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       return
     }
 
+    if (/^\/code(?:\s.*)?$/i.test(trimmedText)) {
+      codeModalMode.value = activeCodingRepo.value ? 'switch' : 'initial'
+      showCodeModal.value = true
+      inputValue.value = ''
+      return
+    }
+
+    if (/^\/endcode$/i.test(trimmedText)) {
+      const wasActive = !!activeCodingRepo.value
+      const repoName = activeCodingRepo.value?.name
+      activeCodingRepo.value = null
+      inputValue.value = ''
+      const assistantId = `assistant-${Date.now()}`
+      messages.value.push({
+        id: assistantId,
+        role: 'assistant',
+        content: wasActive
+          ? `Coding mode off. We can stop poking at ${repoName} now~ 💤`
+          : `We weren't even in coding mode. Type /code when you want me to pair up.`,
+        timestamp: now(),
+      })
+      recentMessageId.value = assistantId
+      setTimeout(() => { recentMessageId.value = null }, 1100)
+      return
+    }
+
     const clearMatch = /^\/clear$/i.test(trimmedText)
     const verifyClearMatch = /^\/(?:verify|vierfy)\s+deletion$/i.test(trimmedText)
 
@@ -1845,9 +1917,11 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       // Let the waifu know how fast the last API reply was.
       systemPrompt += buildApiTelemetryPrompt()
 
-      systemPrompt += buildCodingSessionPromptBlock(trimmedText)
+      systemPrompt += activeCodingRepo.value
+        ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
+        : buildCodingSessionPromptBlock(trimmedText)
 
-      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value })
+      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value })
       const hasTools = tools.length > 0
 
       // Inject system context so the AI knows the user's environment
@@ -2357,6 +2431,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     conversationId,
     conversations,
     recentMessageId,
+    activeCodingRepo,
+    showCodeModal,
+    codeModalMode,
     agentMode,
     selectedWaifu,
     affection,

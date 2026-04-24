@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import { buildSystemPrompt, builtInWaifus, detectMilestone, describeMilestone } from '@syntax-senpai/waifu-core'
-import type { SentimentResult, MilestoneEvent } from '@syntax-senpai/waifu-core'
+import { buildSystemPrompt, builtInWaifus, detectMilestone, describeMilestone, formatSkillsForPrompt } from '@syntax-senpai/waifu-core'
+import type { SentimentResult, MilestoneEvent, Waifu, Skill } from '@syntax-senpai/waifu-core'
 import { AIChatRuntime, withRetry, classifyError, describeError } from '@syntax-senpai/ai-core'
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
 import { createLogger } from '../composables/logger'
-import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, CARD_MARKER_FENCE, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
+import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, loadPluginTools, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, CARD_MARKER_FENCE, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
 import type { ActiveCodingRepo } from '../types/coding-session'
 
 const chatLog = createLogger({ scope: 'chat' })
@@ -418,6 +418,19 @@ You must perform this affection check on every single message. Small natural cha
 }
 
 /**
+ * Guidance block on how to use create_skill / use_skill / propose_tool.
+ * Short and static — describes the contract, not any specific skill.
+ */
+function buildSkillsAuthoringPromptBlock(): string {
+  return `\n\n[Skills & Tool Authoring]
+You can grow your own capabilities between turns:
+- create_skill(slug, name, description, body): save a reusable recipe to your skill library. Use for procedures, style guides, debugging rituals, or anything you'd want to recall verbatim later.
+- use_skill(slug): pull a saved skill's full content into THIS turn's context before acting on it.
+- propose_tool(slug, name, description, code): draft a new JavaScript plugin tool for the user to approve. You CANNOT run it yourself — after proposing, tell the user to approve it in Settings → Plugins → Pending and restart. Proposed code runs with full Node privileges once approved; write defensively.
+Prefer an existing skill over creating a duplicate. Prefer a skill over a tool unless the task genuinely needs code execution (e.g. hitting an API, parsing binary data).`
+}
+
+/**
  * If the user just crossed an affection tier (e.g. Acquaintance → Friend),
  * inject a short one-shot sidecar into the next turn's system prompt.
  * Consuming the event clears it from the queue so it won't re-fire.
@@ -638,6 +651,11 @@ export const useChatStore = defineStore('chat', () => {
 
   const isSetup = ref(false)
   const selectedWaifuId = ref(builtInWaifus[0]?.id || 'aria')
+  // User-authored waifus loaded from <userData>/waifus/*.json via the
+  // waifus:list IPC. Refreshed at store init and after import/delete
+  // so picker + active-waifu resolution see them without restart.
+  const customWaifus = ref<Waifu[]>([])
+  const allWaifus = computed<Waifu[]>(() => [...builtInWaifus, ...customWaifus.value])
   const selectedProvider = ref('anthropic')
   const selectedModel = ref(DEFAULT_MODEL_BY_PROVIDER.anthropic)
   const apiKey = ref('')
@@ -863,7 +881,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   const selectedWaifu = computed(() =>
-    builtInWaifus.find(w => w.id === selectedWaifuId.value) || builtInWaifus[0],
+    allWaifus.value.find(w => w.id === selectedWaifuId.value) || allWaifus.value[0],
   )
 
   watch(selectedWaifuId, async (waifuId, previousWaifuId) => {
@@ -1092,9 +1110,49 @@ export const useChatStore = defineStore('chat', () => {
   const activeWaifus = computed(() => {
     if (!isGroupChat.value) return [selectedWaifu.value]
     return groupWaifuIds.value
-      .map((id) => builtInWaifus.find((w) => w.id === id))
-      .filter(Boolean) as typeof builtInWaifus
+      .map((id) => allWaifus.value.find((w) => w.id === id))
+      .filter(Boolean) as Waifu[]
   })
+
+  /**
+   * Waifu-authored skills available to inject into the system prompt.
+   * Refreshed on store init and after any create_skill / delete — the
+   * chat store consults this list when building each turn's prompt so
+   * the waifu knows what she already has and can call use_skill.
+   */
+  type SkillSummary = Pick<Skill, 'slug' | 'name' | 'description'>
+  const availableSkills = ref<SkillSummary[]>([])
+
+  async function refreshAvailableSkills() {
+    try {
+      const result: any = await invoke('skills:list')
+      if (result?.success && Array.isArray(result.skills)) {
+        availableSkills.value = result.skills.map((s: Skill) => ({
+          slug: s.slug,
+          name: s.name,
+          description: s.description,
+        }))
+      }
+    } catch {
+      /* skills are optional */
+    }
+  }
+
+  /**
+   * Pull user-authored waifus from <userData>/waifus/*.json via the main
+   * process and merge them into allWaifus. Called once at store init and
+   * after Settings-tab import / delete so the picker stays in sync.
+   */
+  async function refreshCustomWaifus() {
+    try {
+      const result: any = await invoke('waifus:list')
+      if (result?.success && Array.isArray(result.waifus)) {
+        customWaifus.value = result.waifus as Waifu[]
+      }
+    } catch {
+      /* non-fatal — custom waifus are optional */
+    }
+  }
 
   async function loadConversations() {
     try {
@@ -1431,6 +1489,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           systemPrompt += buildMemoryContext()
           systemPrompt += buildAffectionPrompt(affectionValue, waifu.displayName || 'Waifu')
           systemPrompt += buildMilestoneSidecarBlock(waifu.id)
+          systemPrompt += buildSkillsAuthoringPromptBlock()
+          systemPrompt += formatSkillsForPrompt(availableSkills.value)
           systemPrompt += buildApiTelemetryPrompt()
           systemPrompt += buildGroupChatPromptBlock(waifu, waifus, pendingTasks.get(waifu.id) || [], round)
           systemPrompt += activeCodingRepo.value
@@ -1704,7 +1764,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       affection.value = newVal
       const milestone = updateAffectionWithMilestone(selectedWaifuId.value, newVal)
       if (milestone) {
-        const waifu = builtInWaifus.find((w) => w.id === selectedWaifuId.value)
+        const waifu = allWaifus.value.find((w) => w.id === selectedWaifuId.value)
         if (waifu) emitMilestoneToast(waifu, milestone)
       }
       inputValue.value = ''
@@ -1914,6 +1974,11 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       // One-shot sidecar when the user just crossed an affection tier.
       systemPrompt += buildMilestoneSidecarBlock(waifu.id)
 
+      // Teach the waifu about skills + tools she can author, then list
+      // what she already has so she can pull them in with use_skill.
+      systemPrompt += buildSkillsAuthoringPromptBlock()
+      systemPrompt += formatSkillsForPrompt(availableSkills.value)
+
       // Let the waifu know how fast the last API reply was.
       systemPrompt += buildApiTelemetryPrompt()
 
@@ -2022,7 +2087,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               affection.value = newVal
               const milestone = updateAffectionWithMilestone(selectedWaifuId.value, newVal)
               if (milestone) {
-                const waifu = builtInWaifus.find((w) => w.id === selectedWaifuId.value)
+                const waifu = allWaifus.value.find((w) => w.id === selectedWaifuId.value)
                 if (waifu) emitMilestoneToast(waifu, milestone)
               }
 
@@ -2422,6 +2487,11 @@ Do not mention these timings unless the user asks about speed, latency, slowness
   return {
     isSetup,
     selectedWaifuId,
+    customWaifus,
+    allWaifus,
+    refreshCustomWaifus,
+    availableSkills,
+    refreshAvailableSkills,
     selectedProvider,
     selectedModel,
     apiKey,

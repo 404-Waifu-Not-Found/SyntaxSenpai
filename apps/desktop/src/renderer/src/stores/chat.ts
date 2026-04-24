@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import { buildSystemPrompt, builtInWaifus, detectMilestone, describeMilestone } from '@syntax-senpai/waifu-core'
-import type { SentimentResult, MilestoneEvent, Waifu } from '@syntax-senpai/waifu-core'
+import { buildSystemPrompt, builtInWaifus, detectMilestone, describeMilestone, formatSkillsForPrompt } from '@syntax-senpai/waifu-core'
+import type { SentimentResult, MilestoneEvent, Waifu, Skill } from '@syntax-senpai/waifu-core'
 import { AIChatRuntime, withRetry, classifyError, describeError } from '@syntax-senpai/ai-core'
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
@@ -415,6 +415,19 @@ What changes 好感度:
 IMPORTANT: You are ${waifuName}. Your personality shifts based on 好感度 but you stay in character. A tsundere at low affection is extra prickly; at high affection they're secretly sweet. A genki character at low affection is less energetic; at high affection they're overflowing with energy for the user specifically.
 _
 You must perform this affection check on every single message. Small natural changes are better than dramatic swings unless something major happened.`
+}
+
+/**
+ * Guidance block on how to use create_skill / use_skill / propose_tool.
+ * Short and static — describes the contract, not any specific skill.
+ */
+function buildSkillsAuthoringPromptBlock(): string {
+  return `\n\n[Skills & Tool Authoring]
+You can grow your own capabilities between turns:
+- create_skill(slug, name, description, body): save a reusable recipe to your skill library. Use for procedures, style guides, debugging rituals, or anything you'd want to recall verbatim later.
+- use_skill(slug): pull a saved skill's full content into THIS turn's context before acting on it.
+- propose_tool(slug, name, description, code): draft a new JavaScript plugin tool for the user to approve. You CANNOT run it yourself — after proposing, tell the user to approve it in Settings → Plugins → Pending and restart. Proposed code runs with full Node privileges once approved; write defensively.
+Prefer an existing skill over creating a duplicate. Prefer a skill over a tool unless the task genuinely needs code execution (e.g. hitting an API, parsing binary data).`
 }
 
 /**
@@ -1102,6 +1115,30 @@ export const useChatStore = defineStore('chat', () => {
   })
 
   /**
+   * Waifu-authored skills available to inject into the system prompt.
+   * Refreshed on store init and after any create_skill / delete — the
+   * chat store consults this list when building each turn's prompt so
+   * the waifu knows what she already has and can call use_skill.
+   */
+  type SkillSummary = Pick<Skill, 'slug' | 'name' | 'description'>
+  const availableSkills = ref<SkillSummary[]>([])
+
+  async function refreshAvailableSkills() {
+    try {
+      const result: any = await invoke('skills:list')
+      if (result?.success && Array.isArray(result.skills)) {
+        availableSkills.value = result.skills.map((s: Skill) => ({
+          slug: s.slug,
+          name: s.name,
+          description: s.description,
+        }))
+      }
+    } catch {
+      /* skills are optional */
+    }
+  }
+
+  /**
    * Pull user-authored waifus from <userData>/waifus/*.json via the main
    * process and merge them into allWaifus. Called once at store init and
    * after Settings-tab import / delete so the picker stays in sync.
@@ -1452,6 +1489,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           systemPrompt += buildMemoryContext()
           systemPrompt += buildAffectionPrompt(affectionValue, waifu.displayName || 'Waifu')
           systemPrompt += buildMilestoneSidecarBlock(waifu.id)
+          systemPrompt += buildSkillsAuthoringPromptBlock()
+          systemPrompt += formatSkillsForPrompt(availableSkills.value)
           systemPrompt += buildApiTelemetryPrompt()
           systemPrompt += buildGroupChatPromptBlock(waifu, waifus, pendingTasks.get(waifu.id) || [], round)
           systemPrompt += activeCodingRepo.value
@@ -1934,6 +1973,11 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
       // One-shot sidecar when the user just crossed an affection tier.
       systemPrompt += buildMilestoneSidecarBlock(waifu.id)
+
+      // Teach the waifu about skills + tools she can author, then list
+      // what she already has so she can pull them in with use_skill.
+      systemPrompt += buildSkillsAuthoringPromptBlock()
+      systemPrompt += formatSkillsForPrompt(availableSkills.value)
 
       // Let the waifu know how fast the last API reply was.
       systemPrompt += buildApiTelemetryPrompt()
@@ -2446,6 +2490,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     customWaifus,
     allWaifus,
     refreshCustomWaifus,
+    availableSkills,
+    refreshAvailableSkills,
     selectedProvider,
     selectedModel,
     apiKey,

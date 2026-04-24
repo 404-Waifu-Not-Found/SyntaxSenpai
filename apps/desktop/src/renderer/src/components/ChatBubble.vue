@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import CardRenderer from './cards/CardRenderer.vue'
 
 const props = withDefaults(defineProps<{
   role?: 'user' | 'assistant'
@@ -12,6 +13,13 @@ const props = withDefaults(defineProps<{
   recent: false,
   showCopy: true,
 })
+
+const CARD_FENCE = 'syntax-senpai-card'
+
+type RenderedPart =
+  | { kind: 'html'; html: string }
+  | { kind: 'card'; cardType: string; data: Record<string, unknown> }
+  | { kind: 'card-error'; message: string }
 
 const copied = ref(false)
 const containerRef = ref<HTMLDivElement>()
@@ -166,8 +174,11 @@ async function handleCopy() {
   }
 }
 
+const hasCard = computed(() => renderedParts.value.some((p) => p.kind === 'card'))
+
 const bubbleClasses = computed(() => [
-  'relative px-4 py-3 rounded-xl max-w-xs lg:max-w-md',
+  'relative px-4 py-3 rounded-xl',
+  hasCard.value ? 'max-w-md lg:max-w-xl' : 'max-w-xs lg:max-w-md',
   'transition-all duration-160 ease-out',
   props.role === 'user'
     ? 'themed-user-bubble text-white animate-slide-up'
@@ -175,33 +186,85 @@ const bubbleClasses = computed(() => [
   props.recent ? 'animate-pop-in' : '',
 ])
 
-const renderedAssistantHtml = computed(() => renderMarkdown(props.content || ''))
+function splitOnCardFences(raw: string): RenderedPart[] {
+  const parts: RenderedPart[] = []
+  const pattern = new RegExp('```' + CARD_FENCE + '\\s*\\n([\\s\\S]*?)\\n```', 'g')
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(raw)) !== null) {
+    const before = raw.slice(lastIndex, match.index)
+    if (before.trim()) parts.push({ kind: 'html', html: renderMarkdown(before) })
+    try {
+      const parsed = JSON.parse(match[1]) as { type?: unknown; data?: unknown }
+      if (
+        parsed &&
+        typeof parsed.type === 'string' &&
+        parsed.data &&
+        typeof parsed.data === 'object'
+      ) {
+        parts.push({ kind: 'card', cardType: parsed.type, data: parsed.data as Record<string, unknown> })
+      } else {
+        parts.push({ kind: 'card-error', message: 'Card payload missing type or data.' })
+      }
+    } catch {
+      parts.push({ kind: 'card-error', message: 'Card payload was not valid JSON.' })
+    }
+    lastIndex = pattern.lastIndex
+  }
+  const tail = raw.slice(lastIndex)
+  if (tail.trim()) parts.push({ kind: 'html', html: renderMarkdown(tail) })
+  return parts
+}
+
+const renderedParts = computed<RenderedPart[]>(() => {
+  const raw = props.content || ''
+  if (!raw) return []
+  if (!raw.includes(CARD_FENCE)) {
+    return [{ kind: 'html', html: renderMarkdown(raw) }]
+  }
+  return splitOnCardFences(raw)
+})
 </script>
 
 <template>
   <div :class="bubbleClasses">
-    <div ref="containerRef" class="relative">
-      <div
-        :class="[
-          'break-words text-sm',
-          showCopy ? 'pr-12' : '',
-        ]"
-      >
-        <div
-          v-if="role === 'assistant'"
-          class="markdown-content"
-          v-html="renderedAssistantHtml"
-        />
+    <div ref="containerRef">
+      <div class="break-words text-sm">
+        <template v-if="role === 'assistant'">
+          <template v-for="(part, index) in renderedParts" :key="index">
+            <div v-if="part.kind === 'html'" class="markdown-content" v-html="part.html" />
+            <CardRenderer
+              v-else-if="part.kind === 'card'"
+              :type="part.cardType"
+              :data="part.data"
+            />
+            <div v-else class="card-parse-error">{{ part.message }}</div>
+          </template>
+        </template>
         <template v-else>
           <slot>
             <div class="whitespace-pre-wrap">{{ content }}</div>
           </slot>
         </template>
       </div>
+    </div>
+    <div
+      v-if="timestamp || (showCopy && content)"
+      class="flex items-center gap-2 mt-1"
+    >
+      <p
+        v-if="timestamp"
+        :class="[
+          'text-xs',
+          role === 'user' ? 'text-primary-200' : 'text-neutral-500',
+        ]"
+      >
+        {{ timestamp }}
+      </p>
       <button
         v-if="showCopy && content"
         :class="[
-          'absolute top-1 right-1 text-xs px-2 py-1 rounded',
+          'text-xs px-2 py-0.5 rounded',
           'bg-neutral-800/80 hover:bg-neutral-700 backdrop-blur-sm',
           'transition-all duration-200',
         ]"
@@ -210,15 +273,6 @@ const renderedAssistantHtml = computed(() => renderMarkdown(props.content || '')
         {{ copied ? 'Copied' : 'Copy' }}
       </button>
     </div>
-    <p
-      v-if="timestamp"
-      :class="[
-        'text-xs mt-1',
-        role === 'user' ? 'text-primary-200' : 'text-neutral-500',
-      ]"
-    >
-      {{ timestamp }}
-    </p>
   </div>
 </template>
 
@@ -347,5 +401,15 @@ const renderedAssistantHtml = computed(() => renderMarkdown(props.content || '')
 
 .markdown-content :deep(em) {
   font-style: italic;
+}
+
+.card-parse-error {
+  margin: 0.25rem 0;
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.55rem;
+  background: rgba(127, 29, 29, 0.2);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  color: #fecaca;
+  font-size: 0.8rem;
 }
 </style>

@@ -33,6 +33,7 @@ import { registerWsIpc } from './ipc/ws'
 import { registerPluginsIpc } from './ipc/plugins'
 import { registerWaifusIpc } from './ipc/waifus'
 import { registerStrictModeIpc } from './ipc/strict-mode'
+import { registerLogIpc } from './ipc/log'
 import { startWsServer } from './ws-server'
 import { mainLogger } from './logger'
 
@@ -194,6 +195,7 @@ app.whenReady().then(() => {
   registerPluginsIpc()
   registerWaifusIpc()
   registerStrictModeIpc()
+  registerLogIpc()
   startWsServer().catch((err) => mainLogger.error({ err }, 'ws-server failed to start'))
 
   setupTray()

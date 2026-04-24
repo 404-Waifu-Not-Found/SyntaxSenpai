@@ -139,6 +139,7 @@ export class AIChatRuntime {
 
     const messages = initialMessages;
     let lastResponse: ChatResponse | null = null;
+    const callFingerprints = new Map<string, number>();
 
     try {
       for (let iteration = 0; iteration <= maxToolIterations; iteration += 1) {
@@ -163,6 +164,7 @@ export class AIChatRuntime {
           role: "assistant",
           content: response.content,
           toolCalls: response.toolCalls,
+          reasoningContent: response.reasoningContent,
           createdAt: new Date().toISOString(),
         });
 
@@ -186,16 +188,37 @@ export class AIChatRuntime {
         for (const toolCall of response.toolCalls) {
           emitter.emit({ type: "action", iteration, toolCall });
 
-          const toolResult = await toolExecutor(toolCall);
-          const normalized = normalizeToolResult(toolResult);
+          const fingerprint = fingerprintToolCall(toolCall);
+          const priorCount = callFingerprints.get(fingerprint) ?? 0;
+          callFingerprints.set(fingerprint, priorCount + 1);
 
-          emitter.emit({
-            type: "observation",
-            iteration,
-            toolCallId: toolCall.id,
-            content: normalized.content,
-            isError: normalized.isError,
-          });
+          let normalized: { content: string; isError: boolean };
+          if (priorCount >= 1) {
+            // Model is repeating the exact same tool call. Short-circuit
+            // without executing and tell it plainly to stop and answer.
+            const guidance =
+              `[runtime loop-guard] You already called ${toolCall.name} with these exact arguments ` +
+              `${priorCount + 1} time(s) this turn. Repeating it will not produce a different result. ` +
+              `Stop calling tools and reply to the user with what you currently know, stating any limitation.`;
+            normalized = { content: guidance, isError: true };
+            emitter.emit({
+              type: "observation",
+              iteration,
+              toolCallId: toolCall.id,
+              content: normalized.content,
+              isError: true,
+            });
+          } else {
+            const toolResult = await toolExecutor(toolCall);
+            normalized = normalizeToolResult(toolResult);
+            emitter.emit({
+              type: "observation",
+              iteration,
+              toolCallId: toolCall.id,
+              content: normalized.content,
+              isError: normalized.isError,
+            });
+          }
 
           messages.push({
             id: createId("tool"),
@@ -393,6 +416,22 @@ function stringContent(content: unknown): string {
 
 function createId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function fingerprintToolCall(toolCall: ToolCall): string {
+  return `${toolCall.name}::${stableStringify(toolCall.arguments)}`;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((v) => stableStringify(v)).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`);
+  return `{${entries.join(",")}}`;
 }
 
 function getDefaultEnv(): Record<string, string | undefined> {

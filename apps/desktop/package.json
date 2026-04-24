@@ -65,7 +65,8 @@
     ],
     "mac": {
       "target": ["dmg", "zip"],
-      "category": "public.app-category.developer-tools"
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns"
     },
     "win": {
       "icon": "build/icon.ico"

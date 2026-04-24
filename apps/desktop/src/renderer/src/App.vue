@@ -13,7 +13,9 @@ import AppAvatar from './components/AppAvatar.vue'
 import TypingDots from './components/TypingDots.vue'
 import MessageSkeleton from './components/MessageSkeleton.vue'
 import QrPairModal from './components/QrPairModal.vue'
+import RepositoryPickerModal from './components/RepositoryPickerModal.vue'
 import SakuraPetals from './components/SakuraPetals.vue'
+import type { ActiveCodingRepo } from './types/coding-session'
 
 const store = useChatStore()
 const { invoke, on } = useIpc()
@@ -305,6 +307,20 @@ async function checkMobilePairingStatus() {
   } catch {
     mobilePairedDevice.value = null
   }
+}
+
+function onRepoSelected(repo: ActiveCodingRepo) {
+  store.activeCodingRepo = repo
+  store.showCodeModal = false
+}
+
+function openCodingPickerFromPill() {
+  store.codeModalMode = store.activeCodingRepo ? 'switch' : 'initial'
+  store.showCodeModal = true
+}
+
+function exitCodingMode() {
+  store.activeCodingRepo = null
 }
 const providerOrder = [
   'anthropic',
@@ -2617,6 +2633,16 @@ async function handleImportData() {
   <!-- QR Pair Modal -->
   <QrPairModal :visible="showQrPair" @close="showQrPair = false; checkMobilePairingStatus()" />
 
+  <!-- Repository Picker Modal (/code) -->
+  <RepositoryPickerModal
+    :visible="store.showCodeModal"
+    :mode="store.codeModalMode"
+    :current-repo="store.activeCodingRepo"
+    @close="store.showCodeModal = false"
+    @selected="onRepoSelected"
+    @keep-current="store.showCodeModal = false"
+  />
+
   <Teleport to="body">
     <Transition name="modal-backdrop">
       <div
@@ -3295,6 +3321,27 @@ async function handleImportData() {
           class="absolute inset-0 rounded-xl bg-primary-500/15 border-2 border-dashed border-primary-400/60 flex items-center justify-center text-sm text-primary-100 font-semibold pointer-events-none z-10"
         >
           {{ t('input.dropHint') }}
+        </div>
+
+        <!-- Coding-mode pill -->
+        <div v-if="store.activeCodingRepo" class="flex items-center gap-2 mb-2">
+          <button
+            class="flex items-center gap-2 px-2.5 py-1 rounded-full text-xs bg-primary-500/15 hover:bg-primary-500/25 ring-1 ring-primary-500/40 text-primary-100 transition-colors"
+            :title="store.activeCodingRepo.path"
+            @click="openCodingPickerFromPill"
+          >
+            <span class="font-mono text-[10px] text-primary-300">◆</span>
+            <span class="font-semibold">{{ store.activeCodingRepo.name }}</span>
+            <span class="text-primary-200/70">·</span>
+            <span class="font-mono text-primary-200/80">{{ store.activeCodingRepo.branch ?? 'HEAD' }}</span>
+          </button>
+          <button
+            class="text-[10px] px-2 py-1 rounded-full bg-white/5 hover:bg-white/10 text-neutral-400 hover:text-white transition-colors"
+            title="Exit coding mode"
+            @click="exitCodingMode"
+          >
+            × exit
+          </button>
         </div>
 
         <!-- Pending-attachment thumbnail row -->

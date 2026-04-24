@@ -8,6 +8,7 @@ import { useTheme } from './composables/use-theme'
 import { useI18n, formatLocalizedCost } from './composables/use-i18n'
 import { useIpc } from './composables/use-ipc'
 import { useVoice } from './composables/use-voice'
+import { loadPluginTools } from './agent-tools'
 import ChatBubble from './components/ChatBubble.vue'
 import AppAvatar from './components/AppAvatar.vue'
 import TypingDots from './components/TypingDots.vue'
@@ -88,7 +89,7 @@ const rainbowToggleBg = computed(() => {
   const c3 = hslToHex((h + 120) % 360, s, l)
   return `linear-gradient(to right, ${c1}, ${c2}, ${c3})`
 })
-type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'plugins' | 'waifus' | 'mobile'
+type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'plugins' | 'skills' | 'waifus' | 'mobile'
 const settingsTab = ref<SettingsTabId>('general')
 const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = [
   { id: 'general', label: 'General', icon: '⚙️' },
@@ -98,6 +99,7 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = 
   { id: 'theme', label: 'Theme', icon: '🎨' },
   { id: 'interface', label: 'Interface', icon: '✨' },
   { id: 'plugins', label: 'Plugins', icon: '🧩' },
+  { id: 'skills', label: 'Skills', icon: '📘' },
   { id: 'waifus', label: 'Waifus', icon: '💗' },
   { id: 'mobile', label: 'Mobile', icon: '📱' },
 ]
@@ -154,6 +156,112 @@ const pluginsList = ref<DesktopPluginEntry[]>([])
 const pluginsDirectory = ref<string>('')
 const pluginsLoading = ref(false)
 const pluginsError = ref<string>('')
+
+// Pending plugins — AI-authored tool proposals waiting for user approval.
+// Lives on the same tab as active plugins so users see both in one place.
+interface PendingPluginEntry {
+  slug: string
+  name: string
+  version: string
+  description?: string
+  manifest: any
+  code: string
+  createdAt: string
+}
+const pendingPlugins = ref<PendingPluginEntry[]>([])
+const pendingExpanded = ref<Set<string>>(new Set())
+
+async function refreshPendingPlugins() {
+  try {
+    const result = await invoke('pending-plugins:list')
+    if (result?.success && Array.isArray(result.pending)) {
+      pendingPlugins.value = result.pending
+    }
+  } catch { /* optional */ }
+}
+
+function togglePendingExpanded(slug: string) {
+  const next = new Set(pendingExpanded.value)
+  if (next.has(slug)) next.delete(slug)
+  else next.add(slug)
+  pendingExpanded.value = next
+}
+
+async function approvePending(slug: string) {
+  const result = await invoke('pending-plugins:approve', slug)
+  if (result?.success) {
+    pendingPlugins.value = pendingPlugins.value.filter((p) => p.slug !== slug)
+    showToast(`Approved "${slug}" — restart to load the new tool`, 'success')
+    refreshPlugins()
+  } else {
+    showToast(result?.error || 'Approve failed', 'error')
+  }
+}
+
+async function rejectPending(slug: string) {
+  const result = await invoke('pending-plugins:reject', slug)
+  if (result?.success) {
+    pendingPlugins.value = pendingPlugins.value.filter((p) => p.slug !== slug)
+    showToast(`Rejected "${slug}"`, 'success')
+  } else {
+    showToast(result?.error || 'Reject failed', 'error')
+  }
+}
+
+// Skills tab state — user-facing view over <userData>/skills/*.
+interface SkillTabEntry { slug: string; name: string; description: string; body?: string }
+const skillsList = ref<SkillTabEntry[]>([])
+const skillsLoading = ref(false)
+const skillsError = ref<string>('')
+const skillsExpanded = ref<Set<string>>(new Set())
+
+async function refreshSkillsTab() {
+  skillsLoading.value = true
+  skillsError.value = ''
+  try {
+    const result = await invoke('skills:list')
+    if (result?.success) {
+      skillsList.value = Array.isArray(result.skills) ? result.skills : []
+    } else {
+      skillsError.value = result?.error || 'Failed to list skills'
+    }
+  } catch (err: any) {
+    skillsError.value = err?.message || String(err)
+  } finally {
+    skillsLoading.value = false
+  }
+}
+
+async function toggleSkillExpanded(slug: string) {
+  const next = new Set(skillsExpanded.value)
+  if (next.has(slug)) {
+    next.delete(slug)
+    skillsExpanded.value = next
+    return
+  }
+  const current = skillsList.value.find((s) => s.slug === slug)
+  if (current && !current.body) {
+    try {
+      const result = await invoke('skills:read', slug)
+      if (result?.success && result.skill?.body) {
+        current.body = result.skill.body
+      }
+    } catch { /* non-fatal */ }
+  }
+  next.add(slug)
+  skillsExpanded.value = next
+}
+
+async function deleteSkill(slug: string) {
+  const result = await invoke('skills:delete', slug)
+  if (result?.success) {
+    skillsList.value = skillsList.value.filter((s) => s.slug !== slug)
+    store.refreshAvailableSkills()
+    showToast(`Removed skill "${slug}"`, 'success')
+  } else {
+    showToast(result?.error || 'Delete failed', 'error')
+  }
+}
 
 async function refreshPlugins() {
   pluginsLoading.value = true
@@ -237,8 +345,11 @@ async function importCustomWaifu() {
       showToast(write?.error || 'Could not save waifu', 'error')
       return
     }
-    showToast(`Imported "${raw.displayName || raw.id}" — restart to load`, 'success')
+    showToast(`Imported "${raw.displayName || raw.id}"`, 'success')
     await refreshCustomWaifus()
+    // Also refresh the store-level copy so the waifu appears in pickers
+    // (sidebar / single-select / group-chat toggles) without restart.
+    await store.refreshCustomWaifus()
   } catch (err: any) {
     showToast(err?.message || String(err), 'error')
   }
@@ -250,6 +361,13 @@ async function deleteCustomWaifu(id: string) {
     if (result?.success) {
       customWaifus.value = customWaifus.value.filter((w) => w.id !== id)
       showToast(`Removed "${id}"`, 'success')
+      // Drop it from the store-level list so pickers update immediately.
+      await store.refreshCustomWaifus()
+      // If the deleted waifu was active, fall back to the first built-in.
+      if (store.selectedWaifuId === id) {
+        const fallback = builtInWaifus[0]?.id
+        if (fallback) store.selectedWaifuId = fallback
+      }
     } else {
       showToast(result?.error || 'Delete failed', 'error')
     }
@@ -623,8 +741,14 @@ watch(
   () => [showSettings.value, settingsTab.value] as const,
   ([open, tab]) => {
     if (!open) return
-    if (tab === 'plugins' && pluginsList.value.length === 0 && !pluginsLoading.value) {
-      refreshPlugins()
+    if (tab === 'plugins') {
+      if (pluginsList.value.length === 0 && !pluginsLoading.value) refreshPlugins()
+      // Pending proposals are cheap to list — always refresh so a new
+      // propose_tool call mid-session shows up without a reload.
+      refreshPendingPlugins()
+    }
+    if (tab === 'skills' && skillsList.value.length === 0 && !skillsLoading.value) {
+      refreshSkillsTab()
     }
     if (tab === 'waifus' && customWaifus.value.length === 0 && !customWaifusLoading.value) {
       refreshCustomWaifus()
@@ -975,6 +1099,20 @@ function onAppMilestone(e: Event) {
   const detail = (e as CustomEvent).detail
   if (typeof detail === 'string' && detail) showToast(detail, 'success')
 }
+function onAppSkillCreated(e: Event) {
+  const detail: any = (e as CustomEvent).detail
+  // Refresh store + Settings-tab views so the new skill is immediately
+  // in the system prompt and visible in the UI.
+  store.refreshAvailableSkills()
+  refreshSkillsTab()
+  if (detail?.slug) showToast(`Skill "${detail.slug}" saved`, 'success')
+}
+function onAppToolProposed(e: Event) {
+  const detail: any = (e as CustomEvent).detail
+  refreshPendingPlugins()
+  const name = detail?.name || detail?.slug || 'a new tool'
+  showToast(`${name} proposed — review it in Settings → Plugins → Pending`, 'success')
+}
 
 function onGlobalKeydown(e: KeyboardEvent) {
   const mod = e.metaKey || e.ctrlKey
@@ -1000,6 +1138,15 @@ onMounted(() => {
     store.loadSetup()
     await store.hydrateProviderConfig()
     await loadProviderModels(store.selectedProvider, store.apiKey)
+    // Hydrate user-authored waifus so they appear in pickers from the
+    // first paint, not just after someone opens Settings → Waifus.
+    store.refreshCustomWaifus()
+    // Ask main for the enabled plugins' tool definitions. Idempotent —
+    // cached after first call — so getToolsForMode() can stay synchronous.
+    loadPluginTools()
+    // Load waifu-authored skills so the first system prompt already
+    // lists what's available.
+    store.refreshAvailableSkills()
     if (store.isSetup) {
       store.loadConversations()
       store.loadMemories()
@@ -1021,6 +1168,8 @@ onMounted(() => {
   window.addEventListener('app:error', onAppError as EventListener)
   window.addEventListener('app:retry', onAppRetry as EventListener)
   window.addEventListener('app:milestone', onAppMilestone as EventListener)
+  window.addEventListener('app:skill-created', onAppSkillCreated as EventListener)
+  window.addEventListener('app:tool-proposed', onAppToolProposed as EventListener)
   window.addEventListener('keydown', onGlobalKeydown)
 
   startupSplashTimer = window.setTimeout(() => {
@@ -1036,6 +1185,8 @@ onUnmounted(() => {
   window.removeEventListener('app:error', onAppError as EventListener)
   window.removeEventListener('app:retry', onAppRetry as EventListener)
   window.removeEventListener('app:milestone', onAppMilestone as EventListener)
+  window.removeEventListener('app:skill-created', onAppSkillCreated as EventListener)
+  window.removeEventListener('app:tool-proposed', onAppToolProposed as EventListener)
   window.removeEventListener('keydown', onGlobalKeydown)
   if (startupSplashTimer !== null) {
     window.clearTimeout(startupSplashTimer)
@@ -1744,7 +1895,7 @@ async function handleImportData() {
                 v-model="store.selectedWaifuId"
                 class="input-field"
               >
-                <option v-for="w in builtInWaifus" :key="w.id" :value="w.id">
+                <option v-for="w in store.allWaifus" :key="w.id" :value="w.id">
                   {{ w.displayName }}
                 </option>
               </select>
@@ -1778,7 +1929,7 @@ async function handleImportData() {
                 </p>
                 <div class="space-y-2">
                   <label
-                    v-for="w in builtInWaifus"
+                    v-for="w in store.allWaifus"
                     :key="`settings-group-${w.id}`"
                     :class="[
                       'flex items-center gap-2 rounded-lg border px-3 py-2 transition-all duration-150',
@@ -2528,6 +2679,127 @@ async function handleImportData() {
                 </li>
               </ul>
             </div>
+
+            <div v-if="pendingPlugins.length > 0" class="settings-card">
+              <div class="flex items-start justify-between gap-3 mb-3">
+                <div>
+                  <h3 class="text-sm font-bold text-white">Pending — AI-authored tools</h3>
+                  <p class="text-xs text-neutral-400">
+                    Your waifu has proposed these tools. Review the code before approving — once approved + restarted, plugins run with full Node privileges.
+                  </p>
+                </div>
+              </div>
+
+              <ul class="flex flex-col gap-2">
+                <li
+                  v-for="plugin in pendingPlugins"
+                  :key="plugin.slug"
+                  class="rounded-lg border border-amber-400/30 bg-amber-400/5 p-3"
+                >
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-sm font-semibold text-white">{{ plugin.name }}</span>
+                        <span class="text-[11px] text-neutral-500 font-mono">{{ plugin.slug }} v{{ plugin.version }}</span>
+                        <span class="text-[10px] uppercase tracking-wide text-amber-300 border border-amber-300/40 rounded px-1.5 py-0.5">pending</span>
+                      </div>
+                      <p v-if="plugin.description" class="text-xs text-neutral-400 mt-1">{{ plugin.description }}</p>
+                    </div>
+                    <div class="flex gap-2 shrink-0">
+                      <button
+                        class="btn-ghost text-xs"
+                        :aria-label="`Review code for ${plugin.slug}`"
+                        @click="togglePendingExpanded(plugin.slug)"
+                      >
+                        {{ pendingExpanded.has(plugin.slug) ? 'Hide code' : 'View code' }}
+                      </button>
+                      <button
+                        class="btn-secondary text-xs text-red-400"
+                        :aria-label="`Reject ${plugin.slug}`"
+                        @click="rejectPending(plugin.slug)"
+                      >
+                        Reject
+                      </button>
+                      <button
+                        class="btn-primary text-xs"
+                        :aria-label="`Approve ${plugin.slug}`"
+                        @click="approvePending(plugin.slug)"
+                      >
+                        Approve
+                      </button>
+                    </div>
+                  </div>
+                  <pre
+                    v-if="pendingExpanded.has(plugin.slug)"
+                    class="mt-3 max-h-72 overflow-auto rounded bg-neutral-950/70 p-2 text-[11px] text-neutral-300 font-mono whitespace-pre-wrap break-all"
+                  >{{ plugin.code }}</pre>
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- Skills Tab -->
+          <div v-if="settingsTab === 'skills'">
+            <div class="settings-card">
+              <div class="flex items-start justify-between gap-3 mb-3">
+                <div>
+                  <h3 class="text-sm font-bold text-white">Waifu-authored skills</h3>
+                  <p class="text-xs text-neutral-400">
+                    Reusable knowledge packs the waifu saves with <code class="font-mono text-neutral-300">create_skill</code>. Each SKILL.md lives under your user-data folder and is included as a short summary in every system prompt; the waifu pulls the full body in with <code class="font-mono text-neutral-300">use_skill</code>.
+                  </p>
+                </div>
+                <button
+                  class="btn-secondary shrink-0"
+                  :disabled="skillsLoading"
+                  aria-label="Refresh skill list"
+                  @click="refreshSkillsTab"
+                >
+                  {{ skillsLoading ? 'Loading…' : 'Refresh' }}
+                </button>
+              </div>
+
+              <p v-if="skillsError" class="text-xs text-red-400 mb-2">{{ skillsError }}</p>
+
+              <p v-if="!skillsLoading && skillsList.length === 0 && !skillsError" class="text-xs text-neutral-500 py-2">
+                No skills yet. Ask the waifu to save one: "remember this recipe as a skill."
+              </p>
+
+              <ul class="flex flex-col gap-2">
+                <li
+                  v-for="skill in skillsList"
+                  :key="skill.slug"
+                  class="rounded-lg border border-neutral-800/60 bg-neutral-900/50 p-3"
+                >
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <div class="text-sm font-semibold text-white truncate">{{ skill.name }}</div>
+                      <div class="text-[11px] text-neutral-500 font-mono truncate">{{ skill.slug }}</div>
+                      <p class="text-xs text-neutral-400 mt-1">{{ skill.description }}</p>
+                    </div>
+                    <div class="flex gap-2 shrink-0">
+                      <button
+                        class="btn-ghost text-xs"
+                        :aria-label="`View body for ${skill.slug}`"
+                        @click="toggleSkillExpanded(skill.slug)"
+                      >
+                        {{ skillsExpanded.has(skill.slug) ? 'Hide' : 'View' }}
+                      </button>
+                      <button
+                        class="btn-secondary text-xs text-red-400"
+                        :aria-label="`Delete skill ${skill.slug}`"
+                        @click="deleteSkill(skill.slug)"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                  <pre
+                    v-if="skillsExpanded.has(skill.slug)"
+                    class="mt-3 max-h-80 overflow-auto rounded bg-neutral-950/70 p-2 text-[11px] text-neutral-200 font-mono whitespace-pre-wrap"
+                  >{{ skill.body || '(loading…)' }}</pre>
+                </li>
+              </ul>
+            </div>
           </div>
 
           <!-- Waifus Tab -->
@@ -2945,7 +3217,7 @@ async function handleImportData() {
           <p class="text-xs text-neutral-500 mb-2">{{ t('sidebar.selectWaifus') }}</p>
           <div class="space-y-1">
             <label
-              v-for="w in builtInWaifus"
+              v-for="w in store.allWaifus"
               :key="w.id"
               :class="[
                 'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer transition-all duration-150',

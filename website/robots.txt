@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://404-waifu-not-found.github.io/SyntaxSenpai/sitemap.xml

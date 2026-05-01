@@ -27,6 +27,7 @@ import { registerProviderIpc } from './ipc/provider'
 import { registerTerminalIpc } from './ipc/terminal'
 import { registerSpotifyIpc } from './ipc/spotify'
 import { registerExportIpc } from './ipc/export'
+import { registerL2dIpc } from './ipc/l2d'
 import { registerWsIpc } from './ipc/ws'
 import { startWsServer } from './ws-server'
 
@@ -79,6 +80,7 @@ app.whenReady().then(() => {
   registerTerminalIpc()
   registerSpotifyIpc()
   registerExportIpc()
+  registerL2dIpc()
   registerWsIpc()
   startWsServer().catch((err) => console.error('[ws-server] Failed to start:', err))
 })

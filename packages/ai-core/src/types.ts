@@ -86,6 +86,19 @@ export interface ChatRequest {
   maxTokens?: number;
   temperature?: number;
   systemPrompt?: string; // injected separately for clean waifu system prompts
+  /**
+   * Stable prefix that providers with prompt caching (currently Anthropic)
+   * mark with `cache_control: ephemeral`. Persona / tool-guide / agent-behavior
+   * blocks belong here — they don't change between turns, so cached input
+   * tokens come back ~10× cheaper within the 5-min TTL window. Volatile
+   * blocks (memory, telemetry, affection) stay in `systemPrompt`.
+   *
+   * Providers that don't support caching SHOULD concatenate
+   * `cachedSystemPrompt + systemPrompt` and treat it as a single system prompt.
+   */
+  cachedSystemPrompt?: string;
+  /** Optional abort signal — providers that respect it stop the in-flight request. */
+  signal?: AbortSignal;
 }
 
 export interface ChatResponse {
@@ -109,6 +122,9 @@ export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** Anthropic prompt-caching breakdown. Other providers leave these undefined. */
+  cacheCreationInputTokens?: number;
+  cacheReadInputTokens?: number;
 }
 
 export interface ModelInfo {

@@ -6,6 +6,58 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { ChatRequest, ChatResponse, StreamChunk, ToolCall } from "../types";
 import { BaseAIProvider, convertToAnthropicMessages } from "./base";
 
+type AnthropicSystemBlock = {
+  type: "text";
+  text: string;
+  cache_control?: { type: "ephemeral" };
+};
+
+type AnthropicToolDef = {
+  name: string;
+  description: string;
+  input_schema: unknown;
+  cache_control?: { type: "ephemeral" };
+};
+
+/**
+ * Build Anthropic-shaped `system` and `tools` arrays with prompt caching markers.
+ * The stable prefix gets `cache_control: ephemeral`; the last tool also gets one
+ * so the entire tool-defs block is cached as part of the same prefix.
+ */
+function buildCachedSystem(request: ChatRequest): {
+  system: string | AnthropicSystemBlock[];
+  tools: AnthropicToolDef[] | undefined;
+} {
+  const cached = (request.cachedSystemPrompt || "").trim();
+  const volatile = request.systemPrompt || "";
+
+  const tools: AnthropicToolDef[] | undefined = request.tools && request.tools.length > 0
+    ? request.tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.parameters,
+      }))
+    : undefined;
+
+  if (!cached) {
+    return { system: volatile, tools };
+  }
+
+  const blocks: AnthropicSystemBlock[] = [
+    { type: "text", text: cached, cache_control: { type: "ephemeral" } },
+  ];
+  if (volatile) {
+    blocks.push({ type: "text", text: volatile });
+  }
+
+  // Marking the last tool as cacheable extends the cache through the tool defs.
+  if (tools && tools.length > 0) {
+    tools[tools.length - 1].cache_control = { type: "ephemeral" };
+  }
+
+  return { system: blocks, tools };
+}
+
 export class AnthropicProvider extends BaseAIProvider {
   id = "anthropic";
   displayName = "Anthropic (Claude)";
@@ -48,25 +100,20 @@ export class AnthropicProvider extends BaseAIProvider {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    const systemPrompt = request.systemPrompt || "";
     const messages = convertToAnthropicMessages(request.messages);
+    const { system, tools } = buildCachedSystem(request);
 
-    const tools = request.tools
-      ? request.tools.map((tool) => ({
-          name: tool.name,
-          description: tool.description,
-          input_schema: tool.parameters,
-        }))
-      : undefined;
-
-    const response = await this.client.messages.create({
-      model: request.model || "claude-opus-4-1",
-      max_tokens: request.maxTokens || 4096,
-      temperature: request.temperature !== undefined ? request.temperature : 0.7,
-      system: systemPrompt,
-      messages: messages as any,
-      tools: tools && tools.length > 0 ? (tools as any) : undefined,
-    });
+    const response = await this.client.messages.create(
+      {
+        model: request.model || "claude-opus-4-1",
+        max_tokens: request.maxTokens || 4096,
+        temperature: request.temperature !== undefined ? request.temperature : 0.7,
+        system: system as any,
+        messages: messages as any,
+        tools: tools as any,
+      },
+      request.signal ? { signal: request.signal } : undefined
+    );
 
     // Parse tool calls from response
     const toolCalls: ToolCall[] = [];
@@ -84,39 +131,41 @@ export class AnthropicProvider extends BaseAIProvider {
       }
     }
 
+    const usage = response.usage as typeof response.usage & {
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    };
+
     return {
       id: response.id,
       content,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       usage: {
-        promptTokens: response.usage.input_tokens,
-        completionTokens: response.usage.output_tokens,
-        totalTokens: response.usage.input_tokens + response.usage.output_tokens,
+        promptTokens: usage.input_tokens,
+        completionTokens: usage.output_tokens,
+        totalTokens: usage.input_tokens + usage.output_tokens,
+        cacheCreationInputTokens: usage.cache_creation_input_tokens,
+        cacheReadInputTokens: usage.cache_read_input_tokens,
       },
       finishReason: response.stop_reason === "tool_use" ? "tool_calls" : response.stop_reason === "end_turn" ? "stop" : "length",
     };
   }
 
   async *stream(request: ChatRequest): AsyncIterable<StreamChunk> {
-    const systemPrompt = request.systemPrompt || "";
     const messages = convertToAnthropicMessages(request.messages);
+    const { system, tools } = buildCachedSystem(request);
 
-    const tools = request.tools
-      ? request.tools.map((tool) => ({
-          name: tool.name,
-          description: tool.description,
-          input_schema: tool.parameters,
-        }))
-      : undefined;
-
-    const stream = await this.client.messages.stream({
-      model: request.model || "claude-opus-4-1",
-      max_tokens: request.maxTokens || 4096,
-      temperature: request.temperature !== undefined ? request.temperature : 0.7,
-      system: systemPrompt,
-      messages: messages as any,
-      tools: tools && tools.length > 0 ? (tools as any) : undefined,
-    });
+    const stream = await this.client.messages.stream(
+      {
+        model: request.model || "claude-opus-4-1",
+        max_tokens: request.maxTokens || 4096,
+        temperature: request.temperature !== undefined ? request.temperature : 0.7,
+        system: system as any,
+        messages: messages as any,
+        tools: tools as any,
+      },
+      request.signal ? { signal: request.signal } : undefined
+    );
 
     let toolBuffer = "";
     let inToolUse = false;
@@ -166,3 +215,6 @@ export class AnthropicProvider extends BaseAIProvider {
 export function createAnthropicProvider(apiKey: string): AnthropicProvider {
   return new AnthropicProvider({ apiKey });
 }
+
+// Exposed for unit tests.
+export const __testing = { buildCachedSystem };

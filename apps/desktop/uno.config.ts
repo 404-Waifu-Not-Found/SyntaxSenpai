@@ -379,6 +379,48 @@ export default defineConfig({
           50%  { border-radius: 15% 75% 15% 55%; }
           100% { border-radius: 75% 15% 55% 15%; }
         }
+
+        /* Reduced-motion overrides — driven by data-motion="reduced" on :root,
+           which use-theme.ts sets either explicitly (Settings → Interface) or
+           via the OS prefers-reduced-motion media query when motion is 'auto'.
+           The goal is to keep the UI usable but stop all decorative motion that
+           could trigger vestibular symptoms or burn CPU on integrated GPUs. */
+        [data-motion="reduced"] .sakura-layer { display: none !important; }
+        [data-motion="reduced"] .modal-backdrop-enter-active,
+        [data-motion="reduced"] .modal-backdrop-leave-active,
+        [data-motion="reduced"] .modal-backdrop-enter-active .modal-glass,
+        [data-motion="reduced"] .modal-backdrop-enter-active .settings-glass,
+        [data-motion="reduced"] .modal-backdrop-leave-active .modal-glass,
+        [data-motion="reduced"] .modal-backdrop-leave-active .settings-glass,
+        [data-motion="reduced"] .tab-slide-enter-active,
+        [data-motion="reduced"] .tab-slide-leave-active,
+        [data-motion="reduced"] .tab-wrapper {
+          transition: none !important;
+        }
+        [data-motion="reduced"] .modal-backdrop-enter-from .modal-glass,
+        [data-motion="reduced"] .modal-backdrop-enter-from .settings-glass,
+        [data-motion="reduced"] .modal-backdrop-leave-to .modal-glass,
+        [data-motion="reduced"] .modal-backdrop-leave-to .settings-glass,
+        [data-motion="reduced"] .tab-slide-enter-from,
+        [data-motion="reduced"] .tab-slide-leave-to {
+          transform: none !important;
+          filter: none !important;
+        }
+        [data-motion="reduced"] [class*="animate-"] {
+          animation: none !important;
+        }
+        /* Strip the chat bubble pop-in + typing dots — they're the most
+           continuously-running animations the user sees. */
+        [data-motion="reduced"] .typing-dots,
+        [data-motion="reduced"] .typing-dots * {
+          animation: none !important;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          /* Belt-and-braces: even if JS hasn't set data-motion yet (first
+             paint), the OS media query disables the heaviest animations. */
+          .sakura-layer { display: none; }
+          [class*="animate-"] { animation: none !important; }
+        }
       `,
     },
   ],

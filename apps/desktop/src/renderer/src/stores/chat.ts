@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import { buildSystemPrompt, builtInWaifus, detectMilestone, describeMilestone, formatSkillsForPrompt } from '@syntax-senpai/waifu-core'
+import { buildSystemPrompt, builtInWaifus, detectMilestone, describeMilestone, formatSkillsForPrompt, rankMemories } from '@syntax-senpai/waifu-core'
 import type { SentimentResult, MilestoneEvent, Waifu, Skill } from '@syntax-senpai/waifu-core'
 import { AIChatRuntime, withRetry, classifyError, describeError } from '@syntax-senpai/ai-core'
 import { useIpc } from '../composables/use-ipc'
@@ -662,6 +662,10 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<Message[]>([])
   const inputValue = ref('')
   const isLoading = ref(false)
+  // AbortController for the in-flight provider call(s). Set when a turn starts,
+  // null when no request is active. `stopStream()` aborts and the agentic loop /
+  // streaming for-await break out at their next checkpoint.
+  const streamController = ref<AbortController | null>(null)
   const conversationId = ref<string | null>(null)
   const conversations = ref<any[]>([])
   const recentMessageId = ref<string | null>(null)
@@ -814,9 +818,22 @@ export const useChatStore = defineStore('chat', () => {
   // Wrap provider.chat with `withRetry` from ai-core. Routing every model call
   // through this means 429 / transient-5xx get retried with jitter AND the
   // user sees a toast so they know what's happening.
+  //
+  // For providers that don't support prompt caching (everything except Anthropic
+  // today), flatten `cachedSystemPrompt` into `systemPrompt` so they treat it as
+  // a single block. The Anthropic provider keeps them split and adds
+  // `cache_control: ephemeral` to the cached prefix.
   async function callProviderChat(provider: any, req: any): Promise<any> {
-    return await withRetry(() => provider.chat(req), {
+    const finalReq = provider?.id === 'anthropic'
+      ? req
+      : {
+          ...req,
+          systemPrompt: ((req.cachedSystemPrompt || '') + (req.systemPrompt || '')) || undefined,
+          cachedSystemPrompt: undefined,
+        }
+    return await withRetry(() => provider.chat(finalReq), {
       maxAttempts: 4,
+      signal: req.signal,
       onRetry: (err, attempt, delayMs) => {
         const kind = err.kind === 'rate_limit' ? 'Rate limited' :
           err.kind === 'network' ? 'Network blip' :
@@ -1289,7 +1306,13 @@ export const useChatStore = defineStore('chat', () => {
   function buildMemoryContext(): string {
     let memoryBlock = ''
     if (userMemories.value.length > 0) {
-      const lines = userMemories.value.map((m) => `- [${m.category}] ${m.key}: ${m.value}`)
+      // Rank by recency + keyword overlap with the most recent user message
+      // so we don't ship the entire memory store every turn. Top 8 wins
+      // 1-3K tokens once a relationship has built up a real history.
+      const lastUserMessage =
+        [...messages.value].reverse().find((m) => m.role === 'user')?.content || ''
+      const ranked = rankMemories(userMemories.value, lastUserMessage, 8)
+      const lines = ranked.map((m) => `- [${m.category}] ${m.key}: ${m.value}`)
       memoryBlock = `\nCurrently stored memories:\n${lines.join('\n')}\n`
     }
     return `\n\n[User Memory - Persistent across chats]
@@ -1414,6 +1437,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     recentMessageId.value = userMsg.id
     inputValue.value = ''
     isLoading.value = true
+    streamController.value = new AbortController()
 
     try {
       let convId = conversationId.value
@@ -1482,14 +1506,25 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
         for (const waifu of waifusForRound) {
           const affectionValue = loadAffection(waifu.id)
-          let systemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, affectionValue)
-          systemPrompt += buildMasterContextBlock()
-          systemPrompt += buildLanguagePromptBlock()
+          // Stable prefix — eligible for Anthropic prompt caching. Order must
+          // not change between turns or the cache breaks.
+          let cachedSystemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, affectionValue)
+          cachedSystemPrompt += buildMasterContextBlock()
+          cachedSystemPrompt += buildLanguagePromptBlock()
+          cachedSystemPrompt += buildSkillsAuthoringPromptBlock()
+          if (hasTools) {
+            if (systemInfo && systemInfo.homedir) {
+              cachedSystemPrompt += `\n\n[System Environment]\nOS: ${systemInfo.platform}\nUsername: ${systemInfo.username}\nHome directory: ${systemInfo.homedir}\nShell: ${systemInfo.shell ?? 'unknown'}`
+            }
+            cachedSystemPrompt += buildAgentBehaviorPrompt(systemInfo?.shell, waifu.displayName || 'your waifu persona', webSearchEnabled.value)
+          }
+
+          // Volatile suffix — changes per turn, never marked cacheable.
+          let systemPrompt = ''
           systemPrompt += buildConversationLanguageRuleBlock(messages.value.find((m) => m.role === 'user')?.content || trimmedText)
           systemPrompt += buildMemoryContext()
           systemPrompt += buildAffectionPrompt(affectionValue, waifu.displayName || 'Waifu')
           systemPrompt += buildMilestoneSidecarBlock(waifu.id)
-          systemPrompt += buildSkillsAuthoringPromptBlock()
           systemPrompt += formatSkillsForPrompt(availableSkills.value)
           systemPrompt += buildApiTelemetryPrompt()
           systemPrompt += buildGroupChatPromptBlock(waifu, waifus, pendingTasks.get(waifu.id) || [], round)
@@ -1497,19 +1532,13 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
             : buildCodingSessionPromptBlock(trimmedText)
 
-          if (hasTools) {
-            if (systemInfo && systemInfo.homedir) {
-              systemPrompt += `\n\n[System Environment]\nOS: ${systemInfo.platform}\nUsername: ${systemInfo.username}\nHome directory: ${systemInfo.homedir}\nShell: ${systemInfo.shell ?? 'unknown'}`
-            }
-            systemPrompt += buildAgentBehaviorPrompt(systemInfo?.shell, waifu.displayName || 'your waifu persona', webSearchEnabled.value)
-          }
-
           const runtime = new AIChatRuntime({
             provider: providerRequiresApiKey(selectedProvider.value)
               ? ({ type: selectedProvider.value as any, apiKey: key } as any)
               : ({ type: selectedProvider.value as any } as any),
             model,
             systemPrompt,
+            cachedSystemPrompt,
           })
 
           let finalContent = ''
@@ -1523,12 +1552,18 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             const pendingCards: RenderCardPayload[] = []
 
             for (let iteration = 0; iteration <= maxIterations; iteration++) {
+              if (streamController.value?.signal.aborted) {
+                stopped = true
+                break
+              }
               const requestStartedAt = performance.now()
               const response = await callProviderChat(provider, {
                 model,
                 messages: aiHistory,
                 tools,
                 systemPrompt,
+                cachedSystemPrompt,
+                signal: streamController.value?.signal,
               })
               apiRoundTrips.push(performance.now() - requestStartedAt)
               recordUsage(model, response?.usage)
@@ -1744,6 +1779,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       })
     } finally {
       isLoading.value = false
+      streamController.value = null
       setTimeout(() => { recentMessageId.value = null }, 1100)
     }
   }
@@ -1936,6 +1972,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     recentMessageId.value = userMsg.id
     inputValue.value = ''
     isLoading.value = true
+    streamController.value = new AbortController()
 
     try {
       let convId = conversationId.value
@@ -1958,30 +1995,22 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       }
 
       const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
-      let systemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, affection.value)
 
-      // The user is your Master — applies to every conversation, not just group.
-      systemPrompt += buildMasterContextBlock()
-      systemPrompt += buildLanguagePromptBlock()
+      // Stable prefix — eligible for Anthropic prompt caching. Order must
+      // not change between turns or the cache breaks.
+      let cachedSystemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, affection.value)
+      cachedSystemPrompt += buildMasterContextBlock()
+      cachedSystemPrompt += buildLanguagePromptBlock()
+      cachedSystemPrompt += buildSkillsAuthoringPromptBlock()
+
+      // Volatile suffix — changes per turn, never marked cacheable.
+      let systemPrompt = ''
       systemPrompt += buildConversationLanguageRuleBlock(messages.value.find((m) => m.role === 'user')?.content || trimmedText)
-
-      // Inject persistent memory context
       systemPrompt += buildMemoryContext()
-
-      // Inject 好感度 system
       systemPrompt += buildAffectionPrompt(affection.value, waifu?.displayName || 'Waifu')
-
-      // One-shot sidecar when the user just crossed an affection tier.
       systemPrompt += buildMilestoneSidecarBlock(waifu.id)
-
-      // Teach the waifu about skills + tools she can author, then list
-      // what she already has so she can pull them in with use_skill.
-      systemPrompt += buildSkillsAuthoringPromptBlock()
       systemPrompt += formatSkillsForPrompt(availableSkills.value)
-
-      // Let the waifu know how fast the last API reply was.
       systemPrompt += buildApiTelemetryPrompt()
-
       systemPrompt += activeCodingRepo.value
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(trimmedText)
@@ -1996,9 +2025,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           try { sys = await invoke('terminal:systemInfo') } catch {}
         }
         if (sys && sys.homedir) {
-          systemPrompt += `\n\n[System Environment]\nOS: ${sys.platform}\nUsername: ${sys.username}\nHome directory: ${sys.homedir}\nShell: ${sys.shell ?? 'unknown'}`
+          cachedSystemPrompt += `\n\n[System Environment]\nOS: ${sys.platform}\nUsername: ${sys.username}\nHome directory: ${sys.homedir}\nShell: ${sys.shell ?? 'unknown'}`
         }
-        systemPrompt += buildAgentBehaviorPrompt(sys?.shell, waifu?.displayName || 'your waifu persona', webSearchEnabled.value)
+        cachedSystemPrompt += buildAgentBehaviorPrompt(sys?.shell, waifu?.displayName || 'your waifu persona', webSearchEnabled.value)
       }
 
       const runtime = new AIChatRuntime({
@@ -2007,6 +2036,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           : ({ type: selectedProvider.value as any } as any),
         model,
         systemPrompt,
+        cachedSystemPrompt,
       })
 
       if (hasTools) {
@@ -2037,12 +2067,18 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         const pendingCards: RenderCardPayload[] = []
 
         for (let i = 0; i <= maxIterations; i++) {
+          if (streamController.value?.signal.aborted) {
+            stopped = true
+            break
+          }
           const requestStartedAt = performance.now()
           const response = await callProviderChat(provider, {
             model,
             messages: aiHistory,
             tools,
             systemPrompt,
+            cachedSystemPrompt,
+            signal: streamController.value?.signal,
           })
           apiRoundTrips.push(performance.now() - requestStartedAt)
           recordUsage(model, response?.usage)
@@ -2236,7 +2272,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         let added = false
         const streamStartedAt = performance.now()
 
-        for await (const chunk of runtime.streamMessage({ text, history: aiMessages })) {
+        const streamIter = runtime.streamMessage({ text, history: aiMessages, signal: streamController.value?.signal })
+        for await (const chunk of streamIter) {
+          if (streamController.value?.signal.aborted) break
           if (chunk.type === 'text_delta' && chunk.delta) {
             assistantContent += chunk.delta
             if (!added) {
@@ -2299,6 +2337,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       })
     } finally {
       isLoading.value = false
+      streamController.value = null
       setTimeout(() => { recentMessageId.value = null }, 1100)
     }
   }
@@ -2484,6 +2523,13 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     }
   }
 
+  function stopStream() {
+    const ctrl = streamController.value
+    if (!ctrl || ctrl.signal.aborted) return
+    ctrl.abort()
+    chatLog.info('stream aborted by user')
+  }
+
   return {
     isSetup,
     selectedWaifuId,
@@ -2498,6 +2544,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     messages,
     inputValue,
     isLoading,
+    stopStream,
     conversationId,
     conversations,
     recentMessageId,

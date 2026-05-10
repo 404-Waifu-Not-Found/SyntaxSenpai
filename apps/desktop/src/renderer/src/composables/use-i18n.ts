@@ -102,6 +102,7 @@ const messages: Record<Locale, Record<string, string>> = {
     'chat.inputPlaceholder': 'Say something... (Press / to focus)',
     'chat.send': '➤ Send',
     'chat.sending': '⚙️ Sending',
+    'chat.stop': '■ Stop',
     'chat.inputHint': 'Press Enter to send, Shift+Enter for newline',
 
     // Settings
@@ -196,6 +197,11 @@ const messages: Record<Locale, Record<string, string>> = {
     'interface.blurDesc': 'Backdrop blur strength on frosted surfaces.',
     'interface.petals': 'Sakura Petals',
     'interface.petalsDesc': 'Drifting petals in the background. Pairs well with Sakura themes.',
+    'interface.motion': 'Motion',
+    'interface.motionDesc': 'Reduced disables decorative animations (petals, blur, message pop-ins). Recommended on slower devices or if motion makes you feel queasy.',
+    'interface.motionAuto': 'Auto',
+    'interface.motionFull': 'Full',
+    'interface.motionReduced': 'Reduced',
 
 
     // Model Picker

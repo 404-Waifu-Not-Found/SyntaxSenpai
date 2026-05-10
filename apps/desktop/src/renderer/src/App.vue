@@ -2579,6 +2579,33 @@ async function handleImportData() {
               </div>
             </div>
 
+            <div class="settings-card">
+              <div class="mb-1">
+                <h3 class="text-sm font-bold text-white">{{ t('interface.motion') }}</h3>
+                <p class="text-xs text-neutral-400">{{ t('interface.motionDesc') }}</p>
+              </div>
+              <div class="flex gap-2 mt-3">
+                <button
+                  v-for="opt in [
+                    { value: 'auto', label: t('interface.motionAuto') },
+                    { value: 'full', label: t('interface.motionFull') },
+                    { value: 'reduced', label: t('interface.motionReduced') },
+                  ]"
+                  :key="opt.value"
+                  class="flex-1 px-3 py-2 text-xs font-medium rounded-lg border transition-colors duration-200"
+                  :class="
+                    theme.ui.motion === opt.value
+                      ? 'bg-primary-500/20 border-primary-500/40 text-white'
+                      : 'bg-neutral-800/40 border-neutral-700/40 text-neutral-300 hover:bg-neutral-800/60'
+                  "
+                  :aria-pressed="theme.ui.motion === opt.value"
+                  @click="setUI({ motion: opt.value as any })"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+
             <div v-if="voice.supported" class="settings-card">
               <div class="flex items-center justify-between mb-1">
                 <div>
@@ -3672,13 +3699,24 @@ async function handleImportData() {
             @paste="handlePaste"
           />
           <button
+            v-if="store.isLoading"
+            class="btn-primary min-w-fit flex items-center justify-center gap-2 bg-rose-600/80 hover:bg-rose-600 border-rose-500/40 text-white"
+            :aria-label="t('chat.stop')"
+            type="button"
+            @click="store.stopStream()"
+          >
+            <span aria-hidden="true" class="inline-block w-2.5 h-2.5 bg-current rounded-sm" />
+            {{ t('chat.stop') }}
+          </button>
+          <button
+            v-else
             class="btn-primary themed-btn-primary min-w-fit flex items-center justify-center gap-2"
             :style="primaryButtonStyle"
-            :aria-label="store.isLoading ? t('chat.sending') : t('chat.send')"
-            :disabled="(!store.inputValue.trim() && store.pendingAttachments.length === 0) || store.isLoading"
+            :aria-label="t('chat.send')"
+            :disabled="!store.inputValue.trim() && store.pendingAttachments.length === 0"
             @click="store.sendMessage(store.inputValue)"
           >
-            {{ store.isLoading ? t('chat.sending') : t('chat.send') }}
+            {{ t('chat.send') }}
           </button>
         </div>
         <p class="text-xs text-neutral-500 mt-2">

@@ -220,3 +220,83 @@ function stringify(content: Message["content"] | unknown): string {
 function capitalize(s: string): string {
   return s.length === 0 ? s : s[0].toUpperCase() + s.slice(1);
 }
+
+/**
+ * Pick the most relevant memories for the current turn so the system prompt
+ * doesn't grow linearly with the user's history.
+ *
+ * Score: 0.6 × recency + 0.4 × keyword-overlap.
+ * - Recency = exp decay over `updatedAt`/`createdAt` (half-life ~14 days).
+ * - Keyword overlap = Jaccard over lowercased word tokens.
+ * Memories with `pinned: true` are always kept and don't count toward `k`.
+ *
+ * Pure function; safe to call from the renderer or main process.
+ */
+export interface RankableMemory {
+  key: string;
+  value: string;
+  category?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  pinned?: boolean;
+}
+
+const STOP_WORDS = new Set([
+  "the","a","an","is","are","was","were","be","been","being","have","has","had",
+  "do","does","did","of","to","in","on","at","by","for","with","and","or","but",
+  "not","no","i","you","he","she","it","we","they","my","your","this","that",
+  "these","those","what","when","where","why","how","can","could","would","should",
+]);
+
+function tokenize(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length > 1 && !STOP_WORDS.has(t))
+  );
+}
+
+function jaccard(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let intersection = 0;
+  for (const t of a) if (b.has(t)) intersection += 1;
+  const union = a.size + b.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+function recencyScore(timestamp: string | undefined, nowMs: number): number {
+  if (!timestamp) return 0;
+  const t = Date.parse(timestamp);
+  if (Number.isNaN(t)) return 0;
+  const ageMs = Math.max(0, nowMs - t);
+  // Half-life of ~14 days (1.21e9 ms): score = 0.5^(age/halflife).
+  const halfLifeMs = 14 * 24 * 60 * 60 * 1000;
+  return Math.pow(0.5, ageMs / halfLifeMs);
+}
+
+export function rankMemories<T extends RankableMemory>(
+  memories: T[],
+  queryText: string,
+  k = 8,
+  nowMs: number = Date.now()
+): T[] {
+  if (memories.length <= k) return memories;
+
+  const queryTokens = tokenize(queryText || "");
+  const pinned = memories.filter((m) => m.pinned);
+  const candidates = memories.filter((m) => !m.pinned);
+
+  const scored = candidates.map((m) => {
+    const memoryTokens = tokenize(`${m.key} ${m.value} ${m.category ?? ""}`);
+    const overlap = jaccard(queryTokens, memoryTokens);
+    const recency = recencyScore(m.updatedAt || m.createdAt, nowMs);
+    return { memory: m, score: 0.6 * recency + 0.4 * overlap };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  // Pinned memories are added on top of the K-best slots (not counted toward K).
+  const top = scored.slice(0, k).map((s) => s.memory);
+  return [...pinned, ...top];
+}

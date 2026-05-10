@@ -24,6 +24,8 @@ export interface AISetupOptions {
   provider: ProviderConfig;
   model?: string;
   systemPrompt?: string;
+  /** Stable prompt prefix forwarded to providers that support prompt caching. */
+  cachedSystemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
   maxToolIterations?: number;
@@ -35,6 +37,7 @@ export interface SendMessageOptions {
   tools?: ToolDefinition[];
   history?: Message[];
   systemPrompt?: string;
+  cachedSystemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
   maxToolIterations?: number;
@@ -48,8 +51,10 @@ export interface StreamMessageOptions {
   tools?: ToolDefinition[];
   history?: Message[];
   systemPrompt?: string;
+  cachedSystemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
+  signal?: AbortSignal;
 }
 
 export type ToolExecutionResult =
@@ -77,6 +82,7 @@ export class AIChatRuntime {
     this.defaults = {
       model: options.model,
       systemPrompt: options.systemPrompt,
+      cachedSystemPrompt: options.cachedSystemPrompt,
       temperature: options.temperature,
       maxTokens: options.maxTokens,
       maxToolIterations: options.maxToolIterations ?? 6,
@@ -146,6 +152,8 @@ export class AIChatRuntime {
         const request = this.buildRequest(messages, {
           tools: options.tools,
           systemPrompt: options.systemPrompt,
+          cachedSystemPrompt: options.cachedSystemPrompt,
+          signal: options.signal,
           temperature: options.temperature,
           maxTokens: options.maxTokens,
         });
@@ -256,6 +264,8 @@ export class AIChatRuntime {
     const request = this.buildRequest(messages, {
       tools: options.tools,
       systemPrompt: options.systemPrompt,
+      cachedSystemPrompt: options.cachedSystemPrompt,
+      signal: options.signal,
       temperature: options.temperature,
       maxTokens: options.maxTokens,
     });
@@ -270,6 +280,8 @@ export class AIChatRuntime {
     override: {
       tools?: ToolDefinition[];
       systemPrompt?: string;
+      cachedSystemPrompt?: string;
+      signal?: AbortSignal;
       temperature?: number;
       maxTokens?: number;
     }
@@ -282,6 +294,8 @@ export class AIChatRuntime {
       messages,
       tools: override.tools,
       systemPrompt: override.systemPrompt ?? this.defaults.systemPrompt,
+      cachedSystemPrompt: override.cachedSystemPrompt ?? this.defaults.cachedSystemPrompt,
+      signal: override.signal,
       temperature: override.temperature ?? this.defaults.temperature,
       maxTokens: override.maxTokens ?? this.defaults.maxTokens,
     };

@@ -20,12 +20,21 @@ export interface RainbowSettings {
 
 export type UIDensity = 'cozy' | 'compact'
 export type RadiusScale = 'sharp' | 'default' | 'rounded'
+/**
+ * 'auto'    — defer to the OS (`prefers-reduced-motion`); falls back to 'full'.
+ * 'full'    — all animations on (default appearance).
+ * 'reduced' — collapse decorative animations: kills the rainbow RAF loop, the
+ *             sakura petals overlay, message pop-ins, and modal blur transitions.
+ *             Matches what users with vestibular disorders / slow devices need.
+ */
+export type MotionMode = 'auto' | 'full' | 'reduced'
 
 export interface UISettings {
   density: UIDensity
   radius: RadiusScale
   blur: number    // 0-40px backdrop-filter blur on glass surfaces
   petals: boolean // drifting sakura petals overlay
+  motion: MotionMode
 }
 
 export interface ThemeConfig {
@@ -58,6 +67,7 @@ const DEFAULT_THEME: ThemeConfig = {
     radius: 'default',
     blur: 28,
     petals: false,
+    motion: 'auto',
   },
 }
 
@@ -146,6 +156,20 @@ function applyThemeToDOM(colors: ThemeColors) {
   root.style.setProperty('--primary-700', adjustBrightness(colors.primary, -20))
 }
 
+/**
+ * Resolve `motion: 'auto'` against the OS `prefers-reduced-motion` setting.
+ * Returns the effective mode: 'full' or 'reduced'.
+ */
+function resolveMotion(mode: MotionMode): 'full' | 'reduced' {
+  if (mode === 'reduced') return 'reduced'
+  if (mode === 'full') return 'full'
+  // 'auto' — consult the OS.
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'full'
+  }
+  return 'full'
+}
+
 function applyUIToDOM(ui: UISettings) {
   const root = document.documentElement
   // Density scales paddings via --ui-density-scale (1 = cozy, 0.7 = compact).
@@ -161,14 +185,26 @@ function applyUIToDOM(ui: UISettings) {
   root.style.setProperty('--radius-scale', radiusMap[ui.radius])
   root.dataset.radius = ui.radius
 
-  const blurClamped = Math.max(0, Math.min(40, ui.blur))
+  const resolvedMotion = resolveMotion(ui.motion)
+  // In reduced mode clamp glass-blur to 0 — backdrop-filter blur is one of
+  // the heaviest paint costs on integrated GPUs.
+  const blurClamped = resolvedMotion === 'reduced' ? 0 : Math.max(0, Math.min(40, ui.blur))
   root.style.setProperty('--blur-intensity', `${blurClamped}px`)
 
-  root.dataset.petals = ui.petals ? 'on' : 'off'
+  // Reduced motion implies no petals overlay regardless of the toggle.
+  root.dataset.petals = ui.petals && resolvedMotion === 'full' ? 'on' : 'off'
+  root.dataset.motion = resolvedMotion
+  root.dataset.motionPref = ui.motion
 }
 
 function startRainbow() {
   if (rainbowFrame) return
+  // Reduced motion suppresses the 60-fps RAF entirely (it was the largest
+  // per-frame CPU cost in the renderer).
+  if (resolveMotion(theme.value.ui.motion) === 'reduced') {
+    document.documentElement.dataset.rainbow = 'off'
+    return
+  }
   const tick = () => {
     const rb = theme.value.rainbow
     if (!rb.enabled) { rainbowFrame = null; return }
@@ -233,15 +269,33 @@ function stopRainbow() {
 }
 
 export function useTheme() {
+  // OS `prefers-reduced-motion` listener — only attached once per app lifetime.
+  // When the user has motion: 'auto' selected and toggles their OS setting,
+  // we re-apply UI so blur, petals, and the rainbow RAF react in real time.
+  const motionMql = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-reduced-motion: reduce)')
+    : null
+  const onMotionChange = () => {
+    applyUIToDOM(theme.value.ui)
+    const resolved = resolveMotion(theme.value.ui.motion)
+    if (resolved === 'reduced') {
+      stopRainbow()
+    } else if (theme.value.rainbow.enabled) {
+      startRainbow()
+    }
+  }
+
   onMounted(() => {
     applyThemeToDOM(theme.value.colors)
     applyUIToDOM(theme.value.ui)
     document.documentElement.dataset.rainbow = theme.value.rainbow.enabled ? 'on' : 'off'
     if (theme.value.rainbow.enabled) startRainbow()
+    motionMql?.addEventListener?.('change', onMotionChange)
   })
 
   onUnmounted(() => {
     // Don't stop rainbow on unmount since theme is app-global
+    motionMql?.removeEventListener?.('change', onMotionChange)
   })
 
   watch(() => theme.value.colors, (colors) => {
@@ -264,6 +318,14 @@ export function useTheme() {
   watch(() => theme.value.ui, (ui) => {
     applyUIToDOM(ui)
     saveTheme()
+    // Toggling motion may need to start/stop the rainbow RAF.
+    const resolved = resolveMotion(ui.motion)
+    if (resolved === 'reduced') {
+      stopRainbow()
+      applyThemeToDOM(theme.value.colors)
+    } else if (theme.value.rainbow.enabled && !rainbowFrame) {
+      startRainbow()
+    }
   }, { deep: true })
 
   function resetTheme() {

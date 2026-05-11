@@ -185,43 +185,89 @@ export class OpenAIProvider extends OpenAICompatibleProvider {
 
     const stream = await this.client.chat.completions.create(body as any);
 
+    // Buffer tool-call fragments by `index` and emit complete tool_call_delta
+    // chunks once finish_reason fires (or the stream ends). OpenAI-compatible
+    // providers split function.arguments across multiple chunks as partial
+    // JSON, so we must concatenate before parsing.
+    const toolCallBuffers = new Map<
+      number,
+      { id: string; name: string; args: string }
+    >();
+    let nextSyntheticIndex = 0;
+
+    const flushToolCalls = function* (): Generator<StreamChunk> {
+      if (toolCallBuffers.size === 0) return;
+      const sorted = Array.from(toolCallBuffers.entries()).sort(
+        ([a], [b]) => a - b
+      );
+      for (const [, buf] of sorted) {
+        let parsedArgs: Record<string, unknown> = {};
+        if (buf.args) {
+          try {
+            parsedArgs = JSON.parse(buf.args);
+          } catch {
+            parsedArgs = { _raw: buf.args };
+          }
+        }
+        yield {
+          type: "tool_call_delta",
+          toolCall: {
+            id: buf.id || "unknown",
+            name: buf.name,
+            arguments: parsedArgs,
+          },
+        };
+      }
+      toolCallBuffers.clear();
+    };
+
     for await (const chunk of stream as any) {
-      if (chunk.choices[0]?.delta?.content) {
+      const delta = chunk.choices[0]?.delta;
+      // DeepSeek reasoner emits chain-of-thought as delta.reasoning_content,
+      // separate from delta.content. Surface it so the UI can render it live.
+      if (delta?.reasoning_content) {
+        yield {
+          type: "reasoning_delta",
+          delta: delta.reasoning_content,
+        };
+      }
+      if (delta?.content) {
         yield {
           type: "text_delta",
-          delta: chunk.choices[0].delta.content,
+          delta: delta.content,
         };
       }
 
-      if (chunk.choices[0]?.delta?.tool_calls) {
-        for (const toolCall of chunk.choices[0].delta.tool_calls) {
-          if (toolCall.function) {
-            yield {
-              type: "tool_call_delta",
-              toolCall: {
-                id: toolCall.id || "unknown",
-                name: toolCall.function.name || "",
-                arguments: toolCall.function.arguments
-                  ? (() => {
-                      try {
-                        return JSON.parse(toolCall.function.arguments);
-                      } catch {
-                        return { _raw: toolCall.function.arguments };
-                      }
-                    })()
-                  : {},
-              },
-            };
+      if (delta?.tool_calls) {
+        for (const toolCall of delta.tool_calls) {
+          if (!toolCall?.function && typeof toolCall?.index !== "number" && !toolCall?.id) {
+            continue;
           }
+          const idx =
+            typeof toolCall.index === "number"
+              ? toolCall.index
+              : nextSyntheticIndex++;
+          const buf = toolCallBuffers.get(idx) || { id: "", name: "", args: "" };
+          if (toolCall.id) buf.id = toolCall.id;
+          if (toolCall.function?.name) buf.name = toolCall.function.name;
+          if (typeof toolCall.function?.arguments === "string") {
+            buf.args += toolCall.function.arguments;
+          }
+          toolCallBuffers.set(idx, buf);
         }
       }
 
       if (chunk.choices[0]?.finish_reason) {
+        yield* flushToolCalls();
         yield {
           type: "done",
         };
       }
     }
+
+    // Stream closed without an explicit finish_reason chunk — flush any
+    // pending tool calls so callers don't silently lose them.
+    yield* flushToolCalls();
   }
 }
 

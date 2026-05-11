@@ -104,6 +104,8 @@ const messages: Record<Locale, Record<string, string>> = {
     'chat.sending': '⚙️ Sending',
     'chat.stop': '■ Stop',
     'chat.inputHint': 'Press Enter to send, Shift+Enter for newline',
+    'conversation.renameTitle': 'Rename conversation',
+    'conversation.renamePrompt': 'Enter a new conversation name:',
 
     // Settings
     'settings.title': 'Settings',
@@ -337,6 +339,8 @@ const messages: Record<Locale, Record<string, string>> = {
     'chat.send': '➤ 发送',
     'chat.sending': '⚙️ 发送中',
     'chat.inputHint': '按 Enter 发送，Shift+Enter 换行',
+    'conversation.renameTitle': '重命名对话',
+    'conversation.renamePrompt': '输入新的对话名称：',
 
     // Settings
     'settings.title': '设置',
@@ -565,6 +569,8 @@ const messages: Record<Locale, Record<string, string>> = {
     'chat.send': '➤ Envoyer',
     'chat.sending': '⚙️ Envoi',
     'chat.inputHint': 'Entrée pour envoyer, Maj+Entrée pour un saut de ligne',
+    'conversation.renameTitle': 'Renommer la conversation',
+    'conversation.renamePrompt': 'Entrez un nouveau nom de conversation :',
 
     // Settings
     'settings.title': 'Paramètres',
@@ -793,6 +799,8 @@ const messages: Record<Locale, Record<string, string>> = {
     'chat.send': '➤ Отправить',
     'chat.sending': '⚙️ Отправка',
     'chat.inputHint': 'Enter — отправить, Shift+Enter — новая строка',
+    'conversation.renameTitle': 'Переименовать чат',
+    'conversation.renamePrompt': 'Введите новое название чата:',
 
     // Settings
     'settings.title': 'Настройки',
@@ -1021,6 +1029,8 @@ const messages: Record<Locale, Record<string, string>> = {
     'chat.send': '➤ 送信',
     'chat.sending': '⚙️ 送信中',
     'chat.inputHint': 'Enter で送信、Shift+Enter で改行',
+    'conversation.renameTitle': '会話名を変更',
+    'conversation.renamePrompt': '新しい会話名を入力してください:',
 
     // Settings
     'settings.title': '設定',

@@ -25,6 +25,7 @@ export const GITHUB_PR_CREATE_TOOL_NAME = 'github_pr_create'
 export const CREATE_SKILL_TOOL_NAME = 'create_skill'
 export const USE_SKILL_TOOL_NAME = 'use_skill'
 export const PROPOSE_TOOL_TOOL_NAME = 'propose_tool'
+export const DISPATCH_SUBAGENTS_TOOL_NAME = 'dispatch_subagents'
 
 const CODING_MODE_TOOLS = new Set<string>([
   GIT_COMMIT_TOOL_NAME,
@@ -416,6 +417,45 @@ export const agentTools: ToolDefinition[] = [
     },
   },
   {
+    name: DISPATCH_SUBAGENTS_TOOL_NAME,
+    description:
+      'Spawn 1-8 worker subagents in parallel, each handling one slice of a repetitive task (reading many files, scanning many directories, auditing many configs). ' +
+      'Each subagent runs its own short agent loop with the same tools you have, then reports back a free-form final message summarizing what it found. ' +
+      'Use when the work decomposes into independent, similar sub-tasks. ' +
+      'Examples: "summarize each of these 5 README files", "find usages of X across these directories", "audit each package.json for outdated deps". ' +
+      'DO NOT use for sequential work where step N+1 depends on step N — that is one-by-one work for you, not for subagents. ' +
+      'DO NOT assign subagents tasks that write to overlapping files — keep them in separate lanes. ' +
+      'DO NOT call dispatch_subagents from inside a subagent (no nested fanout).',
+    parameters: {
+      type: 'object',
+      properties: {
+        rationale: {
+          type: 'string',
+          description: 'One sentence explaining why fanning out helps here (vs. doing the work inline).',
+        },
+        subagents: {
+          type: 'array',
+          description: 'Between 1 and 8 subagent specs. Each must have a distinct, self-contained task — the subagent does NOT see the parent chat history. Asking for more than 8 will be rejected.',
+          items: {
+            type: 'object',
+            properties: {
+              name: {
+                type: 'string',
+                description: 'Short label shown in UI, e.g. "audit-readme-foo". Optional but helpful.',
+              },
+              task: {
+                type: 'string',
+                description: 'Specific, self-contained task description for this subagent. Include any file paths, search terms, or constraints it needs.',
+              },
+            },
+            required: ['task'],
+          },
+        },
+      },
+      required: ['subagents', 'rationale'],
+    },
+  },
+  {
     name: STOP_TOOL_NAME,
     description:
       'Call this ONLY after you have verified the task is actually done — e.g. the file you edited reads back as expected, the command you ran exited 0, the tests you ran passed. ' +
@@ -748,6 +788,12 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
       // Handled by the loop — should not arrive here
       return args.final_message || ''
 
+    case DISPATCH_SUBAGENTS_TOOL_NAME:
+      // Handled by the chat-store side-effect handler in the parent loop. If we
+      // reach here, a subagent ignored the prompt rule and tried to call it —
+      // return a clean error rather than recursing.
+      return 'dispatch_subagents is not available in subagent context (no nested fanout). Stay focused on your assigned task.'
+
     default:
       // Plugin-contributed tool: dispatch to main via plugins:execTool.
       // Returns a ToolResult<{ success, data? | error }>; we flatten to a
@@ -812,6 +858,10 @@ export function describeToolCall(toolCall: ToolCall): string {
       return `use_skill(${String((args as any).slug ?? '')})`
     case PROPOSE_TOOL_TOOL_NAME:
       return `propose_tool(${String((args as any).slug ?? '')})`
+    case DISPATCH_SUBAGENTS_TOOL_NAME: {
+      const subs = Array.isArray((args as any).subagents) ? (args as any).subagents : []
+      return `dispatch_subagents(${subs.length} subagent${subs.length === 1 ? '' : 's'})`
+    }
     default:
       return `${toolCall.name}(${Object.keys(args).join(', ')})`
   }

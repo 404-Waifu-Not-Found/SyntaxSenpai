@@ -17,7 +17,12 @@ export type AgentTraceEvent =
   | { type: "retry"; iteration: number; reason: string; attempt: number; delayMs: number }
   | { type: "final_answer"; iteration: number; text: string }
   | { type: "turn_end"; iterations: number }
-  | { type: "error"; iteration: number; message: string };
+  | { type: "error"; iteration: number; message: string }
+  // Subagent fan-out events (additive — older handlers ignore unknown types).
+  | { type: "subagent_dispatch_start"; count: number; rationale?: string }
+  | { type: "subagent_start"; id: string; index: number; task: string }
+  | { type: "subagent_end"; id: string; index: number; durationMs: number; iterations: number; status: "completed" | "failed" | "aborted" }
+  | { type: "subagent_dispatch_end"; durationMs: number; completed: number; failed: number };
 
 export type TraceHandler = (event: AgentTraceEvent) => void;
 

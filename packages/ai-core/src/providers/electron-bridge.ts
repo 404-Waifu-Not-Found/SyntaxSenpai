@@ -72,6 +72,43 @@ export async function* bridgeChatStream(
   let endError: Error | null = null;
   let resolveWaiter: (() => void) | null = null;
 
+  // OpenAI-compatible streams emit tool_calls in fragments keyed by `index`:
+  // only the first fragment has `id`/`function.name`, and `function.arguments`
+  // arrives as a sequence of partial JSON strings that must be concatenated
+  // before parsing. Buffer per-index until finish_reason, then emit a single
+  // assembled tool_call_delta per call.
+  const toolCallBuffers = new Map<
+    number,
+    { id: string; name: string; args: string }
+  >();
+  let nextSyntheticIndex = 0;
+
+  const flushToolCallBuffers = () => {
+    if (toolCallBuffers.size === 0) return;
+    const sorted = Array.from(toolCallBuffers.entries()).sort(
+      ([a], [b]) => a - b
+    );
+    for (const [, buf] of sorted) {
+      let parsedArgs: Record<string, unknown> = {};
+      if (buf.args) {
+        try {
+          parsedArgs = JSON.parse(buf.args) as Record<string, unknown>;
+        } catch {
+          parsedArgs = { _raw: buf.args };
+        }
+      }
+      queue.push({
+        type: "tool_call_delta",
+        toolCall: {
+          id: buf.id || "unknown",
+          name: buf.name,
+          arguments: parsedArgs,
+        },
+      });
+    }
+    toolCallBuffers.clear();
+  };
+
   const wake = () => {
     const r = resolveWaiter;
     resolveWaiter = null;
@@ -86,7 +123,9 @@ export async function* bridgeChatStream(
         choices?: Array<{
           delta?: {
             content?: string;
+            reasoning_content?: string;
             tool_calls?: Array<{
+              index?: number;
               id?: string;
               function?: { name?: string; arguments?: string };
             }>;
@@ -95,31 +134,34 @@ export async function* bridgeChatStream(
         }>;
       };
       const delta = parsed.choices?.[0]?.delta;
+      // DeepSeek reasoner streams chain-of-thought as reasoning_content,
+      // separate from content — surface it so callers can show it live.
+      if (delta?.reasoning_content) {
+        queue.push({ type: "reasoning_delta", delta: delta.reasoning_content });
+      }
       if (delta?.content) {
         queue.push({ type: "text_delta", delta: delta.content });
       }
       if (delta?.tool_calls) {
         for (const tc of delta.tool_calls) {
-          if (!tc?.function) continue;
-          let parsedArgs: Record<string, unknown> = {};
-          if (tc.function.arguments) {
-            try {
-              parsedArgs = JSON.parse(tc.function.arguments) as Record<string, unknown>;
-            } catch {
-              parsedArgs = { _raw: tc.function.arguments };
-            }
+          if (!tc?.function && typeof tc?.index !== "number" && !tc?.id) continue;
+          const idx =
+            typeof tc.index === "number" ? tc.index : nextSyntheticIndex++;
+          const buf = toolCallBuffers.get(idx) || {
+            id: "",
+            name: "",
+            args: "",
+          };
+          if (tc.id) buf.id = tc.id;
+          if (tc.function?.name) buf.name = tc.function.name;
+          if (typeof tc.function?.arguments === "string") {
+            buf.args += tc.function.arguments;
           }
-          queue.push({
-            type: "tool_call_delta",
-            toolCall: {
-              id: tc.id || "unknown",
-              name: tc.function.name || "",
-              arguments: parsedArgs,
-            },
-          });
+          toolCallBuffers.set(idx, buf);
         }
       }
       if (parsed.choices?.[0]?.finish_reason) {
+        flushToolCallBuffers();
         queue.push({ type: "done" });
       }
     } catch {
@@ -135,6 +177,9 @@ export async function* bridgeChatStream(
       if (typeof payload.status === "number") err.status = payload.status;
       endError = err;
     }
+    // Some providers close the stream without emitting a finish_reason chunk —
+    // flush any buffered tool calls so they aren't silently dropped.
+    if (!payload?.error) flushToolCallBuffers();
     ended = true;
     wake();
   };

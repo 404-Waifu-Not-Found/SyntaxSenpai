@@ -112,7 +112,7 @@ export interface ChatResponse {
 }
 
 export interface StreamChunk {
-  type: "text_delta" | "tool_call_delta" | "done" | "error";
+  type: "text_delta" | "reasoning_delta" | "tool_call_delta" | "done" | "error";
   delta?: string;
   toolCall?: Partial<ToolCall>;
   error?: string;

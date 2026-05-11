@@ -10,6 +10,7 @@ import { useIpc } from './composables/use-ipc'
 import { useVoice } from './composables/use-voice'
 import { loadPluginTools } from './agent-tools'
 import ChatBubble from './components/ChatBubble.vue'
+import SubagentPanel from './components/SubagentPanel.vue'
 import AppAvatar from './components/AppAvatar.vue'
 import TypingDots from './components/TypingDots.vue'
 import MessageSkeleton from './components/MessageSkeleton.vue'
@@ -2183,6 +2184,30 @@ async function handleImportData() {
                     @change="store.setApiSpikeThresholdMs(Number(($event.target as HTMLInputElement).value))"
                   >
                 </label>
+                <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
+                  <div class="font-semibold text-neutral-200">Subagent iteration cap</div>
+                  <div class="mt-1 text-xs text-neutral-500">Max iterations each dispatched subagent gets before it must stop. Lower = cheaper, higher = more thorough. Default 6.</div>
+                  <input
+                    class="input-field mt-3"
+                    type="number"
+                    min="3"
+                    max="12"
+                    :value="store.subagentMaxIterations"
+                    @change="store.setSubagentMaxIterations(Number(($event.target as HTMLInputElement).value))"
+                  >
+                </label>
+                <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
+                  <div class="font-semibold text-neutral-200">Subagent concurrency</div>
+                  <div class="mt-1 text-xs text-neutral-500">How many subagents run in parallel per dispatch. Lower = friendlier to rate limits. Default 4.</div>
+                  <input
+                    class="input-field mt-3"
+                    type="number"
+                    min="1"
+                    max="8"
+                    :value="store.subagentConcurrency"
+                    @change="store.setSubagentConcurrency(Number(($event.target as HTMLInputElement).value))"
+                  >
+                </label>
               </div>
 
               <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -3550,6 +3575,10 @@ async function handleImportData() {
                 :timestamp="msg.timestamp"
                 :recent="msg.id === store.recentMessageId"
                 :show-copy="msg.role === 'assistant'"
+              />
+              <SubagentPanel
+                v-if="msg.subagents && msg.subagents.length > 0"
+                :subagents="msg.subagents"
               />
               <div
                 v-if="msg.attachments && msg.attachments.length > 0"

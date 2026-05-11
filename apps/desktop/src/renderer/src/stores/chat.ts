@@ -6,7 +6,21 @@ import { AIChatRuntime, withRetry, classifyError, describeError } from '@syntax-
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
 import { createLogger } from '../composables/logger'
-import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, loadPluginTools, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, CARD_MARKER_FENCE, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
+import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, loadPluginTools, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, CARD_MARKER_FENCE, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
+import { runAgentTurn, type SideEffectResult } from '../agent/run-turn'
+import {
+  dispatchSubagents,
+  type SubagentSnapshot,
+  SUBAGENT_DEFAULT_MAX_ITERATIONS,
+  SUBAGENT_DEFAULT_CONCURRENCY,
+  SUBAGENT_MAX_COUNT,
+  SUBAGENT_MIN_ITERATIONS,
+  SUBAGENT_HARD_MAX_ITERATIONS,
+  SUBAGENT_MIN_CONCURRENCY,
+  SUBAGENT_HARD_MAX_CONCURRENCY,
+  SUBAGENT_MAX_ITERATIONS_STORAGE_KEY,
+  SUBAGENT_CONCURRENCY_STORAGE_KEY,
+} from '../agent/subagent-runner'
 import type { ActiveCodingRepo } from '../types/coding-session'
 
 const chatLog = createLogger({ scope: 'chat' })
@@ -67,17 +81,6 @@ function prependCardMarkers(cards: RenderCardPayload[], content: string): string
   return trimmed ? `${marker}\n\n${trimmed}` : marker
 }
 
-function annotateToolResult(result: string, iteration: number, maxIterations: number): string {
-  const remaining = Math.max(0, maxIterations - iteration)
-  if (remaining <= 0) {
-    return `${result}\n\n[runtime] This was your LAST tool iteration. You MUST call stop_response in your next reply.`
-  }
-  if (remaining <= 2) {
-    return `${result}\n\n[runtime] ${remaining} tool iteration${remaining === 1 ? '' : 's'} left — wrap up and call stop_response soon.`
-  }
-  return result
-}
-
 export interface MessageAttachment {
   id: string
   url: string       // data: URL so it survives reloads without extra storage
@@ -95,6 +98,7 @@ export interface Message {
   waifuDisplayName?: string
   attachments?: MessageAttachment[]
   sentiment?: SentimentResult
+  subagents?: SubagentSnapshot[]
 }
 
 interface ApiTelemetry {
@@ -702,6 +706,18 @@ export const useChatStore = defineStore('chat', () => {
     60000,
   ))
   const webSearchEnabled = ref(readStoredBoolean(WEB_SEARCH_ENABLED_STORAGE_KEY, false))
+  const subagentMaxIterations = ref(readStoredNumber(
+    SUBAGENT_MAX_ITERATIONS_STORAGE_KEY,
+    SUBAGENT_DEFAULT_MAX_ITERATIONS,
+    SUBAGENT_MIN_ITERATIONS,
+    SUBAGENT_HARD_MAX_ITERATIONS,
+  ))
+  const subagentConcurrency = ref(readStoredNumber(
+    SUBAGENT_CONCURRENCY_STORAGE_KEY,
+    SUBAGENT_DEFAULT_CONCURRENCY,
+    SUBAGENT_MIN_CONCURRENCY,
+    SUBAGENT_HARD_MAX_CONCURRENCY,
+  ))
 
   // Cumulative token + cost counters for the current conversation. Reset on
   // conversation switch. Stored on the store so App.vue can render them.
@@ -848,6 +864,79 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  // Streaming variant of callProviderChat. Drains provider.stream() and
+  // assembles a chat()-shaped response so the existing tool-call loop can
+  // process tool_calls unchanged. While streaming, fires onTextDelta /
+  // onReasoningDelta on the request so the UI can render text live.
+  //
+  // Tool-call assembly (concatenating per-index argument fragments and
+  // JSON-parsing once at the end) lives in the provider stream itself —
+  // tool_call_delta chunks are guaranteed complete by the time they arrive
+  // here, so we just collect them.
+  async function streamProviderChat(provider: any, req: any): Promise<any> {
+    const finalReq = provider?.id === 'anthropic'
+      ? req
+      : {
+          ...req,
+          systemPrompt: ((req.cachedSystemPrompt || '') + (req.systemPrompt || '')) || undefined,
+          cachedSystemPrompt: undefined,
+        }
+
+    const drain = async (): Promise<any> => {
+      let content = ''
+      let reasoningContent = ''
+      const toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = []
+      let synthId = 0
+
+      for await (const chunk of provider.stream(finalReq) as AsyncIterable<any>) {
+        if (req.signal?.aborted) break
+        if (chunk.type === 'text_delta' && chunk.delta) {
+          content += chunk.delta
+          req.onTextDelta?.(chunk.delta)
+        } else if (chunk.type === 'reasoning_delta' && chunk.delta) {
+          reasoningContent += chunk.delta
+          req.onReasoningDelta?.(chunk.delta)
+        } else if (chunk.type === 'tool_call_delta' && chunk.toolCall) {
+          const tc = chunk.toolCall as { id?: string; name?: string; arguments?: any }
+          toolCalls.push({
+            id: tc.id && tc.id !== 'unknown' ? tc.id : `tc-${Date.now()}-${synthId++}`,
+            name: tc.name || '',
+            arguments: (tc.arguments && typeof tc.arguments === 'object')
+              ? (tc.arguments as Record<string, unknown>)
+              : {},
+          })
+        } else if (chunk.type === 'error') {
+          throw new Error(chunk.error || 'stream error')
+        }
+      }
+
+      return {
+        id: '',
+        content,
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        reasoningContent: reasoningContent || undefined,
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        finishReason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
+      }
+    }
+
+    return await withRetry(drain, {
+      maxAttempts: 4,
+      signal: req.signal,
+      onRetry: (err, attempt, delayMs) => {
+        const kind = err.kind === 'rate_limit' ? 'Rate limited' :
+          err.kind === 'network' ? 'Network blip' :
+          err.kind === 'timeout' ? 'Timed out' :
+          err.kind === 'server' ? 'Upstream error' : 'Retrying'
+        try {
+          window.dispatchEvent(new CustomEvent('app:retry', {
+            detail: `${kind} — retrying in ${Math.round(delayMs / 100) / 10}s (attempt ${attempt + 1})`,
+          }))
+        } catch { /* ignore */ }
+      },
+    })
+  }
+
   function setAgentMode(mode: AgentMode) {
     agentMode.value = mode
     localStorage.setItem('syntax-senpai-agent-mode', mode)
@@ -857,6 +946,18 @@ export const useChatStore = defineStore('chat', () => {
     const nextValue = Math.max(1, Math.min(24, Math.round(value)))
     maxToolIterations.value = nextValue
     localStorage.setItem(MAX_TOOL_ITERATIONS_STORAGE_KEY, String(nextValue))
+  }
+
+  function setSubagentMaxIterations(value: number) {
+    const nextValue = Math.max(SUBAGENT_MIN_ITERATIONS, Math.min(SUBAGENT_HARD_MAX_ITERATIONS, Math.round(value)))
+    subagentMaxIterations.value = nextValue
+    localStorage.setItem(SUBAGENT_MAX_ITERATIONS_STORAGE_KEY, String(nextValue))
+  }
+
+  function setSubagentConcurrency(value: number) {
+    const nextValue = Math.max(SUBAGENT_MIN_CONCURRENCY, Math.min(SUBAGENT_HARD_MAX_CONCURRENCY, Math.round(value)))
+    subagentConcurrency.value = nextValue
+    localStorage.setItem(SUBAGENT_CONCURRENCY_STORAGE_KEY, String(nextValue))
   }
 
   function setApiSpikeThresholdMs(value: number) {
@@ -1543,57 +1644,78 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
           let finalContent = ''
 
+          // Live streaming bubble for this waifu's turn. Used by both the
+          // tools+streaming branch and the no-tools streaming branch so the
+          // user sees text flowing in as the model produces it.
+          const turnLiveAssistantId = `assistant-${waifu.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+          let liveBubbleAdded = false
+
           if (hasTools) {
             const provider = runtime.getProvider()
             const aiHistory = [...sharedHistory]
             const maxIterations = maxToolIterations.value
-            let stopped = false
             const toolMsgIds: string[] = []
             const pendingCards: RenderCardPayload[] = []
 
-            for (let iteration = 0; iteration <= maxIterations; iteration++) {
-              if (streamController.value?.signal.aborted) {
-                stopped = true
-                break
-              }
-              const requestStartedAt = performance.now()
-              const response = await callProviderChat(provider, {
-                model,
-                messages: aiHistory,
-                tools,
-                systemPrompt,
-                cachedSystemPrompt,
-                signal: streamController.value?.signal,
-              })
-              apiRoundTrips.push(performance.now() - requestStartedAt)
-              recordUsage(model, response?.usage)
+            let liveText = ''
+            let liveReasoning = ''
 
-              if (!response.toolCalls || response.toolCalls.length === 0) {
-                finalContent = response.content || ''
-                break
-              }
-
-              aiHistory.push({
-                id: response.id || `assistant-tc-${waifu.id}-${Date.now()}`,
+            const ensureLiveBubble = () => {
+              if (liveBubbleAdded) return
+              messages.value.push({
+                id: turnLiveAssistantId,
                 role: 'assistant',
-                content: response.content || '',
-                toolCalls: response.toolCalls,
-                reasoningContent: (response as any).reasoningContent,
-              })
+                content: '',
+                timestamp: now(),
+                waifuId: waifu.id,
+                waifuDisplayName: waifu.displayName,
+              } as Message)
+              recentMessageId.value = turnLiveAssistantId
+              liveBubbleAdded = true
+            }
+            const updateLiveBubble = () => {
+              if (!liveBubbleAdded) return
+              const m = messages.value.find((x) => x.id === turnLiveAssistantId)
+              if (!m) return
+              m.content = liveText
+                ? liveText
+                : liveReasoning
+                  ? `*💭 Thinking…*\n\n${liveReasoning}`
+                  : ''
+            }
 
-              for (const toolCall of response.toolCalls) {
+            const turnResult = await runAgentTurn({
+              callProvider: (req) => streamProviderChat(provider, req),
+              model,
+              history: aiHistory,
+              tools,
+              systemPrompt,
+              cachedSystemPrompt,
+              maxIterations,
+              abortSignal: streamController.value?.signal,
+              onAssistantIterationStart: () => {
+                liveText = ''
+                liveReasoning = ''
+                updateLiveBubble()
+              },
+              onAssistantTextDelta: (delta) => {
+                ensureLiveBubble()
+                liveText += delta
+                updateLiveBubble()
+              },
+              onAssistantReasoningDelta: (delta) => {
+                ensureLiveBubble()
+                liveReasoning += delta
+                updateLiveBubble()
+              },
+              handleSideEffect: async (toolCall): Promise<SideEffectResult | null> => {
                 if (toolCall.name === STOP_TOOL_NAME) {
-                  finalContent = (toolCall.arguments as any).final_message || response.content || ''
-                  aiHistory.push({
-                    id: `tool-result-${Date.now()}-${toolCall.id}`,
-                    role: 'tool',
-                    content: 'ok',
-                    toolCallId: toolCall.id,
-                  })
-                  stopped = true
-                  break
+                  return {
+                    resultContent: 'ok',
+                    stop: true,
+                    finalContent: (toolCall.arguments as any).final_message || '',
+                  }
                 }
-
                 if (toolCall.name === SET_AFFECTION_TOOL_NAME) {
                   const newVal = clampAffection(Number((toolCall.arguments as any).value ?? affectionValue))
                   const milestone = updateAffectionWithMilestone(waifu.id, newVal)
@@ -1601,64 +1723,70 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                     affection.value = newVal
                   }
                   if (milestone) emitMilestoneToast(waifu, milestone)
-
-                  aiHistory.push({
-                    id: `tool-result-${Date.now()}-${toolCall.id}`,
-                    role: 'tool',
-                    content: `好感度 updated to ${newVal}`,
-                    toolCallId: toolCall.id,
-                  })
-                  continue
+                  return { resultContent: `好感度 updated to ${newVal}` }
                 }
-
                 if (toolCall.name === TODO_WRITE_TOOL_NAME) {
                   const items = parseTodoList((toolCall.arguments as any).items)
                   activeTodoList.value = items
-                  aiHistory.push({
-                    id: `tool-result-${Date.now()}-${toolCall.id}`,
-                    role: 'tool',
-                    content: `Todo list updated (${items.filter((i) => i.status === 'done').length}/${items.length} done).`,
-                    toolCallId: toolCall.id,
-                  })
-                  continue
+                  return { resultContent: `Todo list updated (${items.filter((i) => i.status === 'done').length}/${items.length} done).` }
                 }
-
                 if (toolCall.name === RENAME_CHAT_TOOL_NAME) {
-                  const result = await applyRenameChat((toolCall.arguments as any).title, conversationId.value)
-                  aiHistory.push({
-                    id: `tool-result-${Date.now()}-${toolCall.id}`,
-                    role: 'tool',
-                    content: result,
-                    toolCallId: toolCall.id,
-                  })
-                  continue
+                  const renameResult = await applyRenameChat((toolCall.arguments as any).title, conversationId.value)
+                  return { resultContent: renameResult }
                 }
-
                 if (toolCall.name === RENDER_CARD_TOOL_NAME) {
                   const payload = parseRenderCardArgs(toolCall.arguments)
                   if (payload) {
                     pendingCards.push(payload)
-                    aiHistory.push({
-                      id: `tool-result-${Date.now()}-${toolCall.id}`,
-                      role: 'tool',
-                      content: `Rendered ${payload.type} card.`,
-                      toolCallId: toolCall.id,
-                    })
-                  } else {
-                    aiHistory.push({
-                      id: `tool-result-${Date.now()}-${toolCall.id}`,
-                      role: 'tool',
-                      content: 'Error: render_card requires a valid { type, data } object. Supported types: weather, table, link_preview, code_comparison.',
-                      toolCallId: toolCall.id,
-                    })
+                    return { resultContent: `Rendered ${payload.type} card.` }
                   }
-                  continue
+                  return { resultContent: 'Error: render_card requires a valid { type, data } object. Supported types: weather, table, link_preview, code_comparison.' }
                 }
-
+                if (toolCall.name === DISPATCH_SUBAGENTS_TOOL_NAME) {
+                  const args = (toolCall.arguments ?? {}) as { rationale?: string; subagents?: any[] }
+                  const specs = Array.isArray(args.subagents) ? args.subagents : []
+                  const dispatchMsgId = `tool-${waifu.id}-${Date.now()}-${toolCall.id}`
+                  toolMsgIds.push(dispatchMsgId)
+                  const initialMessage: Message = {
+                    id: dispatchMsgId,
+                    role: 'assistant',
+                    content: `${waifu.displayName} is running 🤖 dispatch_subagents (${specs.length} subagent${specs.length === 1 ? '' : 's'} starting…)`,
+                    timestamp: now(),
+                    waifuId: waifu.id,
+                    waifuDisplayName: waifu.displayName,
+                  }
+                  ;(initialMessage as any).subagents = []
+                  messages.value.push(initialMessage)
+                  const dispatchResult = await dispatchSubagents({
+                    rationale: typeof args.rationale === 'string' ? args.rationale : '',
+                    subagents: specs.map((s: any) => ({ name: s?.name, task: String(s?.task ?? '') })),
+                    parentTools: tools,
+                    callProvider: (req) => streamProviderChat(provider, req),
+                    model,
+                    cwd: activeCodingRepo.value?.path,
+                    parentMaxIterations: maxIterations,
+                    abortSignal: streamController.value?.signal,
+                    executeTool: (call) => executeToolCall(call),
+                    onSnapshot: (snaps) => {
+                      const msg = messages.value.find((m) => m.id === dispatchMsgId) as (Message & { subagents?: SubagentSnapshot[] }) | undefined
+                      if (msg) msg.subagents = snaps as SubagentSnapshot[]
+                    },
+                  })
+                  const completed = dispatchResult.snapshots.filter((s) => s.status === 'completed').length
+                  const failed = dispatchResult.snapshots.length - completed
+                  const dispatchMsg = messages.value.find((m) => m.id === dispatchMsgId)
+                  if (dispatchMsg) {
+                    dispatchMsg.content = `${waifu.displayName} ran 🤖 dispatch_subagents (${completed} completed, ${failed} failed of ${dispatchResult.snapshots.length})`
+                  }
+                  return { resultContent: dispatchResult.aggregateResult }
+                }
+                return null
+              },
+              executeTool: (toolCall) => executeToolCall(toolCall),
+              onToolStart: (toolCall) => {
                 const label = describeToolCall(toolCall)
                 const toolMsgId = `tool-${waifu.id}-${Date.now()}-${toolCall.id}`
                 toolMsgIds.push(toolMsgId)
-
                 messages.value.push({
                   id: toolMsgId,
                   role: 'assistant',
@@ -1667,28 +1795,24 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                   waifuId: waifu.id,
                   waifuDisplayName: waifu.displayName,
                 })
-
-                const result = await executeToolCall(toolCall)
+                return toolMsgId
+              },
+              onToolResult: (toolCall, result, msgId) => {
+                if (!msgId) return
+                const label = describeToolCall(toolCall)
                 const preview = result.length > 500 ? result.slice(0, 500) + '\u2026' : result
-                const toolMsg = messages.value.find((message) => message.id === toolMsgId)
+                const toolMsg = messages.value.find((message) => message.id === msgId)
                 if (toolMsg) {
                   toolMsg.content = `${waifu.displayName} ran \`${label}\`\n\`\`\`\n${preview}\n\`\`\``
                 }
+              },
+              onApiRoundTrip: (dur, response) => {
+                apiRoundTrips.push(dur)
+                recordUsage(model, response?.usage)
+              },
+            })
 
-                aiHistory.push({
-                  id: `tool-result-${Date.now()}-${toolCall.id}`,
-                  role: 'tool',
-                  content: annotateToolResult(result, iteration, maxIterations),
-                  toolCallId: toolCall.id,
-                })
-              }
-
-              if (stopped) break
-
-              if (iteration === maxIterations) {
-                finalContent = '(Reached maximum iterations — stopping.)'
-              }
-            }
+            finalContent = turnResult.finalContent
 
             if (pendingCards.length > 0) {
               finalContent = prependCardMarkers(pendingCards, finalContent)
@@ -1699,10 +1823,28 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               messages.value = messages.value.filter((message) => !idsToRemove.has(message.id))
             }
           } else {
+            // No-tools branch: stream directly into the live bubble.
+            const ensureBubble = () => {
+              if (liveBubbleAdded) return
+              messages.value.push({
+                id: turnLiveAssistantId,
+                role: 'assistant',
+                content: '',
+                timestamp: now(),
+                waifuId: waifu.id,
+                waifuDisplayName: waifu.displayName,
+              } as Message)
+              recentMessageId.value = turnLiveAssistantId
+              liveBubbleAdded = true
+            }
             const streamStartedAt = performance.now()
-            for await (const chunk of runtime.streamMessage({ text: trimmedText, history: sharedHistory })) {
+            for await (const chunk of runtime.streamMessage({ text: trimmedText, history: sharedHistory, signal: streamController.value?.signal })) {
+              if (streamController.value?.signal.aborted) break
               if (chunk.type === 'text_delta' && chunk.delta) {
                 finalContent += chunk.delta
+                ensureBubble()
+                const m = messages.value.find((x) => x.id === turnLiveAssistantId)
+                if (m) m.content = finalContent
               }
             }
             apiRoundTrips.push(performance.now() - streamStartedAt)
@@ -1716,6 +1858,45 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             role: 'assistant',
             content: `${waifu.displayName}: ${cleanContent}`,
           })
+
+          // Finalize the live bubble (created during streaming) with the
+          // cleaned content and persist it. If no bubble was created (e.g.
+          // streaming yielded nothing), push a fresh one so the user still
+          // sees the response.
+          if (liveBubbleAdded) {
+            const liveMsg = messages.value.find((m) => m.id === turnLiveAssistantId)
+            if (liveMsg) {
+              liveMsg.content = cleanContent
+              liveMsg.timestamp = now()
+              recentMessageId.value = turnLiveAssistantId
+            }
+            if (convId) {
+              try {
+                await invoke('store:addMessage', convId, {
+                  id: turnLiveAssistantId,
+                  role: 'assistant',
+                  content: cleanContent,
+                  timestamp: now(),
+                  waifuId: waifu.id,
+                  waifuDisplayName: waifu.displayName,
+                } as Message)
+              } catch (e) { console.warn('Failed to save assistant message:', e) }
+            }
+          } else {
+            const assistantMsg: Message = {
+              id: turnLiveAssistantId,
+              role: 'assistant',
+              content: cleanContent,
+              timestamp: now(),
+              waifuId: waifu.id,
+              waifuDisplayName: waifu.displayName,
+            }
+            messages.value.push(assistantMsg)
+            recentMessageId.value = turnLiveAssistantId
+            if (convId) {
+              try { await invoke('store:addMessage', convId, assistantMsg) } catch (e) { console.warn('Failed to save assistant message:', e) }
+            }
+          }
 
           for (const task of tasks) {
             if (!waifus.some((candidate) => candidate.id === task.targetWaifuId)) {
@@ -1739,24 +1920,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         )
       }
 
-      for (const turn of assistantTurns) {
-        const assistantId = `assistant-${turn.waifu.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-        const assistantMsg: Message = {
-          id: assistantId,
-          role: 'assistant',
-          content: turn.content,
-          timestamp: now(),
-          waifuId: turn.waifu.id,
-          waifuDisplayName: turn.waifu.displayName,
-        }
-
-        messages.value.push(assistantMsg)
-        recentMessageId.value = assistantId
-
-        if (convId) {
-          try { await invoke('store:addMessage', convId, assistantMsg) } catch (e) { console.warn('Failed to save assistant message:', e) }
-        }
-      }
+      // assistantTurns is retained for parity with the previous API contract
+      // but bubbles are now committed in-place during streaming above.
+      void assistantTurns
 
       if (isNewConversation && convId) autoNameConversation(convId, text)
       extractAndSaveMemory(trimmedText)
@@ -2060,135 +2226,149 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           }))
 
         const maxIterations = maxToolIterations.value
-        let finalContent = ''
-        let stopped = false
         const toolMsgIds: string[] = [] // track tool bubbles so we can remove them later
         const apiRoundTrips: number[] = []
         const pendingCards: RenderCardPayload[] = []
 
-        for (let i = 0; i <= maxIterations; i++) {
-          if (streamController.value?.signal.aborted) {
-            stopped = true
-            break
-          }
-          const requestStartedAt = performance.now()
-          const response = await callProviderChat(provider, {
-            model,
-            messages: aiHistory,
-            tools,
-            systemPrompt,
-            cachedSystemPrompt,
-            signal: streamController.value?.signal,
-          })
-          apiRoundTrips.push(performance.now() - requestStartedAt)
-          recordUsage(model, response?.usage)
+        // Live streaming bubble: one persistent assistant message that the
+        // current iteration writes into. Each new iteration resets it so only
+        // the final iteration's text remains visible (matching the
+        // non-streaming behavior where intermediate text is discarded).
+        const liveAssistantId = `assistant-${Date.now()}`
+        let liveBubbleAdded = false
+        let liveText = ''
+        let liveReasoning = ''
 
-          // No tool calls → natural stop, use the text response
-          if (!response.toolCalls || response.toolCalls.length === 0) {
-            finalContent = response.content
-            break
-          }
-
-          // Add assistant's tool-call message to AI history.
-          // `reasoningContent` must be echoed back on DeepSeek reasoner models —
-          // they 400 with "reasoning_content in the thinking mode must be passed
-          // back to the API" otherwise.
-          aiHistory.push({
-            id: response.id || `assistant-tc-${Date.now()}`,
+        const ensureLiveBubble = () => {
+          if (liveBubbleAdded) return
+          messages.value.push({
+            id: liveAssistantId,
             role: 'assistant',
-            content: response.content || '',
-            toolCalls: response.toolCalls,
-            reasoningContent: (response as any).reasoningContent,
+            content: '',
+            timestamp: now(),
           })
+          recentMessageId.value = liveAssistantId
+          liveBubbleAdded = true
+        }
 
-          // Process each tool call
-          for (const tc of response.toolCalls) {
-            // ── stop_response: AI is done ──
+        const updateLiveBubble = () => {
+          if (!liveBubbleAdded) return
+          const m = messages.value.find((x) => x.id === liveAssistantId)
+          if (!m) return
+          // While reasoning is streaming and no text has arrived yet, show
+          // a thinking indicator. Once text starts, swap to text only.
+          m.content = liveText
+            ? liveText
+            : liveReasoning
+              ? `*💭 Thinking…*\n\n${liveReasoning}`
+              : ''
+        }
+
+        const turnResult = await runAgentTurn({
+          callProvider: (req) => streamProviderChat(provider, req),
+          model,
+          history: aiHistory,
+          tools,
+          systemPrompt,
+          cachedSystemPrompt,
+          maxIterations,
+          abortSignal: streamController.value?.signal,
+          onAssistantIterationStart: () => {
+            liveText = ''
+            liveReasoning = ''
+            updateLiveBubble()
+          },
+          onAssistantTextDelta: (delta) => {
+            ensureLiveBubble()
+            liveText += delta
+            updateLiveBubble()
+          },
+          onAssistantReasoningDelta: (delta) => {
+            ensureLiveBubble()
+            liveReasoning += delta
+            updateLiveBubble()
+          },
+          handleSideEffect: async (tc): Promise<SideEffectResult | null> => {
             if (tc.name === STOP_TOOL_NAME) {
-              finalContent = (tc.arguments as any).final_message || response.content || ''
-              stopped = true
-
-              aiHistory.push({
-                id: `tool-result-${Date.now()}-${tc.id}`,
-                role: 'tool',
-                content: 'ok',
-                toolCallId: tc.id,
-              })
-              break
+              return {
+                resultContent: 'ok',
+                stop: true,
+                finalContent: (tc.arguments as any).final_message || '',
+              }
             }
-
-            // ── set_affection: AI adjusts 好感度 ──
             if (tc.name === SET_AFFECTION_TOOL_NAME) {
               const newVal = Math.max(0, Math.min(100, Math.round(+(tc.arguments as any).value || affection.value)))
               affection.value = newVal
               const milestone = updateAffectionWithMilestone(selectedWaifuId.value, newVal)
               if (milestone) {
-                const waifu = allWaifus.value.find((w) => w.id === selectedWaifuId.value)
-                if (waifu) emitMilestoneToast(waifu, milestone)
+                const w = allWaifus.value.find((x) => x.id === selectedWaifuId.value)
+                if (w) emitMilestoneToast(w, milestone)
               }
-
-              aiHistory.push({
-                id: `tool-result-${Date.now()}-${tc.id}`,
-                role: 'tool',
-                content: `好感度 updated to ${newVal}`,
-                toolCallId: tc.id,
-              })
-              continue
+              return { resultContent: `好感度 updated to ${newVal}` }
             }
-
-            // ── todo_write: AI posts a visible checklist ──
             if (tc.name === TODO_WRITE_TOOL_NAME) {
               const items = parseTodoList((tc.arguments as any).items)
               activeTodoList.value = items
-              aiHistory.push({
-                id: `tool-result-${Date.now()}-${tc.id}`,
-                role: 'tool',
-                content: `Todo list updated (${items.filter((i) => i.status === 'done').length}/${items.length} done).`,
-                toolCallId: tc.id,
-              })
-              continue
+              return { resultContent: `Todo list updated (${items.filter((i) => i.status === 'done').length}/${items.length} done).` }
             }
-
-            // ── rename_chat: AI renames the current conversation ──
             if (tc.name === RENAME_CHAT_TOOL_NAME) {
-              const result = await applyRenameChat((tc.arguments as any).title, conversationId.value)
-              aiHistory.push({
-                id: `tool-result-${Date.now()}-${tc.id}`,
-                role: 'tool',
-                content: result,
-                toolCallId: tc.id,
-              })
-              continue
+              const renameResult = await applyRenameChat((tc.arguments as any).title, conversationId.value)
+              return { resultContent: renameResult }
             }
-
-            // ── render_card: AI emits a rich inline card (weather/table/etc.) ──
             if (tc.name === RENDER_CARD_TOOL_NAME) {
               const payload = parseRenderCardArgs(tc.arguments)
               if (payload) {
                 pendingCards.push(payload)
-                aiHistory.push({
-                  id: `tool-result-${Date.now()}-${tc.id}`,
-                  role: 'tool',
-                  content: `Rendered ${payload.type} card.`,
-                  toolCallId: tc.id,
-                })
-              } else {
-                aiHistory.push({
-                  id: `tool-result-${Date.now()}-${tc.id}`,
-                  role: 'tool',
-                  content: 'Error: render_card requires a valid { type, data } object. Supported types: weather, table, link_preview, code_comparison.',
-                  toolCallId: tc.id,
-                })
+                return { resultContent: `Rendered ${payload.type} card.` }
               }
-              continue
+              return { resultContent: 'Error: render_card requires a valid { type, data } object. Supported types: weather, table, link_preview, code_comparison.' }
             }
-
-            // ── tool call: run it ──
+            if (tc.name === DISPATCH_SUBAGENTS_TOOL_NAME) {
+              const args = (tc.arguments ?? {}) as { rationale?: string; subagents?: any[] }
+              const specs = Array.isArray(args.subagents) ? args.subagents : []
+              const dispatchMsgId = `tool-${Date.now()}-${tc.id}`
+              toolMsgIds.push(dispatchMsgId)
+              const initialMessage: Message = {
+                id: dispatchMsgId,
+                role: 'assistant',
+                content: `\ud83e\udd16 dispatch_subagents (${specs.length} subagent${specs.length === 1 ? '' : 's'} starting\u2026)`,
+                timestamp: now(),
+              }
+              ;(initialMessage as any).subagents = []
+              messages.value.push(initialMessage)
+              recentMessageId.value = dispatchMsgId
+              const dispatchResult = await dispatchSubagents({
+                rationale: typeof args.rationale === 'string' ? args.rationale : '',
+                subagents: specs.map((s: any) => ({ name: s?.name, task: String(s?.task ?? '') })),
+                parentTools: tools,
+                callProvider: (req) => streamProviderChat(provider, req),
+                model,
+                cwd: activeCodingRepo.value?.path,
+                parentMaxIterations: maxIterations,
+                subagentMaxIterations: subagentMaxIterations.value,
+                concurrency: subagentConcurrency.value,
+                abortSignal: streamController.value?.signal,
+                executeTool: (call) => executeToolCall(call),
+                onSnapshot: (snaps) => {
+                  const msg = messages.value.find((m) => m.id === dispatchMsgId) as (Message & { subagents?: SubagentSnapshot[] }) | undefined
+                  if (msg) msg.subagents = snaps as SubagentSnapshot[]
+                },
+              })
+              const completed = dispatchResult.snapshots.filter((s) => s.status === 'completed').length
+              const failed = dispatchResult.snapshots.length - completed
+              const dispatchMsg = messages.value.find((m) => m.id === dispatchMsgId)
+              if (dispatchMsg) {
+                dispatchMsg.content = `\ud83e\udd16 dispatch_subagents (${completed} completed, ${failed} failed of ${dispatchResult.snapshots.length})`
+              }
+              return { resultContent: dispatchResult.aggregateResult }
+            }
+            return null
+          },
+          executeTool: (tc) => executeToolCall(tc),
+          onToolStart: (tc) => {
             const label = describeToolCall(tc)
             const toolMsgId = `tool-${Date.now()}-${tc.id}`
             toolMsgIds.push(toolMsgId)
-
-            // Show "running" indicator in chat
             messages.value.push({
               id: toolMsgId,
               role: 'assistant',
@@ -2196,30 +2376,24 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               timestamp: now(),
             })
             recentMessageId.value = toolMsgId
-
-            const result = await executeToolCall(tc)
+            return toolMsgId
+          },
+          onToolResult: (tc, result, msgId) => {
+            if (!msgId) return
+            const label = describeToolCall(tc)
             const preview = result.length > 500 ? result.slice(0, 500) + '\u2026' : result
-
-            // Update chat bubble with output
-            const toolMsg = messages.value.find((m) => m.id === toolMsgId)
+            const toolMsg = messages.value.find((m) => m.id === msgId)
             if (toolMsg) {
               toolMsg.content = `\u{1F4BB} \`${label}\`\n\`\`\`\n${preview}\n\`\`\``
             }
+          },
+          onApiRoundTrip: (dur, response) => {
+            apiRoundTrips.push(dur)
+            recordUsage(model, response?.usage)
+          },
+        })
 
-            aiHistory.push({
-              id: `tool-result-${Date.now()}-${tc.id}`,
-              role: 'tool',
-              content: annotateToolResult(result, i, maxIterations),
-              toolCallId: tc.id,
-            })
-          }
-
-          if (stopped) break
-
-          if (i === maxIterations) {
-            finalContent = '(Reached maximum iterations \u2014 stopping.)'
-          }
-        }
+        let finalContent = turnResult.finalContent
 
         if (pendingCards.length > 0) {
           finalContent = prependCardMarkers(pendingCards, finalContent)
@@ -2231,7 +2405,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           messages.value = messages.value.filter((m) => !idsToRemove.has(m.id))
         }
 
-        // Show the AI's final response
+        // Show the AI's final response — reuse the live streaming bubble.
         if (finalContent) {
           recordApiTelemetry(
             apiRoundTrips.reduce((sum, value) => sum + value, 0),
@@ -2242,19 +2416,24 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
           // Extract memories from AI response and strip tags
           const cleanContent = extractMemoryFromAIResponse(finalContent)
-          const assistantId = `assistant-${Date.now()}`
-          messages.value.push({
-            id: assistantId,
-            role: 'assistant',
-            content: cleanContent,
-            timestamp: now(),
-          })
-          recentMessageId.value = assistantId
+          const liveMsg = messages.value.find((m) => m.id === liveAssistantId)
+          if (liveMsg) {
+            liveMsg.content = cleanContent
+            recentMessageId.value = liveAssistantId
+          } else {
+            messages.value.push({
+              id: liveAssistantId,
+              role: 'assistant',
+              content: cleanContent,
+              timestamp: now(),
+            })
+            recentMessageId.value = liveAssistantId
+          }
 
           if (convId) {
             try {
               await invoke('store:addMessage', convId, {
-                id: assistantId,
+                id: liveAssistantId,
                 role: 'assistant',
                 content: cleanContent,
                 timestamp: now(),
@@ -2263,33 +2442,51 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           }
           // Auto-name after first exchange (runs in background, doesn't block UI)
           if (isNewConversation && convId) autoNameConversation(convId, text)
+        } else if (liveBubbleAdded) {
+          // No final content but the live bubble was created — drop it.
+          messages.value = messages.value.filter((m) => m.id !== liveAssistantId)
         }
       } else {
         // ── No tools: streaming mode ──
         const aiMessages = messages.value.map((m) => ({ id: m.id, role: m.role, content: m.content }))
         let assistantContent = ''
+        let assistantReasoning = ''
         const assistantId = `assistant-${Date.now()}`
         let added = false
         const streamStartedAt = performance.now()
+
+        const ensureBubble = () => {
+          if (added) return
+          messages.value.push({
+            id: assistantId,
+            role: 'assistant',
+            content: '',
+            timestamp: now(),
+          })
+          added = true
+          recentMessageId.value = assistantId
+        }
+        const updateBubble = () => {
+          const last = messages.value.find((m) => m.id === assistantId)
+          if (!last) return
+          last.content = assistantContent
+            ? assistantContent
+            : assistantReasoning
+              ? `*💭 Thinking…*\n\n${assistantReasoning}`
+              : ''
+        }
 
         const streamIter = runtime.streamMessage({ text, history: aiMessages, signal: streamController.value?.signal })
         for await (const chunk of streamIter) {
           if (streamController.value?.signal.aborted) break
           if (chunk.type === 'text_delta' && chunk.delta) {
             assistantContent += chunk.delta
-            if (!added) {
-              messages.value.push({
-                id: assistantId,
-                role: 'assistant',
-                content: assistantContent,
-                timestamp: now(),
-              })
-              added = true
-              recentMessageId.value = assistantId
-            } else {
-              const last = messages.value[messages.value.length - 1]
-              if (last?.id === assistantId) last.content = assistantContent
-            }
+            ensureBubble()
+            updateBubble()
+          } else if (chunk.type === 'reasoning_delta' && chunk.delta) {
+            assistantReasoning += chunk.delta
+            ensureBubble()
+            updateBubble()
           }
         }
 
@@ -2560,6 +2757,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     maxToolIterations,
     apiSpikeThresholdMs,
     webSearchEnabled,
+    subagentMaxIterations,
+    subagentConcurrency,
     usageTotals,
     activeTodoList,
     pendingAttachments,
@@ -2575,6 +2774,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     setAgentMode,
     setMaxToolIterations,
     setApiSpikeThresholdMs,
+    setSubagentMaxIterations,
+    setSubagentConcurrency,
     setWebSearchEnabled,
     deleteMessage,
     regenerateFromMessage,

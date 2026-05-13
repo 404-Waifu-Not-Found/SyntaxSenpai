@@ -382,6 +382,16 @@ Verify before stop_response:
 - stop_response.final_message should state what actually changed and any follow-ups the user still needs to do (e.g. install a new dep, restart the dev server).`
 }
 
+function buildWeChatSessionPromptBlock(active: boolean): string {
+  if (!active) return ''
+  return `\n\n[WeChat Session]
+You are speaking through WeChat. The user sees plain chat — WeChat does NOT render tables, charts, complex markdown, or wide code blocks.
+- Keep replies conversational; prefer prose over lists.
+- For structured output (tables, comparisons, long code, multi-section answers), call the wechat_send tool with as_image=true to render it as a PNG.
+- Your top-level final_message will be auto-relayed to the WeChat peer who started this conversation, so keep it self-contained and concise.
+- Do NOT include internal tool output, debug logs, or "Sent text..." confirmations in your final_message — the user only sees that string in WeChat.`
+}
+
 function buildAffectionPrompt(affection: number, waifuName: string): string {
   return `\n\n[好感度 System — Affection Meter]
 Your current 好感度 (affection) toward this user is: ${affection}/100
@@ -649,6 +659,16 @@ function extractDelegatedTasks(text: string) {
   return { cleanedText, tasks }
 }
 
+/**
+ * WeChat binding metadata for a conversation. Persisted to localStorage
+ * under `syntax-senpai-wechat-bindings` so inbound routing survives restarts.
+ */
+export interface WeChatBinding {
+  peerId: string
+  peerDisplayName: string | null
+  contextToken: string | null
+}
+
 export const useChatStore = defineStore('chat', () => {
   const { invoke } = useIpc()
   const keyManager = useKeyManager()
@@ -750,6 +770,115 @@ export const useChatStore = defineStore('chat', () => {
   // Active todo list rendered as a message bubble. Populated by the todo_write
   // tool; rendered by App.vue next to the assistant messages.
   const activeTodoList = ref<TodoItem[]>([])
+
+  // ── WeChat (iLink) inbound binding ────────────────────────────────────────
+  // Each entry maps a conversationId → the WeChat peer + most recent
+  // context_token. Persisted to localStorage so inbound routing survives
+  // restarts. When a binding is present for the active conversation, the
+  // store auto-relays the final assistant message back via `wechat:send`
+  // and the system prompt switches to the WeChat block (no tables/cards).
+  const WECHAT_BINDINGS_KEY = 'syntax-senpai-wechat-bindings'
+  function loadWeChatBindings(): Record<string, WeChatBinding> {
+    try {
+      const raw = localStorage.getItem(WECHAT_BINDINGS_KEY)
+      if (!raw) return {}
+      const parsed = JSON.parse(raw)
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, WeChatBinding>) : {}
+    } catch { return {} }
+  }
+  function saveWeChatBindings(map: Record<string, WeChatBinding>) {
+    try { localStorage.setItem(WECHAT_BINDINGS_KEY, JSON.stringify(map)) } catch { /* ignore */ }
+  }
+  const wechatBindings = ref<Record<string, WeChatBinding>>(loadWeChatBindings())
+  const currentWeChatBinding = computed<WeChatBinding | null>(() => {
+    const cid = conversationId.value
+    if (!cid) return null
+    return wechatBindings.value[cid] ?? null
+  })
+  function setWeChatBinding(convId: string, binding: WeChatBinding | null) {
+    const next = { ...wechatBindings.value }
+    if (binding) next[convId] = binding
+    else delete next[convId]
+    wechatBindings.value = next
+    saveWeChatBindings(next)
+  }
+  function findConvByWeChatPeer(peerId: string): string | null {
+    for (const [cid, b] of Object.entries(wechatBindings.value)) {
+      if (b.peerId === peerId) return cid
+    }
+    return null
+  }
+
+  /**
+   * Route a fresh inbound WeChat message into a conversation and kick off
+   * the regular send pipeline. New peers get a fresh conversation; known
+   * peers reuse theirs and become the active conversation.
+   */
+  async function handleWeChatInbound(payload: {
+    fromUserId: string
+    displayName?: string | null
+    text: string
+    contextToken?: string | null
+  }): Promise<void> {
+    const peerId = payload?.fromUserId
+    const text = (payload?.text ?? '').toString().trim()
+    if (!peerId || !text) return
+
+    let convId = findConvByWeChatPeer(peerId)
+    if (!convId) {
+      const waifu = selectedWaifu.value
+      try {
+        const res = await invoke(
+          'store:createConversation',
+          selectedWaifuId.value,
+          `💬 WeChat · ${payload.displayName || peerId}`,
+        )
+        if (res?.success && res.conversation?.id) convId = res.conversation.id
+      } catch (err) {
+        console.warn('handleWeChatInbound createConversation failed', err)
+      }
+      if (!convId) return
+      setWeChatBinding(convId, {
+        peerId,
+        peerDisplayName: payload.displayName ?? null,
+        contextToken: payload.contextToken ?? null,
+      })
+      void waifu
+    } else {
+      // Refresh contextToken so subsequent replies thread correctly.
+      setWeChatBinding(convId, {
+        peerId,
+        peerDisplayName: payload.displayName ?? wechatBindings.value[convId]?.peerDisplayName ?? null,
+        contextToken: payload.contextToken ?? wechatBindings.value[convId]?.contextToken ?? null,
+      })
+    }
+
+    await loadConversations()
+    if (conversationId.value !== convId) {
+      await selectConversation(convId)
+    }
+    if (!isLoading.value) {
+      await sendMessage(text)
+    }
+  }
+
+  /** Push the final assistant text back to the bound WeChat peer. Best-effort. */
+  async function relayAssistantToWeChat(convId: string, content: string): Promise<void> {
+    const binding = wechatBindings.value[convId]
+    if (!binding || !binding.peerId) return
+    const text = (content ?? '').toString().trim()
+    if (!text) return
+    try {
+      await invoke('wechat:send', {
+        toUserId: binding.peerId,
+        kind: 'text',
+        content: text,
+        contextToken: binding.contextToken,
+      })
+    } catch (err) {
+      console.warn('relayAssistantToWeChat failed', err)
+    }
+  }
 
   /**
    * Apply a rename_chat tool call: updates the conversation title in storage
@@ -1629,6 +1758,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           systemPrompt += formatSkillsForPrompt(availableSkills.value)
           systemPrompt += buildApiTelemetryPrompt()
           systemPrompt += buildGroupChatPromptBlock(waifu, waifus, pendingTasks.get(waifu.id) || [], round)
+          systemPrompt += buildWeChatSessionPromptBlock(!!currentWeChatBinding.value)
           systemPrompt += activeCodingRepo.value
             ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
             : buildCodingSessionPromptBlock(trimmedText)
@@ -2177,6 +2307,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       systemPrompt += buildMilestoneSidecarBlock(waifu.id)
       systemPrompt += formatSkillsForPrompt(availableSkills.value)
       systemPrompt += buildApiTelemetryPrompt()
+      systemPrompt += buildWeChatSessionPromptBlock(!!currentWeChatBinding.value)
       systemPrompt += activeCodingRepo.value
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(trimmedText)
@@ -2797,5 +2928,10 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     clearMemories,
     sendMessage,
     handleExternalConversationEvent,
+    wechatBindings,
+    currentWeChatBinding,
+    handleWeChatInbound,
+    relayAssistantToWeChat,
+    setWeChatBinding,
   }
 })

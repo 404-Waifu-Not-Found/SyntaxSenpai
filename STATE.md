@@ -23,6 +23,7 @@ SyntaxSenpai is an Electron desktop app ("waifu"-themed AI chatbot) with:
 - `packages/ui`, `packages/ui-loading-screens`, `packages/ui-transitions` — shared Vue UI
 - `packages/waifu-core` — waifu personas + prompt builders
 - `packages/ws-protocol` — shared WS types for mobile pairing
+- `packages/wechat-ilink` — Tencent OpenClaw iLink (personal WeChat) protocol client: QR-login, long-poll bot, text/image send, AES-128-ECB media encryption
 
 ## Providers
 
@@ -74,6 +75,7 @@ Defined in `apps/desktop/src/renderer/src/agent-tools.ts`. All routed through El
 - `git_status` / `git_diff` — convenience wrappers
 - `todo_write` — first-class structured checklist rendered in the chat UI
 - `spotify_now_playing` / `spotify_control` — Spotify desktop control
+- `wechat_list_peers` / `wechat_send` — outbound to a paired WeChat account via Tencent OpenClaw iLink (`@syntax-senpai/wechat-ilink`); `wechat_send` supports `as_image: true` to render content to a PNG via `html-to-image` for tables/code/etc.
 - `set_affection` — internal affection meter update
 - `stop_response` — terminates the agent loop with a final in-character message
 
@@ -88,6 +90,7 @@ System prompt is composed in `stores/chat.ts` from:
 5. `buildGroupChatPromptBlock` (group chat only)
 6. `buildAgentBehaviorPrompt` — plan → gather → do-one-thing → diagnose → retry-once → verify rules (appended when tools are enabled)
 7. `buildCodingSessionPromptBlock` — auto-injected when the user's message looks like a coding task (code fence, file path, tool name, coding verb, error stack, etc.)
+8. `buildWeChatSessionPromptBlock` — auto-injected when the active conversation is bound to a WeChat peer (no tables/cards, top-level final_message auto-relayed to WeChat)
 
 Iteration budget feedback is appended to every tool result (`annotateToolResult`) so the model knows how many iterations remain.
 
@@ -102,6 +105,7 @@ Left sidebar with 7 tabs:
 - **Theme** — 17 presets including Rainbow (live hue cycle via `mix-blend-mode: color` overlay) and Sakura Dark + falling petals overlay
 - **Interface** — UI density (cozy / compact), corner-radius scale, backdrop-blur slider, sakura-petals toggle
 - **Mobile** — QR pairing + connection status
+- **WeChat** — QR pairing for Tencent OpenClaw iLink; status, unpair, last error. Credentials in keytar (`syntax-senpai-wechat`).
 
 ## Chat UX niceties
 

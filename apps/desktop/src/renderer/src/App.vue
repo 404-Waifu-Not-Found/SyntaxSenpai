@@ -339,7 +339,36 @@ interface CustomWaifuEntry {
   id: string
   name: string
   displayName: string
+  sourceAnime?: string
   backstory?: string
+  communicationStyle?: {
+    greetingPrefix?: string
+    affirmationPhrase?: string
+    deflectionPhrase?: string
+    signatureEmojis?: string[]
+    speaksIn3rdPerson?: boolean
+    usesHonorificSelf?: string
+  }
+  personalityTraits?: {
+    warmth?: number
+    formality?: number
+    enthusiasm?: number
+    teasing?: number
+    verbosity?: number
+    humor?: number
+  }
+  capabilities?: {
+    fileSystem?: boolean
+    shellExecution?: boolean
+    webSearch?: boolean
+    codeExecution?: boolean
+    remoteDesktopControl?: boolean
+  }
+  systemPromptTemplate?: string
+  preferredAIProvider?: string
+  preferredModel?: string
+  catchphrases?: string[]
+  createdAt?: string
   tags?: string[]
   isBuiltIn?: boolean
 }
@@ -412,6 +441,11 @@ const customWaifusLoading = ref(false)
 const customWaifusError = ref<string>('')
 const customWaifuForm = ref<CustomWaifuFormState>(createDefaultCustomWaifuForm())
 const customWaifuSaving = ref(false)
+<<<<<<< Updated upstream
+=======
+const editingCustomWaifuOriginalId = ref<string | null>(null)
+const editingCustomWaifuCreatedAt = ref<string | null>(null)
+>>>>>>> Stashed changes
 
 function slugifyWaifuId(value: string) {
   return String(value || '')
@@ -509,7 +543,11 @@ function buildCustomWaifuPayload(form: CustomWaifuFormState) {
     systemPromptTemplate: form.systemPromptTemplate.trim() || buildDefaultSystemPromptTemplate(form),
     preferredAIProvider: form.preferredAIProvider.trim() || 'anthropic',
     preferredModel: form.preferredModel.trim() || 'claude-3-5-sonnet-20241022',
+<<<<<<< Updated upstream
     createdAt: new Date().toISOString(),
+=======
+    createdAt: editingCustomWaifuCreatedAt.value || new Date().toISOString(),
+>>>>>>> Stashed changes
     isBuiltIn: false,
     tags,
     catchphrases,
@@ -519,14 +557,31 @@ function buildCustomWaifuPayload(form: CustomWaifuFormState) {
 async function saveCustomWaifuFromForm() {
   customWaifuSaving.value = true
   try {
+<<<<<<< Updated upstream
+=======
+    const previousId = editingCustomWaifuOriginalId.value
+>>>>>>> Stashed changes
     const payload = buildCustomWaifuPayload(customWaifuForm.value)
     const result = await invoke('waifus:write', payload)
     if (!result?.success) {
       showToast(result?.error || 'Could not save waifu', 'error')
       return
     }
+<<<<<<< Updated upstream
     showToast(`Saved "${payload.displayName}"`, 'success')
     customWaifuForm.value = createDefaultCustomWaifuForm()
+=======
+
+    if (previousId && previousId !== payload.id) {
+      const deleteResult = await invoke('waifus:delete', previousId)
+      if (!deleteResult?.success) {
+        showToast(deleteResult?.error || `Saved "${payload.displayName}" but could not remove old id "${previousId}"`, 'error')
+      }
+    }
+
+    showToast(`${previousId ? 'Updated' : 'Saved'} "${payload.displayName}"`, 'success')
+    resetCustomWaifuForm()
+>>>>>>> Stashed changes
     await refreshCustomWaifus()
     await store.refreshCustomWaifus()
   } catch (err: any) {
@@ -538,6 +593,46 @@ async function saveCustomWaifuFromForm() {
 
 function resetCustomWaifuForm() {
   customWaifuForm.value = createDefaultCustomWaifuForm()
+<<<<<<< Updated upstream
+=======
+  editingCustomWaifuOriginalId.value = null
+  editingCustomWaifuCreatedAt.value = null
+}
+
+function editCustomWaifu(waifu: CustomWaifuEntry) {
+  customWaifuForm.value = {
+    id: waifu.id || '',
+    name: waifu.name || waifu.id || '',
+    displayName: waifu.displayName || waifu.name || waifu.id || '',
+    sourceAnime: waifu.sourceAnime || 'Original',
+    backstory: waifu.backstory || '',
+    greetingPrefix: waifu.communicationStyle?.greetingPrefix || '',
+    affirmationPhrase: waifu.communicationStyle?.affirmationPhrase || '',
+    deflectionPhrase: waifu.communicationStyle?.deflectionPhrase || '',
+    signatureEmojis: (waifu.communicationStyle?.signatureEmojis || []).join(', '),
+    usesHonorificSelf: waifu.communicationStyle?.usesHonorificSelf || 'watashi',
+    speaksIn3rdPerson: !!waifu.communicationStyle?.speaksIn3rdPerson,
+    tags: (waifu.tags || []).join(', '),
+    catchphrases: (waifu.catchphrases || []).join(', '),
+    systemPromptTemplate: waifu.systemPromptTemplate || '',
+    preferredAIProvider: waifu.preferredAIProvider || 'anthropic',
+    preferredModel: waifu.preferredModel || 'claude-3-5-sonnet-20241022',
+    warmth: clampTrait(waifu.personalityTraits?.warmth ?? 75),
+    formality: clampTrait(waifu.personalityTraits?.formality ?? 45),
+    enthusiasm: clampTrait(waifu.personalityTraits?.enthusiasm ?? 60),
+    teasing: clampTrait(waifu.personalityTraits?.teasing ?? 25),
+    verbosity: clampTrait(waifu.personalityTraits?.verbosity ?? 55),
+    humor: clampTrait(waifu.personalityTraits?.humor ?? 45),
+    fileSystem: !!waifu.capabilities?.fileSystem,
+    shellExecution: !!waifu.capabilities?.shellExecution,
+    webSearch: waifu.capabilities?.webSearch !== false,
+    codeExecution: !!waifu.capabilities?.codeExecution,
+    remoteDesktopControl: !!waifu.capabilities?.remoteDesktopControl,
+  }
+
+  editingCustomWaifuOriginalId.value = waifu.id
+  editingCustomWaifuCreatedAt.value = waifu.createdAt || null
+>>>>>>> Stashed changes
 }
 
 async function refreshCustomWaifus() {
@@ -3110,7 +3205,11 @@ async function handleImportData() {
                 </div>
                 <div class="flex flex-col gap-2 shrink-0">
                   <button class="btn-primary" :disabled="customWaifuSaving" @click="saveCustomWaifuFromForm">
+<<<<<<< Updated upstream
                     {{ customWaifuSaving ? 'Saving…' : 'Save waifu' }}
+=======
+                    {{ customWaifuSaving ? 'Saving…' : editingCustomWaifuOriginalId ? 'Update waifu' : 'Save waifu' }}
+>>>>>>> Stashed changes
                   </button>
                   <button class="btn-primary" aria-label="Import a waifu from JSON" @click="importCustomWaifu">
                     Import JSON
@@ -3129,15 +3228,24 @@ async function handleImportData() {
               <div class="rounded-xl border border-neutral-800/60 bg-neutral-950/40 p-4 mb-4 space-y-4">
                 <div class="flex items-center justify-between gap-3">
                   <div>
+<<<<<<< Updated upstream
                     <h4 class="text-sm font-semibold text-white">Create visually</h4>
                     <p class="text-xs text-neutral-400">Fill out the core identity, personality, and speaking style. Avatar assets are optional and will fall back to initials.</p>
                   </div>
                   <button class="btn-secondary text-xs shrink-0" @click="resetCustomWaifuForm">Reset form</button>
+=======
+                    <h4 class="text-sm font-semibold text-white">{{ editingCustomWaifuOriginalId ? 'Edit visually' : 'Create visually' }}</h4>
+                    <p class="text-xs text-neutral-400">Fill out the core identity, personality, and speaking style. Avatar assets are optional and will fall back to initials.</p>
+                    <p v-if="editingCustomWaifuOriginalId" class="text-[11px] text-cyan-300 mt-1">Editing existing waifu: {{ editingCustomWaifuOriginalId }}</p>
+                  </div>
+                  <button class="btn-secondary text-xs shrink-0" @click="resetCustomWaifuForm">{{ editingCustomWaifuOriginalId ? 'Cancel edit' : 'Reset form' }}</button>
+>>>>>>> Stashed changes
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <label class="text-sm">
                     <div class="text-xs text-neutral-400 mb-1">Waifu ID</div>
+<<<<<<< Updated upstream
                     <input v-model="customWaifuForm.id" class="input-field" placeholder="yuki" >
                   </label>
                   <label class="text-sm">
@@ -3151,17 +3259,37 @@ async function handleImportData() {
                   <label class="text-sm">
                     <div class="text-xs text-neutral-400 mb-1">Source anime</div>
                     <input v-model="customWaifuForm.sourceAnime" class="input-field" placeholder="Original" >
+=======
+                    <input v-model="customWaifuForm.id" class="input-field" placeholder="yuki">
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Internal name</div>
+                    <input v-model="customWaifuForm.name" class="input-field" placeholder="yuki">
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Display name</div>
+                    <input v-model="customWaifuForm.displayName" class="input-field" placeholder="Yuki ❄️">
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Source anime</div>
+                    <input v-model="customWaifuForm.sourceAnime" class="input-field" placeholder="Original">
+>>>>>>> Stashed changes
                   </label>
                 </div>
 
                 <label class="block text-sm">
                   <div class="text-xs text-neutral-400 mb-1">Backstory</div>
+<<<<<<< Updated upstream
                   <textarea v-model="customWaifuForm.backstory" rows="5" class="input-field resize-y" placeholder="Describe her backstory, expertise, and how she behaves around the user." />
+=======
+                  <textarea v-model="customWaifuForm.backstory" rows="5" class="input-field resize-y" placeholder="Describe her backstory, expertise, and how she behaves around the user."></textarea>
+>>>>>>> Stashed changes
                 </label>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <label class="text-sm">
                     <div class="text-xs text-neutral-400 mb-1">Greeting prefix</div>
+<<<<<<< Updated upstream
                     <input v-model="customWaifuForm.greetingPrefix" class="input-field" placeholder="Ohayou~" >
                   </label>
                   <label class="text-sm">
@@ -3171,12 +3299,24 @@ async function handleImportData() {
                   <label class="text-sm md:col-span-2">
                     <div class="text-xs text-neutral-400 mb-1">Deflection phrase</div>
                     <input v-model="customWaifuForm.deflectionPhrase" class="input-field" placeholder="I-it's not like I wanted to help you..." >
+=======
+                    <input v-model="customWaifuForm.greetingPrefix" class="input-field" placeholder="Ohayou~">
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Affirmation phrase</div>
+                    <input v-model="customWaifuForm.affirmationPhrase" class="input-field" placeholder="Leave it to me!">
+                  </label>
+                  <label class="text-sm md:col-span-2">
+                    <div class="text-xs text-neutral-400 mb-1">Deflection phrase</div>
+                    <input v-model="customWaifuForm.deflectionPhrase" class="input-field" placeholder="I-it's not like I wanted to help you...">
+>>>>>>> Stashed changes
                   </label>
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <label class="text-sm">
                     <div class="text-xs text-neutral-400 mb-1">Signature emojis</div>
+<<<<<<< Updated upstream
                     <input v-model="customWaifuForm.signatureEmojis" class="input-field" placeholder="✨, 🌸" >
                   </label>
                   <label class="text-sm">
@@ -3190,6 +3330,21 @@ async function handleImportData() {
                   <label class="text-sm">
                     <div class="text-xs text-neutral-400 mb-1">Catchphrases</div>
                     <input v-model="customWaifuForm.catchphrases" class="input-field" placeholder="You can do it!, Leave it to me!" >
+=======
+                    <input v-model="customWaifuForm.signatureEmojis" class="input-field" placeholder="✨, 🌸">
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Honorific self</div>
+                    <input v-model="customWaifuForm.usesHonorificSelf" class="input-field" placeholder="watashi">
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Tags</div>
+                    <input v-model="customWaifuForm.tags" class="input-field" placeholder="genki, tutor, react">
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Catchphrases</div>
+                    <input v-model="customWaifuForm.catchphrases" class="input-field" placeholder="You can do it!, Leave it to me!">
+>>>>>>> Stashed changes
                   </label>
                 </div>
 
@@ -3203,6 +3358,7 @@ async function handleImportData() {
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <label class="text-sm">
                       <div class="text-xs text-neutral-400 mb-1">Warmth</div>
+<<<<<<< Updated upstream
                       <input v-model.number="customWaifuForm.warmth" type="number" min="0" max="100" class="input-field" >
                     </label>
                     <label class="text-sm">
@@ -3224,6 +3380,29 @@ async function handleImportData() {
                     <label class="text-sm">
                       <div class="text-xs text-neutral-400 mb-1">Humor</div>
                       <input v-model.number="customWaifuForm.humor" type="number" min="0" max="100" class="input-field" >
+=======
+                      <input v-model.number="customWaifuForm.warmth" type="number" min="0" max="100" class="input-field">
+                    </label>
+                    <label class="text-sm">
+                      <div class="text-xs text-neutral-400 mb-1">Formality</div>
+                      <input v-model.number="customWaifuForm.formality" type="number" min="0" max="100" class="input-field">
+                    </label>
+                    <label class="text-sm">
+                      <div class="text-xs text-neutral-400 mb-1">Enthusiasm</div>
+                      <input v-model.number="customWaifuForm.enthusiasm" type="number" min="0" max="100" class="input-field">
+                    </label>
+                    <label class="text-sm">
+                      <div class="text-xs text-neutral-400 mb-1">Teasing</div>
+                      <input v-model.number="customWaifuForm.teasing" type="number" min="0" max="100" class="input-field">
+                    </label>
+                    <label class="text-sm">
+                      <div class="text-xs text-neutral-400 mb-1">Verbosity</div>
+                      <input v-model.number="customWaifuForm.verbosity" type="number" min="0" max="100" class="input-field">
+                    </label>
+                    <label class="text-sm">
+                      <div class="text-xs text-neutral-400 mb-1">Humor</div>
+                      <input v-model.number="customWaifuForm.humor" type="number" min="0" max="100" class="input-field">
+>>>>>>> Stashed changes
                     </label>
                   </div>
                 </div>
@@ -3242,17 +3421,29 @@ async function handleImportData() {
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <label class="text-sm">
                     <div class="text-xs text-neutral-400 mb-1">Preferred AI provider</div>
+<<<<<<< Updated upstream
                     <input v-model="customWaifuForm.preferredAIProvider" class="input-field" placeholder="anthropic" >
                   </label>
                   <label class="text-sm">
                     <div class="text-xs text-neutral-400 mb-1">Preferred model</div>
                     <input v-model="customWaifuForm.preferredModel" class="input-field" placeholder="claude-3-5-sonnet-20241022" >
+=======
+                    <input v-model="customWaifuForm.preferredAIProvider" class="input-field" placeholder="anthropic">
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Preferred model</div>
+                    <input v-model="customWaifuForm.preferredModel" class="input-field" placeholder="claude-3-5-sonnet-20241022">
+>>>>>>> Stashed changes
                   </label>
                 </div>
 
                 <label class="block text-sm">
                   <div class="text-xs text-neutral-400 mb-1">System prompt template (optional)</div>
+<<<<<<< Updated upstream
                   <textarea v-model="customWaifuForm.systemPromptTemplate" rows="6" class="input-field resize-y" placeholder="Leave blank to auto-generate a prompt template from the fields above." />
+=======
+                  <textarea v-model="customWaifuForm.systemPromptTemplate" rows="6" class="input-field resize-y" placeholder="Leave blank to auto-generate a prompt template from the fields above."></textarea>
+>>>>>>> Stashed changes
                 </label>
               </div>
 
@@ -3273,13 +3464,22 @@ async function handleImportData() {
                     <div class="text-[11px] text-neutral-500 font-mono truncate">{{ waifu.id }}</div>
                     <p v-if="waifu.backstory" class="text-xs text-neutral-400 mt-1 line-clamp-2">{{ waifu.backstory }}</p>
                   </div>
-                  <button
-                    class="btn-secondary text-xs shrink-0"
-                    :aria-label="`Remove custom waifu ${waifu.id}`"
-                    @click="deleteCustomWaifu(waifu.id)"
-                  >
-                    Remove
-                  </button>
+                  <div class="flex gap-2 shrink-0">
+                    <button
+                      class="btn-ghost text-xs"
+                      :aria-label="`Edit custom waifu ${waifu.id}`"
+                      @click="editCustomWaifu(waifu)"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      class="btn-secondary text-xs"
+                      :aria-label="`Remove custom waifu ${waifu.id}`"
+                      @click="deleteCustomWaifu(waifu.id)"
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </li>
               </ul>
             </div>

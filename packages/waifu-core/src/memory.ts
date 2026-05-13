@@ -10,7 +10,22 @@
  * Inspired by pguso/ai-agents-from-scratch L08 (memory agent).
  */
 
-import type { AIChatRuntime, Message } from "@syntax-senpai/ai-core";
+interface MemoryContentPart {
+  text?: string;
+}
+
+interface MemoryMessageShape {
+  content: string | MemoryContentPart[];
+}
+
+interface MemoryRuntimeShape {
+  sendMessage(request: {
+    text: string;
+    systemPrompt?: string;
+    temperature?: number;
+    maxTokens?: number;
+  }): Promise<{ response: MemoryMessageShape }>;
+}
 
 export interface WaifuMemoryEntry {
   key: string;
@@ -41,7 +56,7 @@ export interface MemoryManagerOptions {
   waifuId: string;
   userId: string;
   store: WaifuMemoryStoreAdapter;
-  runtime: AIChatRuntime;
+  runtime: MemoryRuntimeShape;
   /** Maximum characters in the injected summary. Defaults to 800. */
   maxSummaryChars?: number;
   /** Maximum facts retained per scope. Oldest dropped on overflow. */
@@ -207,7 +222,7 @@ function extractJson(raw: string): string | null {
   return candidate.slice(start, end + 1);
 }
 
-function stringify(content: Message["content"] | unknown): string {
+function stringify(content: MemoryMessageShape["content"] | unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return content

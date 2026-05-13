@@ -5,10 +5,6 @@
     "rootDir": "src",
     "declaration": true,
     "declarationMap": true,
-    "paths": {
-      "@syntax-senpai/ai-core": ["packages/ai-core/dist"],
-      "@syntax-senpai/ai-core/*": ["packages/ai-core/dist/*"]
-    },
     "noEmit": false,
     "allowImportingTsExtensions": false
   },

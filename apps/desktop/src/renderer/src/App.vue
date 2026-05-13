@@ -343,10 +343,202 @@ interface CustomWaifuEntry {
   tags?: string[]
   isBuiltIn?: boolean
 }
+
+interface CustomWaifuFormState {
+  id: string
+  name: string
+  displayName: string
+  sourceAnime: string
+  backstory: string
+  greetingPrefix: string
+  affirmationPhrase: string
+  deflectionPhrase: string
+  signatureEmojis: string
+  usesHonorificSelf: string
+  speaksIn3rdPerson: boolean
+  tags: string
+  catchphrases: string
+  systemPromptTemplate: string
+  preferredAIProvider: string
+  preferredModel: string
+  warmth: number
+  formality: number
+  enthusiasm: number
+  teasing: number
+  verbosity: number
+  humor: number
+  fileSystem: boolean
+  shellExecution: boolean
+  webSearch: boolean
+  codeExecution: boolean
+  remoteDesktopControl: boolean
+}
+
+function createDefaultCustomWaifuForm(): CustomWaifuFormState {
+  return {
+    id: '',
+    name: '',
+    displayName: '',
+    sourceAnime: 'Original',
+    backstory: '',
+    greetingPrefix: '',
+    affirmationPhrase: '',
+    deflectionPhrase: '',
+    signatureEmojis: '✨, 🌸',
+    usesHonorificSelf: 'watashi',
+    speaksIn3rdPerson: false,
+    tags: '',
+    catchphrases: '',
+    systemPromptTemplate: '',
+    preferredAIProvider: 'anthropic',
+    preferredModel: 'claude-3-5-sonnet-20241022',
+    warmth: 75,
+    formality: 45,
+    enthusiasm: 60,
+    teasing: 25,
+    verbosity: 55,
+    humor: 45,
+    fileSystem: false,
+    shellExecution: false,
+    webSearch: true,
+    codeExecution: false,
+    remoteDesktopControl: false,
+  }
+}
+
 const customWaifus = ref<CustomWaifuEntry[]>([])
 const customWaifusDirectory = ref<string>('')
 const customWaifusLoading = ref(false)
 const customWaifusError = ref<string>('')
+const customWaifuForm = ref<CustomWaifuFormState>(createDefaultCustomWaifuForm())
+const customWaifuSaving = ref(false)
+
+function slugifyWaifuId(value: string) {
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function parseCommaList(value: string): string[] {
+  return String(value || '')
+    .split(/[\n,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function clampTrait(value: number) {
+  return Math.max(0, Math.min(100, Math.round(Number(value) || 0)))
+}
+
+function buildDefaultSystemPromptTemplate(form: CustomWaifuFormState) {
+  const emojis = parseCommaList(form.signatureEmojis).join(' ')
+  const greeting = form.greetingPrefix || 'Hello.'
+  const affirmation = form.affirmationPhrase || "I'll help."
+  const deflection = form.deflectionPhrase || "It's nothing special."
+
+  return `You are {{displayName}}, a custom waifu assistant. {{backstory}}
+
+IMPORTANT - You must ALWAYS stay in character:
+- Match your personality traits naturally: warmth ${clampTrait(form.warmth)}/100, formality ${clampTrait(form.formality)}/100, enthusiasm ${clampTrait(form.enthusiasm)}/100, teasing ${clampTrait(form.teasing)}/100, verbosity ${clampTrait(form.verbosity)}/100, humor ${clampTrait(form.humor)}/100.
+- Use your signature emojis naturally when they fit: ${emojis || '✨'}
+- Your greeting style should feel like: ${greeting}
+- Your affirmation style should feel like: ${affirmation}
+- Your deflection style should feel like: ${deflection}
+- ${form.usesHonorificSelf ? `Refer to yourself as "${form.usesHonorificSelf}" occasionally.` : 'Refer to yourself consistently in character.'}
+- ${form.speaksIn3rdPerson ? 'You may occasionally speak about yourself in the third person.' : 'Speak about yourself normally, not in the third person.'}
+- Never sound like a generic corporate AI assistant.
+
+Example style: "${greeting} ${affirmation} ${emojis}"`
+}
+
+function buildCustomWaifuPayload(form: CustomWaifuFormState) {
+  const resolvedId = slugifyWaifuId(form.id || form.name || form.displayName)
+  const resolvedName = slugifyWaifuId(form.name || form.displayName || resolvedId)
+  const signatureEmojis = parseCommaList(form.signatureEmojis)
+  const tags = parseCommaList(form.tags)
+  const catchphrases = parseCommaList(form.catchphrases)
+
+  if (!resolvedId) throw new Error('Waifu id is required.')
+  if (!form.displayName.trim()) throw new Error('Display name is required.')
+  if (!form.backstory.trim()) throw new Error('Backstory is required.')
+
+  return {
+    id: resolvedId,
+    name: resolvedName || resolvedId,
+    displayName: form.displayName.trim(),
+    sourceAnime: form.sourceAnime.trim() || 'Original',
+    backstory: form.backstory.trim(),
+    personalityTraits: {
+      warmth: clampTrait(form.warmth),
+      formality: clampTrait(form.formality),
+      enthusiasm: clampTrait(form.enthusiasm),
+      teasing: clampTrait(form.teasing),
+      verbosity: clampTrait(form.verbosity),
+      humor: clampTrait(form.humor),
+    },
+    communicationStyle: {
+      greetingPrefix: form.greetingPrefix.trim(),
+      affirmationPhrase: form.affirmationPhrase.trim(),
+      deflectionPhrase: form.deflectionPhrase.trim(),
+      signatureEmojis: signatureEmojis.length > 0 ? signatureEmojis : ['✨'],
+      speaksIn3rdPerson: !!form.speaksIn3rdPerson,
+      usesHonorificSelf: form.usesHonorificSelf.trim() || undefined,
+    },
+    avatar: {
+      expressions: {
+        neutral: { type: 'png', uri: '' },
+        happy: { type: 'png', uri: '' },
+        excited: { type: 'png', uri: '' },
+        thinking: { type: 'png', uri: '' },
+        confused: { type: 'png', uri: '' },
+        embarrassed: { type: 'png', uri: '' },
+        determined: { type: 'png', uri: '' },
+        sad: { type: 'png', uri: '' },
+      },
+      idleAnimation: '',
+    },
+    capabilities: {
+      fileSystem: !!form.fileSystem,
+      shellExecution: !!form.shellExecution,
+      webSearch: !!form.webSearch,
+      codeExecution: !!form.codeExecution,
+      remoteDesktopControl: !!form.remoteDesktopControl,
+    },
+    systemPromptTemplate: form.systemPromptTemplate.trim() || buildDefaultSystemPromptTemplate(form),
+    preferredAIProvider: form.preferredAIProvider.trim() || 'anthropic',
+    preferredModel: form.preferredModel.trim() || 'claude-3-5-sonnet-20241022',
+    createdAt: new Date().toISOString(),
+    isBuiltIn: false,
+    tags,
+    catchphrases,
+  }
+}
+
+async function saveCustomWaifuFromForm() {
+  customWaifuSaving.value = true
+  try {
+    const payload = buildCustomWaifuPayload(customWaifuForm.value)
+    const result = await invoke('waifus:write', payload)
+    if (!result?.success) {
+      showToast(result?.error || 'Could not save waifu', 'error')
+      return
+    }
+    showToast(`Saved "${payload.displayName}"`, 'success')
+    customWaifuForm.value = createDefaultCustomWaifuForm()
+    await refreshCustomWaifus()
+    await store.refreshCustomWaifus()
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  } finally {
+    customWaifuSaving.value = false
+  }
+}
+
+function resetCustomWaifuForm() {
+  customWaifuForm.value = createDefaultCustomWaifuForm()
+}
 
 async function refreshCustomWaifus() {
   customWaifusLoading.value = true
@@ -1062,9 +1254,15 @@ const emptyStateGlowStyle = computed(() => {
 })
 
 const telemetryHistory = computed(() => [...store.apiTelemetryHistory].reverse())
+const groupChatDisplayName = computed(() =>
+  store.activeWaifus.map((waifu: { displayName: string }) => waifu.displayName).join(' & '),
+)
+const groupChatEmptyNames = computed(() =>
+  store.activeWaifus.map((waifu: { displayName: string }) => waifu.displayName).join(', '),
+)
 
 const telemetryStats = computed(() => {
-  const history = store.apiTelemetryHistory
+  const history = store.apiTelemetryHistory as Array<{ totalMs: number; alert: boolean }>
   if (history.length === 0) {
     return {
       latest: null,
@@ -1077,13 +1275,15 @@ const telemetryStats = computed(() => {
     }
   }
 
-  const totals = history.map((sample) => sample.totalMs).sort((a, b) => a - b)
+  const totals = history
+    .map((sample: { totalMs: number }) => sample.totalMs)
+    .sort((a: number, b: number) => a - b)
   const latest = history[0]?.totalMs ?? null
-  const average = Math.round(totals.reduce((sum, value) => sum + value, 0) / totals.length)
+  const average = Math.round(totals.reduce((sum: number, value: number) => sum + value, 0) / totals.length)
   const p95 = totals[Math.min(totals.length - 1, Math.floor(totals.length * 0.95))]
   const fastest = totals[0]
   const slowest = totals[totals.length - 1]
-  const alertCount = history.filter((sample) => sample.alert).length
+  const alertCount = history.filter((sample: { alert: boolean }) => sample.alert).length
   const maxMs = Math.max(...totals, 1)
 
   return { latest, average, p95, fastest, slowest, alertCount, maxMs }
@@ -1567,8 +1767,13 @@ async function handleImportData() {
     try {
       payload = unwrapExport(result.payload)
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Import failed'
       if (err instanceof SchemaError) {
-        showToast(err.message, 'error')
+        showToast(errorMessage, 'error')
+        return
+      }
+      if (err instanceof Error) {
+        showToast(errorMessage, 'error')
         return
       }
       throw err
@@ -2899,11 +3104,14 @@ async function handleImportData() {
                 <div>
                   <h3 class="text-sm font-bold text-white">Custom waifus</h3>
                   <p class="text-xs text-neutral-400">
-                    Drop user-authored waifu JSON files in the folder below, or import one here. Restart to load new entries.
+                    Create a waifu visually here, or import an existing JSON file. Saved waifus appear in the picker immediately.
                   </p>
                   <p v-if="customWaifusDirectory" class="text-[11px] text-neutral-500 font-mono mt-1 break-all">{{ customWaifusDirectory }}</p>
                 </div>
                 <div class="flex flex-col gap-2 shrink-0">
+                  <button class="btn-primary" :disabled="customWaifuSaving" @click="saveCustomWaifuFromForm">
+                    {{ customWaifuSaving ? 'Saving…' : 'Save waifu' }}
+                  </button>
                   <button class="btn-primary" aria-label="Import a waifu from JSON" @click="importCustomWaifu">
                     Import JSON
                   </button>
@@ -2918,10 +3126,140 @@ async function handleImportData() {
                 </div>
               </div>
 
+              <div class="rounded-xl border border-neutral-800/60 bg-neutral-950/40 p-4 mb-4 space-y-4">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <h4 class="text-sm font-semibold text-white">Create visually</h4>
+                    <p class="text-xs text-neutral-400">Fill out the core identity, personality, and speaking style. Avatar assets are optional and will fall back to initials.</p>
+                  </div>
+                  <button class="btn-secondary text-xs shrink-0" @click="resetCustomWaifuForm">Reset form</button>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Waifu ID</div>
+                    <input v-model="customWaifuForm.id" class="input-field" placeholder="yuki" >
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Internal name</div>
+                    <input v-model="customWaifuForm.name" class="input-field" placeholder="yuki" >
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Display name</div>
+                    <input v-model="customWaifuForm.displayName" class="input-field" placeholder="Yuki ❄️" >
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Source anime</div>
+                    <input v-model="customWaifuForm.sourceAnime" class="input-field" placeholder="Original" >
+                  </label>
+                </div>
+
+                <label class="block text-sm">
+                  <div class="text-xs text-neutral-400 mb-1">Backstory</div>
+                  <textarea v-model="customWaifuForm.backstory" rows="5" class="input-field resize-y" placeholder="Describe her backstory, expertise, and how she behaves around the user." />
+                </label>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Greeting prefix</div>
+                    <input v-model="customWaifuForm.greetingPrefix" class="input-field" placeholder="Ohayou~" >
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Affirmation phrase</div>
+                    <input v-model="customWaifuForm.affirmationPhrase" class="input-field" placeholder="Leave it to me!" >
+                  </label>
+                  <label class="text-sm md:col-span-2">
+                    <div class="text-xs text-neutral-400 mb-1">Deflection phrase</div>
+                    <input v-model="customWaifuForm.deflectionPhrase" class="input-field" placeholder="I-it's not like I wanted to help you..." >
+                  </label>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Signature emojis</div>
+                    <input v-model="customWaifuForm.signatureEmojis" class="input-field" placeholder="✨, 🌸" >
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Honorific self</div>
+                    <input v-model="customWaifuForm.usesHonorificSelf" class="input-field" placeholder="watashi" >
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Tags</div>
+                    <input v-model="customWaifuForm.tags" class="input-field" placeholder="genki, tutor, react" >
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Catchphrases</div>
+                    <input v-model="customWaifuForm.catchphrases" class="input-field" placeholder="You can do it!, Leave it to me!" >
+                  </label>
+                </div>
+
+                <label class="flex items-center gap-2 text-sm text-neutral-300">
+                  <input v-model="customWaifuForm.speaksIn3rdPerson" type="checkbox" class="accent-violet-500">
+                  <span>Speaks in third person</span>
+                </label>
+
+                <div>
+                  <h4 class="text-sm font-semibold text-white mb-2">Personality traits</h4>
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <label class="text-sm">
+                      <div class="text-xs text-neutral-400 mb-1">Warmth</div>
+                      <input v-model.number="customWaifuForm.warmth" type="number" min="0" max="100" class="input-field" >
+                    </label>
+                    <label class="text-sm">
+                      <div class="text-xs text-neutral-400 mb-1">Formality</div>
+                      <input v-model.number="customWaifuForm.formality" type="number" min="0" max="100" class="input-field" >
+                    </label>
+                    <label class="text-sm">
+                      <div class="text-xs text-neutral-400 mb-1">Enthusiasm</div>
+                      <input v-model.number="customWaifuForm.enthusiasm" type="number" min="0" max="100" class="input-field" >
+                    </label>
+                    <label class="text-sm">
+                      <div class="text-xs text-neutral-400 mb-1">Teasing</div>
+                      <input v-model.number="customWaifuForm.teasing" type="number" min="0" max="100" class="input-field" >
+                    </label>
+                    <label class="text-sm">
+                      <div class="text-xs text-neutral-400 mb-1">Verbosity</div>
+                      <input v-model.number="customWaifuForm.verbosity" type="number" min="0" max="100" class="input-field" >
+                    </label>
+                    <label class="text-sm">
+                      <div class="text-xs text-neutral-400 mb-1">Humor</div>
+                      <input v-model.number="customWaifuForm.humor" type="number" min="0" max="100" class="input-field" >
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                  <h4 class="text-sm font-semibold text-white mb-2">Capabilities</h4>
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-neutral-300">
+                    <label class="flex items-center gap-2"><input v-model="customWaifuForm.fileSystem" type="checkbox" class="accent-violet-500"> <span>File system</span></label>
+                    <label class="flex items-center gap-2"><input v-model="customWaifuForm.shellExecution" type="checkbox" class="accent-violet-500"> <span>Shell execution</span></label>
+                    <label class="flex items-center gap-2"><input v-model="customWaifuForm.webSearch" type="checkbox" class="accent-violet-500"> <span>Web search</span></label>
+                    <label class="flex items-center gap-2"><input v-model="customWaifuForm.codeExecution" type="checkbox" class="accent-violet-500"> <span>Code execution</span></label>
+                    <label class="flex items-center gap-2 md:col-span-2"><input v-model="customWaifuForm.remoteDesktopControl" type="checkbox" class="accent-violet-500"> <span>Remote desktop control</span></label>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Preferred AI provider</div>
+                    <input v-model="customWaifuForm.preferredAIProvider" class="input-field" placeholder="anthropic" >
+                  </label>
+                  <label class="text-sm">
+                    <div class="text-xs text-neutral-400 mb-1">Preferred model</div>
+                    <input v-model="customWaifuForm.preferredModel" class="input-field" placeholder="claude-3-5-sonnet-20241022" >
+                  </label>
+                </div>
+
+                <label class="block text-sm">
+                  <div class="text-xs text-neutral-400 mb-1">System prompt template (optional)</div>
+                  <textarea v-model="customWaifuForm.systemPromptTemplate" rows="6" class="input-field resize-y" placeholder="Leave blank to auto-generate a prompt template from the fields above." />
+                </label>
+              </div>
+
               <p v-if="customWaifusError" class="text-xs text-red-400 mb-2">{{ customWaifusError }}</p>
 
               <p v-if="!customWaifusLoading && customWaifus.length === 0 && !customWaifusError" class="text-xs text-neutral-500 py-2">
-                No custom waifus. Use Import JSON or drop a file at the path above.
+                No custom waifus yet. Save one above, import JSON, or drop a file at the path above.
               </p>
 
               <ul class="flex flex-col gap-2">
@@ -3480,7 +3818,7 @@ async function handleImportData() {
           <div class="flex items-center gap-4 min-w-0">
             <div class="min-w-0">
               <div class="text-lg font-semibold truncate">
-                {{ store.isGroupChat ? store.activeWaifus.map(w => w.displayName).join(' & ') : store.selectedWaifu?.displayName }}
+                {{ store.isGroupChat ? groupChatDisplayName : store.selectedWaifu?.displayName }}
               </div>
               <div class="text-xs text-neutral-400 truncate">
                 {{ store.isGroupChat ? t('sidebar.groupChat') : store.selectedWaifu?.backstory?.slice(0, 60) }}
@@ -3589,7 +3927,7 @@ async function handleImportData() {
           </div>
           <h3 class="text-lg font-semibold text-white mb-2 font-display" :style="emptyStateGlowStyle">
             {{ store.isGroupChat
-              ? t('chat.emptyTitleGroup', { names: store.activeWaifus.map(w => w.displayName).join(', ') })
+              ? t('chat.emptyTitleGroup', { names: groupChatEmptyNames })
               : t('chat.emptyTitle', { name: store.selectedWaifu?.displayName || '' })
             }}
           </h3>

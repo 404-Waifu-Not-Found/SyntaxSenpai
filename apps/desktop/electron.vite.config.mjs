@@ -11,6 +11,7 @@ const workspaceAlias = {
   '@syntax-senpai/storage': path.resolve(__dirname, '../../packages/storage/src/index.ts'),
   '@syntax-senpai/waifu-core': path.resolve(__dirname, '../../packages/waifu-core/src/index.ts'),
   '@syntax-senpai/ws-protocol': path.resolve(__dirname, '../../packages/ws-protocol/src/index.ts'),
+  '@syntax-senpai/wechat-ilink': path.resolve(__dirname, '../../packages/wechat-ilink/src/index.ts'),
 }
 
 export default defineConfig({
@@ -22,7 +23,8 @@ export default defineConfig({
         '@syntax-senpai/agent-tools',
         '@syntax-senpai/storage',
         '@syntax-senpai/waifu-core',
-        '@syntax-senpai/ws-protocol'
+        '@syntax-senpai/ws-protocol',
+        '@syntax-senpai/wechat-ilink'
       ]
     })],
     resolve: {
@@ -43,7 +45,8 @@ export default defineConfig({
         '@syntax-senpai/agent-tools',
         '@syntax-senpai/storage',
         '@syntax-senpai/waifu-core',
-        '@syntax-senpai/ws-protocol'
+        '@syntax-senpai/ws-protocol',
+        '@syntax-senpai/wechat-ilink'
       ]
     })],
     resolve: {

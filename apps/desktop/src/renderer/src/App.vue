@@ -90,7 +90,7 @@ const rainbowToggleBg = computed(() => {
   const c3 = hslToHex((h + 120) % 360, s, l)
   return `linear-gradient(to right, ${c1}, ${c2}, ${c3})`
 })
-type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'plugins' | 'skills' | 'waifus' | 'mobile'
+type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'plugins' | 'skills' | 'waifus' | 'mobile' | 'wechat'
 const settingsTab = ref<SettingsTabId>('general')
 const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = [
   { id: 'general', label: 'General', icon: '⚙️' },
@@ -103,7 +103,55 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = 
   { id: 'skills', label: 'Skills', icon: '📘' },
   { id: 'waifus', label: 'Waifus', icon: '💗' },
   { id: 'mobile', label: 'Mobile', icon: '📱' },
+  { id: 'wechat', label: 'WeChat', icon: '💬' },
 ]
+
+// ── WeChat settings tab state ───────────────────────────────────────────────
+const wechatQrDataUrl = ref<string | null>(null)
+const wechatPairingError = ref<string | null>(null)
+const wechatPairingBusy = ref(false)
+
+async function startWeChatPairing() {
+  wechatPairingError.value = null
+  wechatPairingBusy.value = true
+  wechatQrDataUrl.value = null
+  try {
+    const res = await invoke('wechat:startPairing')
+    if (!res?.success) {
+      wechatPairingError.value = res?.error ?? 'Failed to start pairing'
+      return
+    }
+    const QRCode = (await import('qrcode')).default
+    wechatQrDataUrl.value = await QRCode.toDataURL(String(res.qrPayload ?? ''), {
+      margin: 1,
+      width: 256,
+    })
+  } catch (err: any) {
+    wechatPairingError.value = err?.message ?? String(err)
+  } finally {
+    wechatPairingBusy.value = false
+  }
+}
+
+async function cancelWeChatPairing() {
+  try { await invoke('wechat:cancelPairing') } catch { /* ignore */ }
+  wechatQrDataUrl.value = null
+  wechatPairingError.value = null
+}
+
+async function disconnectWeChat() {
+  try {
+    const res = await invoke('wechat:disconnect')
+    if (!res?.success) {
+      showToast(res?.error || 'Disconnect failed', 'error')
+      return
+    }
+    wechatQrDataUrl.value = null
+    wechatPairingError.value = null
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  }
+}
 
 // Height-animate the settings tab body on switch. Capture the outgoing
 // height before leave, measure the incoming child on enter, transition
@@ -783,6 +831,9 @@ const appReady = ref(false)
 const startupAnimDone = ref(false)
 let startupSplashTimer: number | null = null
 let removeMobileChatListener: (() => void) | null = null
+let removeWechatInboundListener: (() => void) | null = null
+let removeWechatStatusListener: (() => void) | null = null
+const wechatStatus = ref<{ connected: boolean; account: { userId: string; displayName: string | null } | null; lastError: string | null; pairing?: boolean }>({ connected: false, account: null, lastError: null })
 const THEME_STORAGE_KEY = 'syntax-senpai-theme'
 const API_TELEMETRY_HISTORY_STORAGE_KEY = 'syntax-senpai-api-telemetry-history'
 const KEYLESS_PROVIDERS = new Set(['lmstudio'])
@@ -1162,6 +1213,37 @@ onMounted(() => {
     }
   })
 
+  removeWechatInboundListener = on('wechat:inbound', async (payload: any) => {
+    try {
+      await store.handleWeChatInbound(payload)
+    } catch (err) {
+      console.warn('wechat:inbound handler failed', err)
+    }
+  })
+
+  removeWechatStatusListener = on('wechat:status-changed', (payload: any) => {
+    wechatStatus.value = {
+      connected: !!payload?.connected,
+      account: payload?.account ?? null,
+      lastError: payload?.lastError ?? null,
+    }
+  })
+
+  // Hydrate WeChat status on boot — surfaces auto-resumed sessions in the UI.
+  ;(async () => {
+    try {
+      const res = await invoke('wechat:getStatus')
+      if (res?.success) {
+        wechatStatus.value = {
+          connected: !!res.connected,
+          account: res.account ?? null,
+          lastError: res.lastError ?? null,
+          pairing: !!res.pairing,
+        }
+      }
+    } catch { /* optional */ }
+  })()
+
   on('tray:new-chat', () => {
     store.newChat()
   })
@@ -1183,6 +1265,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   removeMobileChatListener?.()
+  removeWechatInboundListener?.()
+  removeWechatStatusListener?.()
   window.removeEventListener('app:error', onAppError as EventListener)
   window.removeEventListener('app:retry', onAppRetry as EventListener)
   window.removeEventListener('app:milestone', onAppMilestone as EventListener)
@@ -1217,6 +1301,25 @@ watch(
   },
   { immediate: true },
 )
+
+// Auto-relay the final assistant message back to WeChat when the active
+// conversation is bound to a WeChat peer. Fires on the isLoading true→false
+// transition so we catch the post-tool-loop finalization regardless of which
+// code path produced the message.
+watch(() => store.isLoading, (now, prev) => {
+  if (!(prev === true && now === false)) return
+  const binding = store.currentWeChatBinding
+  if (!binding) return
+  const convId = store.conversationId
+  if (!convId) return
+  const last = store.messages[store.messages.length - 1]
+  if (!last || last.role !== 'assistant') return
+  const content = (last.content ?? '').toString()
+  if (!content.trim()) return
+  // Skip echoing back error bubbles produced by the chat store's catch block.
+  if (content.startsWith('Error: ')) return
+  store.relayAssistantToWeChat(convId, content).catch(() => { /* best effort */ })
+})
 
 watch(() => store.apiTelemetryAlert, (alert, previous) => {
   if (!alert.active) return
@@ -2942,6 +3045,92 @@ async function handleImportData() {
 
             <div class="flex gap-2">
               <button class="btn-primary flex-1" @click="showSettings = false">{{ t('mobile.done') }}</button>
+            </div>
+          </div>
+
+          <!-- WeChat Tab -->
+          <div v-if="settingsTab === 'wechat'">
+            <div class="settings-card">
+              <h3 class="text-sm font-bold text-white mb-1">WeChat (iLink)</h3>
+              <p class="text-xs text-neutral-400 mb-4">
+                Pair the desktop app with your personal WeChat via Tencent's official OpenClaw iLink protocol.
+                Once paired, the waifu can read and reply to incoming WeChat messages and your agent can send
+                text or images to contacts using the <code>wechat_send</code> tool.
+              </p>
+
+              <div class="flex items-center gap-2 mb-4">
+                <div
+                  class="w-2.5 h-2.5 rounded-full"
+                  :class="wechatStatus.connected ? 'bg-emerald-400' : 'bg-neutral-600'"
+                />
+                <span class="text-sm text-neutral-300">
+                  <template v-if="wechatStatus.connected">
+                    Connected as
+                    <span class="text-white font-medium">{{ wechatStatus.account?.displayName || wechatStatus.account?.userId || 'unknown' }}</span>
+                  </template>
+                  <template v-else-if="wechatPairingBusy || wechatQrDataUrl">
+                    Waiting for QR scan…
+                  </template>
+                  <template v-else>
+                    Not paired
+                  </template>
+                </span>
+              </div>
+
+              <div v-if="wechatStatus.lastError" class="text-xs text-rose-400 mb-3">
+                Last error: {{ wechatStatus.lastError }}
+              </div>
+
+              <!-- Pairing flow -->
+              <div v-if="!wechatStatus.connected" class="flex flex-col items-stretch gap-3">
+                <div v-if="wechatQrDataUrl" class="flex flex-col items-center bg-white rounded p-3 mb-2">
+                  <img :src="wechatQrDataUrl" alt="WeChat pairing QR" class="w-48 h-48" />
+                  <p class="text-xs text-neutral-700 mt-2 text-center">
+                    Scan this with your WeChat app, then confirm the login on your phone.
+                  </p>
+                </div>
+                <div v-if="wechatPairingError" class="text-xs text-rose-400">
+                  {{ wechatPairingError }}
+                </div>
+                <div class="flex gap-2">
+                  <button
+                    v-if="!wechatQrDataUrl"
+                    class="btn-primary flex-1"
+                    :disabled="wechatPairingBusy"
+                    @click="startWeChatPairing()"
+                  >
+                    {{ wechatPairingBusy ? 'Requesting QR…' : 'Pair WeChat' }}
+                  </button>
+                  <button
+                    v-else
+                    class="btn-secondary flex-1"
+                    @click="cancelWeChatPairing()"
+                  >
+                    Cancel pairing
+                  </button>
+                </div>
+              </div>
+
+              <!-- Connected state -->
+              <div v-else class="flex gap-2">
+                <button class="btn-secondary flex-1" @click="disconnectWeChat()">
+                  Unpair WeChat
+                </button>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <h4 class="text-xs font-bold text-neutral-300 mb-2">How it works</h4>
+              <ul class="text-xs text-neutral-400 list-disc pl-5 space-y-1">
+                <li>Inbound WeChat DMs land as new conversations tagged <span class="text-white">💬 WeChat · &lt;name&gt;</span>.</li>
+                <li>The waifu's reply is auto-relayed back to the WeChat peer.</li>
+                <li>For tables, comparisons or long code: the waifu calls <code>wechat_send</code> with <code>as_image: true</code>; the panel is rendered to a PNG and sent as a WeChat image.</li>
+                <li>Credentials are stored in your OS keychain under <code>syntax-senpai-wechat</code>.</li>
+              </ul>
+            </div>
+
+            <div class="flex gap-2">
+              <button class="btn-primary flex-1" @click="showSettings = false">Done</button>
             </div>
           </div>
           </div>

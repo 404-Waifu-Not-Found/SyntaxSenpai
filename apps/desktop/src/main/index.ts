@@ -37,6 +37,7 @@ import { registerLogIpc } from './ipc/log'
 import { registerRepositoryIpc } from './ipc/repository'
 import { registerSkillsIpc } from './ipc/skills'
 import { registerPendingPluginsIpc } from './ipc/pending-plugins'
+import { registerWechatIpc, autoResumeBot as autoResumeWechatBot } from './ipc/wechat'
 import { startWsServer } from './ws-server'
 import { mainLogger } from './logger'
 
@@ -202,7 +203,9 @@ app.whenReady().then(() => {
   registerRepositoryIpc()
   registerSkillsIpc()
   registerPendingPluginsIpc()
+  registerWechatIpc()
   startWsServer().catch((err) => mainLogger.error({ err }, 'ws-server failed to start'))
+  autoResumeWechatBot().catch((err) => mainLogger.warn({ err }, 'wechat auto-resume failed'))
 
   setupTray()
   registerGlobalShortcuts()

@@ -17,9 +17,11 @@
     "paths": {
       "@/*": ["./src/renderer/src/*"],
       "@syntax-senpai/ws-protocol": ["../../packages/ws-protocol/src"],
-      "@syntax-senpai/ws-protocol/*": ["../../packages/ws-protocol/src/*"]
+      "@syntax-senpai/ws-protocol/*": ["../../packages/ws-protocol/src/*"],
+      "@syntax-senpai/wechat-ilink": ["../../packages/wechat-ilink/src"],
+      "@syntax-senpai/wechat-ilink/*": ["../../packages/wechat-ilink/src/*"]
     }
   },
-  "include": ["src", "electron.vite.config.mjs", "../../packages/ws-protocol/src"],
+  "include": ["src", "electron.vite.config.mjs", "../../packages/ws-protocol/src", "../../packages/wechat-ilink/src"],
   "exclude": ["node_modules", "dist"]
 }

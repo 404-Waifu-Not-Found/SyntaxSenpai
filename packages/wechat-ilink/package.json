@@ -1,0 +1,19 @@
+{
+  "name": "@syntax-senpai/wechat-ilink",
+  "version": "0.0.1",
+  "description": "Tencent OpenClaw iLink (personal WeChat) protocol client",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "test:unit": "vitest run --environment node"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^1.6.0"
+  }
+}

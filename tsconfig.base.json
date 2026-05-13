@@ -39,6 +39,8 @@
       "@syntax-senpai/ws-protocol/*": ["packages/ws-protocol/src/*"],
       "@syntax-senpai/storage": ["packages/storage/src"],
       "@syntax-senpai/storage/*": ["packages/storage/src/*"],
+      "@syntax-senpai/wechat-ilink": ["packages/wechat-ilink/src"],
+      "@syntax-senpai/wechat-ilink/*": ["packages/wechat-ilink/src/*"],
 
       "@proj-airi/*": [
         "packages/ui/packages/*/src",

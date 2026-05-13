@@ -11,6 +11,7 @@
  */
 
 import type { ToolDefinition, ToolCall } from '@syntax-senpai/ai-core'
+import { renderContentToPng } from './services/render-to-image'
 
 export type AgentMode = 'ask' | 'auto' | 'full'
 
@@ -26,6 +27,8 @@ export const CREATE_SKILL_TOOL_NAME = 'create_skill'
 export const USE_SKILL_TOOL_NAME = 'use_skill'
 export const PROPOSE_TOOL_TOOL_NAME = 'propose_tool'
 export const DISPATCH_SUBAGENTS_TOOL_NAME = 'dispatch_subagents'
+export const WECHAT_SEND_TOOL_NAME = 'wechat_send'
+export const WECHAT_LIST_PEERS_TOOL_NAME = 'wechat_list_peers'
 
 const CODING_MODE_TOOLS = new Set<string>([
   GIT_COMMIT_TOOL_NAME,
@@ -321,6 +324,43 @@ export const agentTools: ToolDefinition[] = [
         },
       },
       required: ['action'],
+    },
+  },
+  {
+    name: WECHAT_LIST_PEERS_TOOL_NAME,
+    description:
+      'List recent WeChat contacts that have messaged the user (most-recently-active first). Use this when the user asks you to "send to WeChat" but only gives a name — match the name against `displayName` or `userId` from this list, then pass the chosen `userId` to wechat_send. Returns an empty list if no WeChat account is paired yet.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: WECHAT_SEND_TOOL_NAME,
+    description:
+      "Send a message to a WeChat contact through the user's paired WeChat. " +
+      "Use this when the user asks to send/share/post something to WeChat, or to forward a result to a contact. " +
+      "WeChat does NOT render tables, charts, or complex markdown — set `as_image: true` for any rich content (tables, long code, comparisons, multi-section answers) and pass plain prose for chat-style messages. " +
+      "If you're unsure who to send to, call wechat_list_peers first.",
+    parameters: {
+      type: 'object',
+      properties: {
+        to: {
+          type: 'string',
+          description: 'Contact userId (from wechat_list_peers) or, as a fallback, a display name to fuzzy-match.',
+        },
+        content: {
+          type: 'string',
+          description: 'Text or markdown content. When as_image is true, fenced code blocks are rendered as styled monospace blocks in the image.',
+        },
+        as_image: {
+          type: 'boolean',
+          description: 'Render `content` to a PNG and send as an image (use for tables, long code, anything that needs layout). Default false.',
+          default: false,
+        },
+        title: {
+          type: 'string',
+          description: 'Optional bold heading shown above the body when as_image is true.',
+        },
+      },
+      required: ['to', 'content'],
     },
   },
   {
@@ -745,6 +785,70 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
       return `Spotify: ${args.action} executed successfully.`
     }
 
+    case WECHAT_LIST_PEERS_TOOL_NAME: {
+      const res = await ipc.invoke('wechat:listPeers')
+      if (!res?.success) return `WeChat error: ${res?.error ?? 'unknown'}`
+      const peers = Array.isArray(res.peers) ? res.peers : []
+      if (peers.length === 0) {
+        return 'No WeChat peers yet. Either no account is paired (Settings → WeChat) or no one has messaged the user.'
+      }
+      const lines = peers.slice(0, 20).map((p: any) => {
+        const seen = p.lastSeenAt ? new Date(p.lastSeenAt).toISOString() : 'unknown'
+        return `- userId=${p.userId} displayName=${p.displayName ?? '(unknown)'} lastSeen=${seen}`
+      })
+      return `Recent WeChat peers:\n${lines.join('\n')}`
+    }
+
+    case WECHAT_SEND_TOOL_NAME: {
+      const to = String((args as any).to ?? '').trim()
+      const content = String((args as any).content ?? '')
+      const asImage = Boolean((args as any).as_image)
+      const title = (args as any).title ? String((args as any).title) : undefined
+      if (!to) return 'Error: `to` is required (call wechat_list_peers if you only have a name).'
+      if (!content.trim()) return 'Error: `content` is required.'
+
+      // Resolve display-name → userId via the peers list when needed.
+      let toUserId = to
+      const peersRes = await ipc.invoke('wechat:listPeers')
+      const peers: Array<{ userId: string; displayName?: string | null }> =
+        peersRes?.success && Array.isArray(peersRes.peers) ? peersRes.peers : []
+      const exactId = peers.find((p) => p.userId === to)
+      if (!exactId) {
+        const needle = to.toLowerCase()
+        const byName = peers.find((p) => (p.displayName ?? '').toLowerCase() === needle)
+          || peers.find((p) => (p.displayName ?? '').toLowerCase().includes(needle))
+        if (byName) toUserId = byName.userId
+        else if (peers.length > 0) {
+          return `Could not resolve "${to}" to a WeChat userId. Known peers: ${peers
+            .slice(0, 10)
+            .map((p) => `${p.displayName ?? '?'}=${p.userId}`)
+            .join(', ')}.`
+        }
+      }
+
+      try {
+        if (asImage) {
+          const rendered = await renderContentToPng(content, { title })
+          const res = await ipc.invoke('wechat:send', {
+            toUserId,
+            kind: 'image',
+            imageBase64: rendered.base64,
+          })
+          if (!res?.success) return `WeChat send failed: ${res?.error ?? 'unknown'}`
+          return `Sent image (${rendered.width}x${rendered.height}px) to WeChat user ${toUserId}.`
+        }
+        const res = await ipc.invoke('wechat:send', {
+          toUserId,
+          kind: 'text',
+          content,
+        })
+        if (!res?.success) return `WeChat send failed: ${res?.error ?? 'unknown'}`
+        return `Sent text (${content.length} chars) to WeChat user ${toUserId}.`
+      } catch (err: any) {
+        return `WeChat send error: ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
+
     case CREATE_SKILL_TOOL_NAME: {
       const res = await ipc.invoke('skills:write', {
         slug: args.slug,
@@ -852,6 +956,10 @@ export function describeToolCall(toolCall: ToolCall): string {
       return 'spotify_now_playing()'
     case 'spotify_control':
       return `spotify_control(${args.action ?? ''})`
+    case WECHAT_LIST_PEERS_TOOL_NAME:
+      return 'wechat_list_peers()'
+    case WECHAT_SEND_TOOL_NAME:
+      return `wechat_send(to=${String((args as any).to ?? '').slice(0, 32)}${(args as any).as_image ? ', image' : ''})`
     case CREATE_SKILL_TOOL_NAME:
       return `create_skill(${String((args as any).slug ?? '')})`
     case USE_SKILL_TOOL_NAME:

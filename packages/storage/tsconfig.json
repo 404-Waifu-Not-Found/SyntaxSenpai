@@ -1,17 +1,15 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "baseUrl": ".",
     "outDir": "dist",
     "rootDir": "src",
     "declaration": true,
     "declarationMap": true,
+    "ignoreDeprecations": "5.0",
     "paths": {
-      "@syntax-senpai/ai-core": [
-        "packages/ai-core/dist"
-      ],
-      "@syntax-senpai/ai-core/*": [
-        "packages/ai-core/dist/*"
-      ]
+      "@syntax-senpai/ai-core": ["../ai-core/dist"],
+      "@syntax-senpai/ai-core/*": ["../ai-core/dist/*"]
     },
     "noEmit": false,
     "allowImportingTsExtensions": false

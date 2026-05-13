@@ -22,6 +22,7 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true,
+    "ignoreDeprecations": "5.0",
     "types": ["vitest/globals", "node"],
 
     /* Path aliases */

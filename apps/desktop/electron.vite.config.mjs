@@ -31,6 +31,10 @@ export default defineConfig({
       alias: workspaceAlias
     },
     build: {
+      target: 'node20',
+      minify: 'esbuild',
+      sourcemap: false,
+      reportCompressedSize: false,
       rollupOptions: {
         external: ['better-sqlite3', 'keytar', 'expo-secure-store', 'expo']
       },
@@ -53,6 +57,10 @@ export default defineConfig({
       alias: workspaceAlias
     },
     build: {
+      target: 'node20',
+      minify: 'esbuild',
+      sourcemap: false,
+      reportCompressedSize: false,
       outDir: 'dist/preload'
     }
   },
@@ -69,6 +77,12 @@ export default defineConfig({
       exclude: ['expo-secure-store', 'expo', 'keytar', 'better-sqlite3']
     },
     build: {
+      // Electron 31 ships Chromium ~126 — skip transpiling to older targets.
+      target: 'chrome120',
+      minify: 'esbuild',
+      sourcemap: false,
+      reportCompressedSize: false,
+      cssCodeSplit: true,
       rollupOptions: {
         external: ['expo-secure-store', 'expo', 'keytar', 'better-sqlite3']
       },

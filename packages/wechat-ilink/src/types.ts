@@ -18,6 +18,8 @@ export interface Credentials {
   userId: string;
   /** Display name returned by getconfig at login time, best-effort. */
   displayName?: string;
+  /** API base URL returned by the QR-login `confirmed` response, if any. */
+  baseUrl?: string;
 }
 
 /** Media-item type codes (per `sendmessage`/`getuploadurl` docs). */

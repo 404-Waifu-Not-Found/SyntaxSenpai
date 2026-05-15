@@ -445,6 +445,85 @@ export function registerProviderIpc() {
     activeChatStreams.delete(streamId)
     return { success: true }
   })
+
+  // ── AI text enhancement (grammar fix / personality enhancement) ──────────────
+  // Called from the waifu creator form. Supports Anthropic and OpenAI-compatible providers.
+  ipcMain.handle('ai:enhanceText', async (_event: any, args: {
+    provider: string
+    apiKey: string
+    text: string
+    mode: 'grammar' | 'personality'
+    personalityTraits?: Record<string, number>
+  }) => {
+    const { provider, apiKey, text, mode, personalityTraits } = args
+    if (!apiKey && !KEYLESS_PROVIDERS.has(provider)) return { success: false, error: 'API key is not configured' }
+    if (!text?.trim()) return { success: false, error: 'No text provided' }
+
+    const systemPrompt = mode === 'grammar'
+      ? 'You are a precise proofreading assistant. Fix grammar, spelling, punctuation, and typographical errors in the text below. Preserve the original voice, style, character, and content — do not rewrite creatively, only correct mistakes. Return ONLY the corrected text with NO explanations, NO markdown formatting, NO surrounding quotes.'
+      : 'You are a creative character-design assistant. Enhance and expand the waifu character backstory and personality description below. Make it more vivid, engaging, and detailed while preserving the original character concept, name, and core traits. Add depth to her personality, history, and quirks. Return ONLY the enhanced text with NO explanations, NO markdown formatting, NO surrounding quotes.'
+
+    const userPrompt = mode === 'grammar'
+      ? `Fix grammar and typos in this text:\n\n${text}`
+      : `Enhance this waifu character description${personalityTraits ? `. Current personality traits: ${JSON.stringify(personalityTraits)}` : ''}:\n\n${text}`
+
+    try {
+      if (provider === 'anthropic') {
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 4096,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: userPrompt }],
+          }),
+        })
+        if (!response.ok) {
+          const data = await response.json().catch(() => null)
+          return { success: false, error: data?.error?.message || `${response.status} ${response.statusText}` }
+        }
+        const data = await response.json()
+        return { success: true, text: (data.content?.[0]?.text || '').trim() }
+      }
+
+      // OpenAI-compatible providers
+      const baseUrl = OPENAI_COMPATIBLE_BASE_URLS[provider]
+      if (!baseUrl) {
+        return { success: false, error: `Provider "${provider}" is not supported for text enhancement. Use Anthropic or an OpenAI-compatible provider.` }
+      }
+      const model = FALLBACK_MODELS[provider]?.[0]?.id || 'gpt-4o'
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          max_tokens: 4096,
+        }),
+      })
+      if (!response.ok) {
+        const responseData = await response.json().catch(() => null)
+        return { success: false, error: responseData?.error?.message || `${response.status} ${response.statusText}` }
+      }
+      const responseData = await response.json()
+      return { success: true, text: (responseData.choices?.[0]?.message?.content || '').trim() }
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : String(err)
+      providerLogger.error({ op: 'enhanceText', provider }, `failed: ${msg}`)
+      return { success: false, error: msg }
+    }
+  })
 }
 
 module.exports = { registerProviderIpc }

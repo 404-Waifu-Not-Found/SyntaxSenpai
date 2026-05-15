@@ -49,7 +49,7 @@ export class WeChatIlinkBot extends EventEmitter {
     super();
     this.creds = creds;
     this.opts = {
-      baseUrl: opts.baseUrl ?? ILINK_BASE_URL,
+      baseUrl: opts.baseUrl ?? creds.baseUrl ?? ILINK_BASE_URL,
       fetchImpl: opts.fetchImpl ?? fetch,
       minRetryMs: opts.minRetryMs ?? 1_000,
       maxRetryMs: opts.maxRetryMs ?? 30_000,

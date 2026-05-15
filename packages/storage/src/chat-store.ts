@@ -251,11 +251,13 @@ export class DesktopSQLiteChatStore implements IChatStore {
     if (!this.data.messages[conversationId]) {
       this.data.messages[conversationId] = [];
     }
+    const src = (message as any).source;
     this.data.messages[conversationId].push({
       id: message.id,
       role: message.role,
       content: typeof message.content === "string" ? message.content : JSON.stringify(message.content),
       createdAt: (message as any).timestamp || message.createdAt || new Date().toISOString(),
+      ...(src ? { source: src, sourceLabel: (message as any).sourceLabel } : {}),
     } as any);
 
     const conv = this.data.conversations[conversationId];

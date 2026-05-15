@@ -29,6 +29,7 @@ export const PROPOSE_TOOL_TOOL_NAME = 'propose_tool'
 export const DISPATCH_SUBAGENTS_TOOL_NAME = 'dispatch_subagents'
 export const WECHAT_SEND_TOOL_NAME = 'wechat_send'
 export const WECHAT_LIST_PEERS_TOOL_NAME = 'wechat_list_peers'
+export const SEND_MULTI_MESSAGES_TOOL_NAME = 'send_multi_messages'
 
 const CODING_MODE_TOOLS = new Set<string>([
   GIT_COMMIT_TOOL_NAME,
@@ -364,6 +365,32 @@ export const agentTools: ToolDefinition[] = [
     },
   },
   {
+    name: SEND_MULTI_MESSAGES_TOOL_NAME,
+    description:
+      'Send several separate messages to a WeChat contact, delivered in order as distinct chat bubbles. ' +
+      'Use this when chatting with someone on WeChat and your reply is naturally more than one message — ' +
+      'e.g. a quick reaction then a follow-up thought, a few steps one bubble at a time, or back-to-back texts ' +
+      'like a real person would send. Each entry in `messages` becomes its own bubble (and is itself auto-split ' +
+      'if too long). For a single message use wechat_send; for rich/structured content use wechat_send with as_image=true.',
+    parameters: {
+      type: 'object',
+      properties: {
+        to: {
+          type: 'string',
+          description: 'Contact userId (from wechat_list_peers) or, as a fallback, a display name to fuzzy-match.',
+        },
+        messages: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Ordered list of plain-text messages to send, each delivered as its own WeChat bubble. ' +
+            'Keep each one short and conversational, like real texting. Max 10.',
+        },
+      },
+      required: ['to', 'messages'],
+    },
+  },
+  {
     name: SET_AFFECTION_TOOL_NAME,
     description:
       'Update your 好感度 (affection meter) toward the user. Call this when your feelings change — when the user is kind, helpful, funny, rude, annoying, etc. The value persists across all conversations. You decide the value entirely on your own based on how you feel about the interaction. Do NOT tell the user you are changing it — just do it silently alongside your response.',
@@ -583,6 +610,36 @@ export function getToolsForMode(
   // enable/disable is handled on the main side, so anything reaching
   // pluginToolsCache is already opt-in.
   return [...base, ...pluginToolsCache]
+}
+
+/**
+ * Resolve a WeChat `to` argument (a userId, or a display name to fuzzy-match)
+ * against the peers list. Returns an error string to hand back to the model
+ * when a name can't be matched to any known peer.
+ */
+async function resolveWeChatPeer(
+  ipc: any,
+  to: string,
+): Promise<{ userId: string } | { error: string }> {
+  const peersRes = await ipc.invoke('wechat:listPeers')
+  const peers: Array<{ userId: string; displayName?: string | null }> =
+    peersRes?.success && Array.isArray(peersRes.peers) ? peersRes.peers : []
+  if (peers.some((p) => p.userId === to)) return { userId: to }
+  const needle = to.toLowerCase()
+  const byName =
+    peers.find((p) => (p.displayName ?? '').toLowerCase() === needle) ||
+    peers.find((p) => (p.displayName ?? '').toLowerCase().includes(needle))
+  if (byName) return { userId: byName.userId }
+  if (peers.length > 0) {
+    return {
+      error: `Could not resolve "${to}" to a WeChat userId. Known peers: ${peers
+        .slice(0, 10)
+        .map((p) => `${p.displayName ?? '?'}=${p.userId}`)
+        .join(', ')}.`,
+    }
+  }
+  // No peers known yet — fall through with the raw value (matches prior behavior).
+  return { userId: to }
 }
 
 /**
@@ -807,24 +864,9 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
       if (!to) return 'Error: `to` is required (call wechat_list_peers if you only have a name).'
       if (!content.trim()) return 'Error: `content` is required.'
 
-      // Resolve display-name → userId via the peers list when needed.
-      let toUserId = to
-      const peersRes = await ipc.invoke('wechat:listPeers')
-      const peers: Array<{ userId: string; displayName?: string | null }> =
-        peersRes?.success && Array.isArray(peersRes.peers) ? peersRes.peers : []
-      const exactId = peers.find((p) => p.userId === to)
-      if (!exactId) {
-        const needle = to.toLowerCase()
-        const byName = peers.find((p) => (p.displayName ?? '').toLowerCase() === needle)
-          || peers.find((p) => (p.displayName ?? '').toLowerCase().includes(needle))
-        if (byName) toUserId = byName.userId
-        else if (peers.length > 0) {
-          return `Could not resolve "${to}" to a WeChat userId. Known peers: ${peers
-            .slice(0, 10)
-            .map((p) => `${p.displayName ?? '?'}=${p.userId}`)
-            .join(', ')}.`
-        }
-      }
+      const resolved = await resolveWeChatPeer(ipc, to)
+      if ('error' in resolved) return resolved.error
+      const toUserId = resolved.userId
 
       try {
         if (asImage) {
@@ -843,7 +885,35 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
           content,
         })
         if (!res?.success) return `WeChat send failed: ${res?.error ?? 'unknown'}`
-        return `Sent text (${content.length} chars) to WeChat user ${toUserId}.`
+        const parts = typeof res.parts === 'number' ? res.parts : 1
+        return parts > 1
+          ? `Sent to WeChat user ${toUserId} as ${parts} messages (long text auto-split into natural chat-length bubbles).`
+          : `Sent text (${content.length} chars) to WeChat user ${toUserId}.`
+      } catch (err: any) {
+        return `WeChat send error: ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
+
+    case SEND_MULTI_MESSAGES_TOOL_NAME: {
+      const to = String((args as any).to ?? '').trim()
+      const rawMessages = (args as any).messages
+      if (!to) return 'Error: `to` is required (call wechat_list_peers if you only have a name).'
+      const messages = Array.isArray(rawMessages)
+        ? rawMessages.map((m: any) => (m ?? '').toString().trim()).filter(Boolean)
+        : []
+      if (messages.length === 0) {
+        return 'Error: `messages` must be a non-empty array of plain-text strings.'
+      }
+
+      const resolved = await resolveWeChatPeer(ipc, to)
+      if ('error' in resolved) return resolved.error
+      const toUserId = resolved.userId
+
+      try {
+        const res = await ipc.invoke('wechat:sendMulti', { toUserId, messages })
+        if (!res?.success) return `WeChat send failed: ${res?.error ?? 'unknown'}`
+        const count = typeof res.messages === 'number' ? res.messages : messages.length
+        return `Sent ${count} message${count === 1 ? '' : 's'} to WeChat user ${toUserId}.`
       } catch (err: any) {
         return `WeChat send error: ${err instanceof Error ? err.message : String(err)}`
       }
@@ -960,6 +1030,10 @@ export function describeToolCall(toolCall: ToolCall): string {
       return 'wechat_list_peers()'
     case WECHAT_SEND_TOOL_NAME:
       return `wechat_send(to=${String((args as any).to ?? '').slice(0, 32)}${(args as any).as_image ? ', image' : ''})`
+    case SEND_MULTI_MESSAGES_TOOL_NAME:
+      return `send_multi_messages(to=${String((args as any).to ?? '').slice(0, 32)}, ${
+        Array.isArray((args as any).messages) ? (args as any).messages.length : 0
+      } msgs)`
     case CREATE_SKILL_TOOL_NAME:
       return `create_skill(${String((args as any).slug ?? '')})`
     case USE_SKILL_TOOL_NAME:

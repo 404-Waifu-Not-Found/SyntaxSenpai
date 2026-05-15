@@ -99,6 +99,10 @@ export interface Message {
   attachments?: MessageAttachment[]
   sentiment?: SentimentResult
   subagents?: SubagentSnapshot[]
+  /** Where a user message originated, when not typed in the desktop app. */
+  source?: 'wechat'
+  /** Human-readable origin label (e.g. the WeChat peer's display name). */
+  sourceLabel?: string
 }
 
 interface ApiTelemetry {
@@ -382,14 +386,16 @@ Verify before stop_response:
 - stop_response.final_message should state what actually changed and any follow-ups the user still needs to do (e.g. install a new dep, restart the dev server).`
 }
 
-function buildWeChatSessionPromptBlock(active: boolean): string {
-  if (!active) return ''
+function buildWeChatSessionPromptBlock(binding: WeChatBinding | null): string {
+  if (!binding) return ''
+  const who = binding.peerDisplayName ? `**${binding.peerDisplayName}**` : 'a WeChat contact'
   return `\n\n[WeChat Session]
-You are speaking through WeChat. The user sees plain chat — WeChat does NOT render tables, charts, complex markdown, or wide code blocks.
-- Keep replies conversational; prefer prose over lists.
-- For structured output (tables, comparisons, long code, multi-section answers), call the wechat_send tool with as_image=true to render it as a PNG.
-- Your top-level final_message will be auto-relayed to the WeChat peer who started this conversation, so keep it self-contained and concise.
-- Do NOT include internal tool output, debug logs, or "Sent text..." confirmations in your final_message — the user only sees that string in WeChat.`
+Right now you are NOT talking to the desktop app user — you are chatting live with ${who} through the WeChat mobile app. Every message in this conversation arrived from WeChat, and your reply is delivered straight back to their WeChat. Treat it exactly like texting someone on your phone.
+- Reply like you're texting: short, conversational, prose over lists.
+- WeChat cannot deliver long messages. Never send a wall of text. If you have more than a few sentences, break it into short paragraphs separated by blank lines — each paragraph is delivered as its own message bubble, so make each one a self-contained thought.
+- WeChat does NOT render tables, charts, complex markdown, or wide code blocks. For structured output (tables, comparisons, long code, multi-section answers), call wechat_send with as_image=true to render it as a PNG.
+- To actively text a WeChat contact (e.g. the user asks you to message someone), use wechat_send for a single message or send_multi_messages for several back-to-back bubbles. Your normal reply does not need these — your final_message is auto-relayed and long replies are already split into natural bubbles.
+- Your top-level final_message is auto-relayed to ${who}, so keep it self-contained and concise. Do NOT include internal tool output, debug logs, or "Sent text..." confirmations — they only see that string in WeChat.`
 }
 
 function buildAffectionPrompt(affection: number, waifuName: string): string {
@@ -854,11 +860,40 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     await loadConversations()
-    if (conversationId.value !== convId) {
-      await selectConversation(convId)
-    }
-    if (!isLoading.value) {
-      await sendMessage(text)
+
+    // Queue the inbound message and drain serially — never drop it just
+    // because a turn is already in flight, and never let two peers' messages
+    // race each other into the wrong conversation.
+    wechatInboundQueue.push({
+      convId,
+      text,
+      sourceLabel: payload.displayName || peerId,
+    })
+    void drainWeChatInboundQueue()
+  }
+
+  // Serialized inbound WeChat queue: each item carries its own conversation
+  // so the drain switches to it before sending, and a busy `isLoading` turn
+  // is waited out rather than silently dropping the message.
+  const wechatInboundQueue: Array<{ convId: string; text: string; sourceLabel: string }> = []
+  let drainingWeChatQueue = false
+  async function drainWeChatInboundQueue(): Promise<void> {
+    if (drainingWeChatQueue) return
+    drainingWeChatQueue = true
+    try {
+      while (wechatInboundQueue.length > 0) {
+        while (isLoading.value) {
+          await new Promise((r) => setTimeout(r, 200))
+        }
+        const next = wechatInboundQueue.shift()
+        if (!next) break
+        if (conversationId.value !== next.convId) {
+          await selectConversation(next.convId)
+        }
+        await sendMessage(next.text, { source: 'wechat', sourceLabel: next.sourceLabel })
+      }
+    } finally {
+      drainingWeChatQueue = false
     }
   }
 
@@ -1758,7 +1793,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           systemPrompt += formatSkillsForPrompt(availableSkills.value)
           systemPrompt += buildApiTelemetryPrompt()
           systemPrompt += buildGroupChatPromptBlock(waifu, waifus, pendingTasks.get(waifu.id) || [], round)
-          systemPrompt += buildWeChatSessionPromptBlock(!!currentWeChatBinding.value)
+          systemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
           systemPrompt += activeCodingRepo.value
             ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
             : buildCodingSessionPromptBlock(trimmedText)
@@ -1954,6 +1989,11 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             }
           } else {
             // No-tools branch: stream directly into the live bubble.
+            // Cache the reactive proxy after push and batch content writes via
+            // rAF — per-chunk find() is O(n) and per-chunk reactive churn is
+            // wasted work when many tokens arrive between display frames.
+            // Cast on init to avoid TS narrowing the captured variable to `null`.
+            let liveMsgRef = null as Message | null
             const ensureBubble = () => {
               if (liveBubbleAdded) return
               messages.value.push({
@@ -1964,8 +2004,20 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                 waifuId: waifu.id,
                 waifuDisplayName: waifu.displayName,
               } as Message)
+              liveMsgRef = messages.value[messages.value.length - 1]
               recentMessageId.value = turnLiveAssistantId
               liveBubbleAdded = true
+            }
+            let flushScheduled = false
+            const flushContent = () => {
+              flushScheduled = false
+              if (liveMsgRef) liveMsgRef.content = finalContent
+            }
+            const scheduleFlush = () => {
+              if (flushScheduled) return
+              flushScheduled = true
+              if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flushContent)
+              else queueMicrotask(flushContent)
             }
             const streamStartedAt = performance.now()
             for await (const chunk of runtime.streamMessage({ text: trimmedText, history: sharedHistory, signal: streamController.value?.signal })) {
@@ -1973,10 +2025,12 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               if (chunk.type === 'text_delta' && chunk.delta) {
                 finalContent += chunk.delta
                 ensureBubble()
-                const m = messages.value.find((x) => x.id === turnLiveAssistantId)
-                if (m) m.content = finalContent
+                scheduleFlush()
               }
             }
+            // Final synchronous write so the bubble reflects the complete
+            // response before downstream code reads it.
+            if (liveMsgRef) liveMsgRef.content = finalContent
             apiRoundTrips.push(performance.now() - streamStartedAt)
           }
 
@@ -2080,7 +2134,10 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     }
   }
 
-  async function sendMessage(text: string) {
+  async function sendMessage(
+    text: string,
+    opts: { source?: 'wechat'; sourceLabel?: string } = {},
+  ) {
     if (isGroupChat.value && groupWaifuIds.value.length > 0) {
       return sendGroupMessage(text)
     }
@@ -2193,6 +2250,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         role: 'user',
         content: trimmedText,
         timestamp: now(),
+        ...(opts.source ? { source: opts.source, sourceLabel: opts.sourceLabel } : {}),
       }
 
       messages.value.push(userMsg)
@@ -2262,6 +2320,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       role: 'user',
       content: trimmedText,
       timestamp: now(),
+      ...(opts.source ? { source: opts.source, sourceLabel: opts.sourceLabel } : {}),
     }
 
     messages.value.push(userMsg)
@@ -2307,7 +2366,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       systemPrompt += buildMilestoneSidecarBlock(waifu.id)
       systemPrompt += formatSkillsForPrompt(availableSkills.value)
       systemPrompt += buildApiTelemetryPrompt()
-      systemPrompt += buildWeChatSessionPromptBlock(!!currentWeChatBinding.value)
+      systemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
       systemPrompt += activeCodingRepo.value
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(trimmedText)
@@ -2369,6 +2428,25 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         let liveBubbleAdded = false
         let liveText = ''
         let liveReasoning = ''
+        // Cast on init avoids TS narrowing the closure-captured variable to `null`.
+        let liveMsgRef = null as Message | null
+        let liveFlushScheduled = false
+        let liveStreamSettled = false
+
+        const computeLiveContent = () =>
+          liveText
+            ? liveText
+            : liveReasoning
+              ? `*💭 Thinking…*\n\n${liveReasoning}`
+              : ''
+
+        const flushLiveBubble = () => {
+          liveFlushScheduled = false
+          // Once the turn settles, the post-turn cleanContent write owns the
+          // bubble — drop any in-flight rAF callback so we don't clobber it.
+          if (liveStreamSettled) return
+          if (liveMsgRef) liveMsgRef.content = computeLiveContent()
+        }
 
         const ensureLiveBubble = () => {
           if (liveBubbleAdded) return
@@ -2378,21 +2456,20 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             content: '',
             timestamp: now(),
           })
+          liveMsgRef = messages.value[messages.value.length - 1]
           recentMessageId.value = liveAssistantId
           liveBubbleAdded = true
         }
 
+        // Batch reactive writes via rAF — token deltas can arrive faster than
+        // the display refresh, and per-chunk reactive churn (plus a per-chunk
+        // O(n) find) was the dominant cost during streaming.
         const updateLiveBubble = () => {
           if (!liveBubbleAdded) return
-          const m = messages.value.find((x) => x.id === liveAssistantId)
-          if (!m) return
-          // While reasoning is streaming and no text has arrived yet, show
-          // a thinking indicator. Once text starts, swap to text only.
-          m.content = liveText
-            ? liveText
-            : liveReasoning
-              ? `*💭 Thinking…*\n\n${liveReasoning}`
-              : ''
+          if (liveFlushScheduled) return
+          liveFlushScheduled = true
+          if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flushLiveBubble)
+          else queueMicrotask(flushLiveBubble)
         }
 
         const turnResult = await runAgentTurn({
@@ -2523,6 +2600,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             recordUsage(model, response?.usage)
           },
         })
+
+        liveStreamSettled = true
 
         let finalContent = turnResult.finalContent
 

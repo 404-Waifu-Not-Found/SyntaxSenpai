@@ -1,6 +1,7 @@
 const electronModule = require('electron')
 const fs = require('fs').promises
 const path = require('path')
+const { pathToFileURL } = require('url')
 
 const { ipcMain, dialog, app } = electronModule
 
@@ -70,6 +71,38 @@ export function registerExportIpc() {
       return {
         success: true,
         filePath: result.filePath,
+      }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('export:openAsset', async (_event: any, options?: { title?: string; buttonLabel?: string; includeAnimation?: boolean }) => {
+    try {
+      const includeAnimation = options?.includeAnimation !== false
+      const result = await dialog.showOpenDialog({
+        title: options?.title || 'Select local asset',
+        buttonLabel: options?.buttonLabel || 'Select',
+        filters: includeAnimation
+          ? [
+              { name: 'Images & animations', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'json', 'lottie'] },
+              { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'] },
+            ]
+          : [
+              { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'] },
+            ],
+        properties: ['openFile'],
+      })
+
+      if (result.canceled || !result.filePaths?.[0]) {
+        return { success: false, canceled: true }
+      }
+
+      const filePath = result.filePaths[0]
+      return {
+        success: true,
+        filePath,
+        fileUrl: pathToFileURL(filePath).toString(),
       }
     } catch (err: any) {
       return { success: false, error: err instanceof Error ? err.message : String(err) }

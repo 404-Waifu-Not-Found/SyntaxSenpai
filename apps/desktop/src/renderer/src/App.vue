@@ -341,6 +341,7 @@ interface CustomWaifuEntry {
   displayName: string
   sourceAnime?: string
   backstory?: string
+<<<<<<< Updated upstream
   communicationStyle?: {
     greetingPrefix?: string
     affirmationPhrase?: string
@@ -369,6 +370,11 @@ interface CustomWaifuEntry {
   preferredModel?: string
   catchphrases?: string[]
   createdAt?: string
+=======
+  avatar?: {
+    expressions?: Partial<Record<string, { uri?: string }>>
+  }
+>>>>>>> Stashed changes
   tags?: string[]
   isBuiltIn?: boolean
 }
@@ -447,12 +453,66 @@ const editingCustomWaifuOriginalId = ref<string | null>(null)
 const editingCustomWaifuCreatedAt = ref<string | null>(null)
 >>>>>>> Stashed changes
 
+<<<<<<< Updated upstream
 function slugifyWaifuId(value: string) {
   return String(value || '')
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9_-]+/g, '-')
     .replace(/^-+|-+$/g, '')
+=======
+// ── Custom waifu creation form state ──
+const showWaifuCreator = ref(false)
+const newWaifuName = ref('')
+const newWaifuDisplayName = ref('')
+const newWaifuBackstory = ref('')
+const newWaifuTags = ref('')
+const newWaifuEmojis = ref('✨')
+const newWaifuCatchphrases = ref('')
+const newWaifuGreeting = ref('')
+const newWaifuAffirmation = ref('')
+const newWaifuDeflection = ref('')
+const newWaifuAvatarNeutral = ref('')
+const newWaifuAvatarHappy = ref('')
+const newWaifuAvatarExcited = ref('')
+const newWaifuAvatarThinking = ref('')
+const newWaifuAvatarIdle = ref('')
+const newWaifuPersonalityWarmth = ref(60)
+const newWaifuPersonalityFormality = ref(50)
+const newWaifuPersonalityEnthusiasm = ref(50)
+const newWaifuPersonalityTeasing = ref(40)
+const newWaifuPersonalityVerbosity = ref(50)
+const newWaifuPersonalityHumor = ref(50)
+const newWaifuCreating = ref(false)
+const newWaifuError = ref('')
+const aiEnhancing = ref<'grammar' | 'personality' | null>(null)
+const aiEnhanceError = ref('')
+
+function resetWaifuForm() {
+  newWaifuName.value = ''
+  newWaifuDisplayName.value = ''
+  newWaifuBackstory.value = ''
+  newWaifuTags.value = ''
+  newWaifuEmojis.value = '✨'
+  newWaifuCatchphrases.value = ''
+  newWaifuGreeting.value = ''
+  newWaifuAffirmation.value = ''
+  newWaifuDeflection.value = ''
+  newWaifuAvatarNeutral.value = ''
+  newWaifuAvatarHappy.value = ''
+  newWaifuAvatarExcited.value = ''
+  newWaifuAvatarThinking.value = ''
+  newWaifuAvatarIdle.value = ''
+  newWaifuPersonalityWarmth.value = 60
+  newWaifuPersonalityFormality.value = 50
+  newWaifuPersonalityEnthusiasm.value = 50
+  newWaifuPersonalityTeasing.value = 40
+  newWaifuPersonalityVerbosity.value = 50
+  newWaifuPersonalityHumor.value = 50
+  newWaifuError.value = ''
+  aiEnhanceError.value = ''
+  aiEnhancing.value = null
+>>>>>>> Stashed changes
 }
 
 function parseCommaList(value: string): string[] {
@@ -591,6 +651,7 @@ async function saveCustomWaifuFromForm() {
   }
 }
 
+<<<<<<< Updated upstream
 function resetCustomWaifuForm() {
   customWaifuForm.value = createDefaultCustomWaifuForm()
 <<<<<<< Updated upstream
@@ -628,6 +689,152 @@ function editCustomWaifu(waifu: CustomWaifuEntry) {
     webSearch: waifu.capabilities?.webSearch !== false,
     codeExecution: !!waifu.capabilities?.codeExecution,
     remoteDesktopControl: !!waifu.capabilities?.remoteDesktopControl,
+=======
+function inferAvatarAssetType(uri: string): 'lottie' | 'png' | 'svg' {
+  const normalizedUri = uri.trim().toLowerCase()
+  if (normalizedUri.endsWith('.json') || normalizedUri.endsWith('.lottie')) return 'lottie'
+  if (normalizedUri.endsWith('.svg')) return 'svg'
+  return 'png'
+}
+
+function buildAvatarAsset(uri: string, fallbackUri: string) {
+  const resolvedUri = uri.trim() || fallbackUri
+  return {
+    type: inferAvatarAssetType(resolvedUri),
+    uri: resolvedUri,
+  }
+}
+
+function getCustomWaifuThumbnail(waifu: CustomWaifuEntry) {
+  return waifu.avatar?.expressions?.neutral?.uri
+    || waifu.avatar?.expressions?.happy?.uri
+    || waifu.avatar?.expressions?.excited?.uri
+    || waifu.avatar?.expressions?.thinking?.uri
+    || ''
+}
+
+async function pickCustomWaifuAvatar(target: 'neutral' | 'happy' | 'excited' | 'thinking' | 'idle') {
+  try {
+    const result = await invoke('export:openAsset', {
+      title: target === 'idle' ? 'Select local idle animation' : 'Select local avatar image',
+      buttonLabel: 'Use file',
+      includeAnimation: target === 'idle',
+    })
+
+    if (!result?.success) {
+      if (!result?.canceled) showToast(result?.error || 'Could not select asset', 'error')
+      return
+    }
+
+    const selectedUri = result.fileUrl || result.filePath || ''
+    if (!selectedUri) return
+
+    if (target === 'neutral') newWaifuAvatarNeutral.value = selectedUri
+    else if (target === 'happy') newWaifuAvatarHappy.value = selectedUri
+    else if (target === 'excited') newWaifuAvatarExcited.value = selectedUri
+    else if (target === 'thinking') newWaifuAvatarThinking.value = selectedUri
+    else newWaifuAvatarIdle.value = selectedUri
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  }
+}
+
+async function createCustomWaifu() {
+  newWaifuError.value = ''
+  const name = newWaifuName.value.trim()
+  const displayName = newWaifuDisplayName.value.trim()
+  const backstory = newWaifuBackstory.value.trim()
+  if (!name || !displayName || !backstory) {
+    newWaifuError.value = 'Name, Display Name, and Backstory are required!'
+    return
+  }
+  const id = name.toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_|_$/g, '')
+  if (!id) {
+    newWaifuError.value = 'Name must contain at least one letter or number'
+    return
+  }
+  const tags = newWaifuTags.value.split(',').map(t => t.trim()).filter(Boolean)
+  const catchphrases = newWaifuCatchphrases.value.split('\n').map(c => c.trim()).filter(Boolean)
+  const emojis = newWaifuEmojis.value.split(/\s+/).filter(Boolean)
+  const neutralAvatarUri = newWaifuAvatarNeutral.value.trim() || '/assets/waifus/default/neutral.png'
+  const happyAvatarUri = newWaifuAvatarHappy.value.trim() || neutralAvatarUri || '/assets/waifus/default/happy.png'
+  const excitedAvatarUri = newWaifuAvatarExcited.value.trim() || happyAvatarUri || neutralAvatarUri || '/assets/waifus/default/excited.png'
+  const thinkingAvatarUri = newWaifuAvatarThinking.value.trim() || neutralAvatarUri || '/assets/waifus/default/thinking.png'
+  const idleAvatarUri = newWaifuAvatarIdle.value.trim() || '/assets/waifus/default/idle.json'
+
+  newWaifuCreating.value = true
+  try {
+    const waifuPayload = {
+      id,
+      name: id,
+      displayName,
+      sourceAnime: 'Original',
+      backstory,
+      personalityTraits: {
+        warmth: newWaifuPersonalityWarmth.value,
+        formality: newWaifuPersonalityFormality.value,
+        enthusiasm: newWaifuPersonalityEnthusiasm.value,
+        teasing: newWaifuPersonalityTeasing.value,
+        verbosity: newWaifuPersonalityVerbosity.value,
+        humor: newWaifuPersonalityHumor.value,
+      },
+      communicationStyle: {
+        greetingPrefix: newWaifuGreeting.value || `Hey there~`,
+        affirmationPhrase: newWaifuAffirmation.value || `I've got this!`,
+        deflectionPhrase: newWaifuDeflection.value || `It's nothing...`,
+        signatureEmojis: emojis.length > 0 ? emojis : ['✨'],
+        speaksIn3rdPerson: false,
+        usesHonorificSelf: 'watashi',
+      },
+      avatar: {
+        expressions: {
+          neutral: buildAvatarAsset(neutralAvatarUri, '/assets/waifus/default/neutral.png'),
+          happy: buildAvatarAsset(happyAvatarUri, '/assets/waifus/default/happy.png'),
+          excited: buildAvatarAsset(excitedAvatarUri, '/assets/waifus/default/excited.png'),
+          thinking: buildAvatarAsset(thinkingAvatarUri, '/assets/waifus/default/thinking.png'),
+          confused: buildAvatarAsset(thinkingAvatarUri, '/assets/waifus/default/confused.png'),
+          embarrassed: buildAvatarAsset(happyAvatarUri, '/assets/waifus/default/embarrassed.png'),
+          determined: buildAvatarAsset(excitedAvatarUri, '/assets/waifus/default/determined.png'),
+          sad: buildAvatarAsset(neutralAvatarUri, '/assets/waifus/default/sad.png'),
+        },
+        idleAnimation: idleAvatarUri,
+      },
+      capabilities: {
+        fileSystem: false,
+        shellExecution: false,
+        webSearch: true,
+        codeExecution: false,
+        remoteDesktopControl: false,
+      },
+      systemPromptTemplate: `You are {{displayName}}, a custom waifu. ${backstory.slice(0, 100)}
+
+IMPORTANT - You must ALWAYS talk in your unique character. Use your emojis (${emojis.join('')}) and stay in character.
+- Be engaging and helpful while maintaining your personality
+- Use your signature phrases naturally
+- NEVER sound like a generic AI assistant. You are a waifu who cares about the user.
+Example: "${displayName} is here to help~"`,
+      preferredAIProvider: 'anthropic',
+      preferredModel: 'claude-3-5-sonnet-20241022',
+      createdAt: new Date().toISOString(),
+      isBuiltIn: false,
+      tags,
+      catchphrases,
+    }
+    const result = await invoke('waifus:write', waifuPayload)
+    if (result?.success) {
+      showToast(`Created waifu "${displayName}"!`, 'success')
+      resetWaifuForm()
+      showWaifuCreator.value = false
+      await refreshCustomWaifus()
+      await store.refreshCustomWaifus()
+    } else {
+      newWaifuError.value = result?.error || 'Failed to save waifu'
+    }
+  } catch (err: any) {
+    newWaifuError.value = err?.message || String(err)
+  } finally {
+    newWaifuCreating.value = false
+>>>>>>> Stashed changes
   }
 
   editingCustomWaifuOriginalId.value = waifu.id
@@ -3194,6 +3401,249 @@ async function handleImportData() {
 
           <!-- Waifus Tab -->
           <div v-if="settingsTab === 'waifus'">
+<<<<<<< Updated upstream
+=======
+            <!-- Create new waifu button / form -->
+            <div class="settings-card">
+              <div class="flex items-start justify-between gap-3 mb-3">
+                <div>
+                  <h3 class="text-sm font-bold text-white">Create a waifu</h3>
+                  <p class="text-xs text-neutral-400">
+                    Design your own waifu by typing in her personality, backstory, and traits.
+                  </p>
+                </div>
+                <button
+                  class="btn-primary shrink-0"
+                  @click="showWaifuCreator = !showWaifuCreator; if (showWaifuCreator) resetWaifuForm()"
+                >
+                  {{ showWaifuCreator ? 'Cancel' : '✏️ Create New' }}
+                </button>
+              </div>
+
+              <Transition
+                enter-active-class="transition-all duration-200"
+                leave-active-class="transition-all duration-150"
+                enter-from-class="opacity-0 -translate-y-2 max-h-0"
+                leave-to-class="opacity-0 -translate-y-2 max-h-0"
+              >
+                <div v-if="showWaifuCreator" class="space-y-4 pt-3 border-t border-white/10">
+                  <!-- Name + Display Name -->
+                  <div class="grid grid-cols-2 gap-3">
+                    <label class="block">
+                      <span class="text-xs font-semibold text-neutral-300 mb-1 block">Name *</span>
+                      <input v-model="newWaifuName" placeholder="e.g. yuki" class="input-field text-sm" />
+                      <span class="text-[10px] text-neutral-500 mt-0.5 block">Used for ID: yuki → yuki.json</span>
+                    </label>
+                    <label class="block">
+                      <span class="text-xs font-semibold text-neutral-300 mb-1 block">Display Name *</span>
+                      <input v-model="newWaifuDisplayName" placeholder="e.g. Yuki ❄️" class="input-field text-sm" />
+                    </label>
+                  </div>
+
+                  <!-- Backstory -->
+                  <label class="block">
+                    <span class="text-xs font-semibold text-neutral-300 mb-1 block">Backstory *</span>
+                    <textarea
+                      v-model="newWaifuBackstory"
+                      placeholder="Tell her story — her personality, history, quirks..."
+                      class="input-field text-sm min-h-[100px] resize-y"
+                    />
+                  </label>
+
+                  <!-- AI Enhancement Buttons -->
+                  <div class="flex gap-2 -mt-1">
+                    <button
+                      class="btn-ghost text-xs flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg transition-all duration-150"
+                      :class="aiEnhancing === 'grammar' ? 'opacity-50 pointer-events-none' : 'hover:bg-emerald-500/10 hover:text-emerald-300'"
+                      :style="ghostButtonStyle"
+                      :disabled="aiEnhancing !== null"
+                      @click="fixGrammarAI"
+                    >
+                      <span v-if="aiEnhancing === 'grammar'" class="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                      <span v-else>🔍</span>
+                      <span>{{ aiEnhancing === 'grammar' ? 'Fixing…' : 'Fix Grammar & Typos' }}</span>
+                    </button>
+                    <button
+                      class="btn-ghost text-xs flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg transition-all duration-150"
+                      :class="aiEnhancing === 'personality' ? 'opacity-50 pointer-events-none' : 'hover:bg-violet-500/10 hover:text-violet-300'"
+                      :style="ghostButtonStyle"
+                      :disabled="aiEnhancing !== null"
+                      @click="enhancePersonalityAI"
+                    >
+                      <span v-if="aiEnhancing === 'personality'" class="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                      <span v-else>✨</span>
+                      <span>{{ aiEnhancing === 'personality' ? 'Enhancing…' : 'Enhance Personality' }}</span>
+                    </button>
+                  </div>
+                  <p v-if="aiEnhanceError" class="text-xs text-red-400">{{ aiEnhanceError }}</p>
+
+                  <!-- Tags + Emojis -->
+                  <div class="grid grid-cols-2 gap-3">
+                    <label class="block">
+                      <span class="text-xs font-semibold text-neutral-300 mb-1 block">Tags</span>
+                      <input v-model="newWaifuTags" placeholder="tsundere, kuudere, hacker..." class="input-field text-sm" />
+                      <span class="text-[10px] text-neutral-500 mt-0.5 block">Comma-separated</span>
+                    </label>
+                    <label class="block">
+                      <span class="text-xs font-semibold text-neutral-300 mb-1 block">Emojis</span>
+                      <input v-model="newWaifuEmojis" placeholder="✨ 💻 🌸" class="input-field text-sm" />
+                    </label>
+                  </div>
+
+                  <!-- Catchphrases -->
+                  <label class="block">
+                    <span class="text-xs font-semibold text-neutral-300 mb-1 block">Catchphrases (one per line)</span>
+                    <textarea
+                      v-model="newWaifuCatchphrases"
+                      placeholder="I'll handle this!&#10;Don't underestimate me!&#10;Hmph!"
+                      class="input-field text-sm min-h-[60px] resize-y"
+                    />
+                  </label>
+
+                  <!-- Communication style -->
+                  <div class="rounded-lg bg-neutral-800/40 border border-neutral-700/40 p-3">
+                    <p class="text-xs font-semibold text-neutral-300 mb-2">Communication style</p>
+                    <div class="grid grid-cols-3 gap-2">
+                      <label class="block">
+                        <span class="text-[10px] text-neutral-400 block">Greeting</span>
+                        <input v-model="newWaifuGreeting" placeholder="Hey there~" class="input-field text-xs" />
+                      </label>
+                      <label class="block">
+                        <span class="text-[10px] text-neutral-400 block">Affirmation</span>
+                        <input v-model="newWaifuAffirmation" placeholder="I've got this!" class="input-field text-xs" />
+                      </label>
+                      <label class="block">
+                        <span class="text-[10px] text-neutral-400 block">Deflection</span>
+                        <input v-model="newWaifuDeflection" placeholder="It's nothing..." class="input-field text-xs" />
+                      </label>
+                    </div>
+                  </div>
+
+                  <!-- Avatar config -->
+                  <div class="rounded-lg bg-neutral-800/40 border border-neutral-700/40 p-3">
+                    <p class="text-xs font-semibold text-neutral-300 mb-2">Avatar assets</p>
+                    <div class="grid grid-cols-2 gap-2">
+                      <label class="block">
+                        <span class="text-[10px] text-neutral-400 block">Neutral avatar URI</span>
+                        <div class="flex gap-2">
+                          <input v-model="newWaifuAvatarNeutral" placeholder="/assets/waifus/yuki/neutral.png" class="input-field text-xs flex-1" />
+                          <button type="button" class="btn-secondary text-xs shrink-0" @click="pickCustomWaifuAvatar('neutral')">Browse</button>
+                        </div>
+                      </label>
+                      <label class="block">
+                        <span class="text-[10px] text-neutral-400 block">Happy avatar URI</span>
+                        <div class="flex gap-2">
+                          <input v-model="newWaifuAvatarHappy" placeholder="/assets/waifus/yuki/happy.png" class="input-field text-xs flex-1" />
+                          <button type="button" class="btn-secondary text-xs shrink-0" @click="pickCustomWaifuAvatar('happy')">Browse</button>
+                        </div>
+                      </label>
+                      <label class="block">
+                        <span class="text-[10px] text-neutral-400 block">Excited avatar URI</span>
+                        <div class="flex gap-2">
+                          <input v-model="newWaifuAvatarExcited" placeholder="/assets/waifus/yuki/excited.png" class="input-field text-xs flex-1" />
+                          <button type="button" class="btn-secondary text-xs shrink-0" @click="pickCustomWaifuAvatar('excited')">Browse</button>
+                        </div>
+                      </label>
+                      <label class="block">
+                        <span class="text-[10px] text-neutral-400 block">Thinking avatar URI</span>
+                        <div class="flex gap-2">
+                          <input v-model="newWaifuAvatarThinking" placeholder="/assets/waifus/yuki/thinking.png" class="input-field text-xs flex-1" />
+                          <button type="button" class="btn-secondary text-xs shrink-0" @click="pickCustomWaifuAvatar('thinking')">Browse</button>
+                        </div>
+                      </label>
+                      <label class="block col-span-2">
+                        <span class="text-[10px] text-neutral-400 block">Idle animation URI</span>
+                        <div class="flex gap-2">
+                          <input v-model="newWaifuAvatarIdle" placeholder="/assets/waifus/yuki/idle.json" class="input-field text-xs flex-1" />
+                          <button type="button" class="btn-secondary text-xs shrink-0" @click="pickCustomWaifuAvatar('idle')">Browse</button>
+                        </div>
+                        <span class="text-[10px] text-neutral-500 mt-0.5 block">Supports png, svg, and json/lottie. Blank fields fall back to the default assets or your neutral avatar.</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <!-- Personality sliders -->
+                  <div class="rounded-lg bg-neutral-800/40 border border-neutral-700/40 p-3">
+                    <p class="text-xs font-semibold text-neutral-300 mb-2">Personality traits</p>
+                    <div class="grid grid-cols-2 gap-x-4 gap-y-2">
+                      <label class="flex items-center gap-2">
+                        <span class="text-[10px] text-neutral-400 w-20 shrink-0">Warmth</span>
+                        <input type="range" min="0" max="100" v-model.number="newWaifuPersonalityWarmth" class="w-full accent-primary-500" />
+                        <span class="text-[10px] text-neutral-500 font-mono w-6 text-right">{{ newWaifuPersonalityWarmth }}</span>
+                      </label>
+                      <label class="flex items-center gap-2">
+                        <span class="text-[10px] text-neutral-400 w-20 shrink-0">Formality</span>
+                        <input type="range" min="0" max="100" v-model.number="newWaifuPersonalityFormality" class="w-full accent-primary-500" />
+                        <span class="text-[10px] text-neutral-500 font-mono w-6 text-right">{{ newWaifuPersonalityFormality }}</span>
+                      </label>
+                      <label class="flex items-center gap-2">
+                        <span class="text-[10px] text-neutral-400 w-20 shrink-0">Enthusiasm</span>
+                        <input type="range" min="0" max="100" v-model.number="newWaifuPersonalityEnthusiasm" class="w-full accent-primary-500" />
+                        <span class="text-[10px] text-neutral-500 font-mono w-6 text-right">{{ newWaifuPersonalityEnthusiasm }}</span>
+                      </label>
+                      <label class="flex items-center gap-2">
+                        <span class="text-[10px] text-neutral-400 w-20 shrink-0">Teasing</span>
+                        <input type="range" min="0" max="100" v-model.number="newWaifuPersonalityTeasing" class="w-full accent-primary-500" />
+                        <span class="text-[10px] text-neutral-500 font-mono w-6 text-right">{{ newWaifuPersonalityTeasing }}</span>
+                      </label>
+                      <label class="flex items-center gap-2">
+                        <span class="text-[10px] text-neutral-400 w-20 shrink-0">Verbosity</span>
+                        <input type="range" min="0" max="100" v-model.number="newWaifuPersonalityVerbosity" class="w-full accent-primary-500" />
+                        <span class="text-[10px] text-neutral-500 font-mono w-6 text-right">{{ newWaifuPersonalityVerbosity }}</span>
+                      </label>
+                      <label class="flex items-center gap-2">
+                        <span class="text-[10px] text-neutral-400 w-20 shrink-0">Humor</span>
+                        <input type="range" min="0" max="100" v-model.number="newWaifuPersonalityHumor" class="w-full accent-primary-500" />
+                        <span class="text-[10px] text-neutral-500 font-mono w-6 text-right">{{ newWaifuPersonalityHumor }}</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <!-- Preview card -->
+                  <div class="rounded-lg bg-neutral-800/20 border border-neutral-700/30 p-3">
+                    <p class="text-xs font-semibold text-neutral-400 mb-2">Preview</p>
+                    <div class="flex items-center gap-3">
+                      <img
+                        v-if="newWaifuAvatarNeutral.trim()"
+                        :src="newWaifuAvatarNeutral.trim()"
+                        :alt="`${newWaifuDisplayName || 'Custom waifu'} avatar preview`"
+                        class="w-10 h-10 rounded-full object-cover border border-white/10 bg-neutral-900/60"
+                      />
+                      <div v-else class="w-10 h-10 rounded-full bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center text-sm font-bold text-white">
+                        {{ (newWaifuDisplayName || '?')[0] }}
+                      </div>
+                      <div class="flex-1 min-w-0">
+                        <div class="text-sm font-semibold text-white">{{ newWaifuDisplayName || '(no name)' }}</div>
+                        <div class="text-[11px] text-neutral-400 line-clamp-1">{{ newWaifuBackstory ? newWaifuBackstory.slice(0, 80) + '…' : '(no backstory)' }}</div>
+                        <div class="flex gap-1 mt-1 flex-wrap">
+                          <span v-for="tag in newWaifuTags.split(',').map(t => t.trim()).filter(Boolean)" :key="tag" class="text-[10px] px-1.5 py-0.5 rounded-full bg-primary-500/15 text-primary-300 border border-primary-500/20">
+                            {{ tag }}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Error + submit -->
+                  <p v-if="newWaifuError" class="text-xs text-red-400">{{ newWaifuError }}</p>
+                  <div class="flex gap-2">
+                    <button class="btn-secondary flex-1" @click="showWaifuCreator = false; resetWaifuForm()">
+                      Cancel
+                    </button>
+                    <button
+                      class="btn-primary flex-1"
+                      :disabled="newWaifuCreating || !newWaifuName.trim() || !newWaifuDisplayName.trim() || !newWaifuBackstory.trim()"
+                      @click="createCustomWaifu"
+                    >
+                      {{ newWaifuCreating ? 'Creating…' : '💗 Create Waifu' }}
+                    </button>
+                  </div>
+                </div>
+              </Transition>
+            </div>
+
+            <!-- Existing custom waifus list -->
+>>>>>>> Stashed changes
             <div class="settings-card">
               <div class="flex items-start justify-between gap-3 mb-3">
                 <div>
@@ -3459,10 +3909,21 @@ async function handleImportData() {
                   :key="waifu.id"
                   class="flex items-start justify-between gap-3 rounded-lg border border-neutral-800/60 bg-neutral-900/50 p-3"
                 >
-                  <div class="min-w-0">
-                    <div class="text-sm font-semibold text-white truncate">{{ waifu.displayName || waifu.name || waifu.id }}</div>
-                    <div class="text-[11px] text-neutral-500 font-mono truncate">{{ waifu.id }}</div>
-                    <p v-if="waifu.backstory" class="text-xs text-neutral-400 mt-1 line-clamp-2">{{ waifu.backstory }}</p>
+                  <div class="flex items-start gap-3 min-w-0">
+                    <img
+                      v-if="getCustomWaifuThumbnail(waifu)"
+                      :src="getCustomWaifuThumbnail(waifu)"
+                      :alt="`${waifu.displayName || waifu.name || waifu.id} avatar`"
+                      class="w-11 h-11 rounded-full object-cover border border-white/10 bg-neutral-900/60 shrink-0"
+                    />
+                    <div v-else class="w-11 h-11 rounded-full bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center text-sm font-bold text-white shrink-0">
+                      {{ (waifu.displayName || waifu.name || waifu.id || '?')[0] }}
+                    </div>
+                    <div class="min-w-0">
+                      <div class="text-sm font-semibold text-white truncate">{{ waifu.displayName || waifu.name || waifu.id }}</div>
+                      <div class="text-[11px] text-neutral-500 font-mono truncate">{{ waifu.id }}</div>
+                      <p v-if="waifu.backstory" class="text-xs text-neutral-400 mt-1 line-clamp-2">{{ waifu.backstory }}</p>
+                    </div>
                   </div>
                   <div class="flex gap-2 shrink-0">
                     <button

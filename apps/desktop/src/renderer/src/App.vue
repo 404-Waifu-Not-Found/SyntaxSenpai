@@ -347,6 +347,10 @@ interface CustomWaifuEntry {
   name: string
   displayName: string
   backstory?: string
+  avatar?: {
+    expressions?: Partial<Record<string, { uri?: string }>>
+    idleAnimation?: string
+  }
   tags?: string[]
   isBuiltIn?: boolean
 }
@@ -372,6 +376,11 @@ const newWaifuPersonalityEnthusiasm = ref(50)
 const newWaifuPersonalityTeasing = ref(40)
 const newWaifuPersonalityVerbosity = ref(50)
 const newWaifuPersonalityHumor = ref(50)
+const newWaifuAvatarNeutral = ref('')
+const newWaifuAvatarHappy = ref('')
+const newWaifuAvatarExcited = ref('')
+const newWaifuAvatarThinking = ref('')
+const newWaifuAvatarIdle = ref('')
 const newWaifuCreating = ref(false)
 const newWaifuError = ref('')
 const aiEnhancing = ref<'grammar' | 'personality' | null>(null)
@@ -393,9 +402,63 @@ function resetWaifuForm() {
   newWaifuPersonalityTeasing.value = 40
   newWaifuPersonalityVerbosity.value = 50
   newWaifuPersonalityHumor.value = 50
+  newWaifuAvatarNeutral.value = ''
+  newWaifuAvatarHappy.value = ''
+  newWaifuAvatarExcited.value = ''
+  newWaifuAvatarThinking.value = ''
+  newWaifuAvatarIdle.value = ''
   newWaifuError.value = ''
   aiEnhanceError.value = ''
   aiEnhancing.value = null
+}
+
+function inferAvatarAssetType(uri: string): 'lottie' | 'png' | 'svg' {
+  const normalizedUri = uri.trim().toLowerCase()
+  if (normalizedUri.endsWith('.json') || normalizedUri.endsWith('.lottie')) return 'lottie'
+  if (normalizedUri.endsWith('.svg')) return 'svg'
+  return 'png'
+}
+
+function buildAvatarAsset(uri: string, fallbackUri: string) {
+  const resolvedUri = uri.trim() || fallbackUri
+  return {
+    type: inferAvatarAssetType(resolvedUri),
+    uri: resolvedUri,
+  }
+}
+
+function getCustomWaifuThumbnail(waifu: CustomWaifuEntry) {
+  return waifu.avatar?.expressions?.neutral?.uri
+    || waifu.avatar?.expressions?.happy?.uri
+    || waifu.avatar?.expressions?.excited?.uri
+    || waifu.avatar?.expressions?.thinking?.uri
+    || ''
+}
+
+async function pickCustomWaifuAvatar(target: 'neutral' | 'happy' | 'excited' | 'thinking' | 'idle') {
+  try {
+    const result = await invoke('export:openAsset', {
+      title: target === 'idle' ? 'Select local idle animation' : 'Select local avatar image',
+      buttonLabel: 'Use file',
+      includeAnimation: target === 'idle',
+    })
+
+    if (!result?.success) {
+      if (!result?.canceled) showToast(result?.error || 'Could not select asset', 'error')
+      return
+    }
+
+    const selectedUri = result.fileUrl || result.filePath || ''
+    if (!selectedUri) return
+
+    if (target === 'neutral') newWaifuAvatarNeutral.value = selectedUri
+    else if (target === 'happy') newWaifuAvatarHappy.value = selectedUri
+    else if (target === 'excited') newWaifuAvatarExcited.value = selectedUri
+    else if (target === 'thinking') newWaifuAvatarThinking.value = selectedUri
+    else newWaifuAvatarIdle.value = selectedUri
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  }
 }
 
 async function fixGrammarAI() {
@@ -487,6 +550,11 @@ async function createCustomWaifu() {
   const tags = newWaifuTags.value.split(',').map(t => t.trim()).filter(Boolean)
   const catchphrases = newWaifuCatchphrases.value.split('\n').map(c => c.trim()).filter(Boolean)
   const emojis = newWaifuEmojis.value.split(/\s+/).filter(Boolean)
+  const neutralAvatarUri = newWaifuAvatarNeutral.value.trim() || '/assets/waifus/default/neutral.png'
+  const happyAvatarUri = newWaifuAvatarHappy.value.trim() || neutralAvatarUri || '/assets/waifus/default/happy.png'
+  const excitedAvatarUri = newWaifuAvatarExcited.value.trim() || happyAvatarUri || neutralAvatarUri || '/assets/waifus/default/excited.png'
+  const thinkingAvatarUri = newWaifuAvatarThinking.value.trim() || neutralAvatarUri || '/assets/waifus/default/thinking.png'
+  const idleAvatarUri = newWaifuAvatarIdle.value.trim() || '/assets/waifus/default/idle.json'
 
   newWaifuCreating.value = true
   try {
@@ -514,16 +582,16 @@ async function createCustomWaifu() {
       },
       avatar: {
         expressions: {
-          neutral: { type: 'png', uri: '/assets/waifus/default/neutral.png' },
-          happy: { type: 'png', uri: '/assets/waifus/default/happy.png' },
-          excited: { type: 'png', uri: '/assets/waifus/default/excited.png' },
-          thinking: { type: 'png', uri: '/assets/waifus/default/thinking.png' },
-          confused: { type: 'png', uri: '/assets/waifus/default/confused.png' },
-          embarrassed: { type: 'png', uri: '/assets/waifus/default/embarrassed.png' },
-          determined: { type: 'png', uri: '/assets/waifus/default/determined.png' },
-          sad: { type: 'png', uri: '/assets/waifus/default/sad.png' },
+          neutral: buildAvatarAsset(neutralAvatarUri, '/assets/waifus/default/neutral.png'),
+          happy: buildAvatarAsset(happyAvatarUri, '/assets/waifus/default/happy.png'),
+          excited: buildAvatarAsset(excitedAvatarUri, '/assets/waifus/default/excited.png'),
+          thinking: buildAvatarAsset(thinkingAvatarUri, '/assets/waifus/default/thinking.png'),
+          confused: buildAvatarAsset(thinkingAvatarUri, '/assets/waifus/default/confused.png'),
+          embarrassed: buildAvatarAsset(happyAvatarUri, '/assets/waifus/default/embarrassed.png'),
+          determined: buildAvatarAsset(excitedAvatarUri, '/assets/waifus/default/determined.png'),
+          sad: buildAvatarAsset(neutralAvatarUri, '/assets/waifus/default/sad.png'),
         },
-        idleAnimation: '/assets/waifus/default/idle.json',
+        idleAnimation: idleAvatarUri,
       },
       capabilities: {
         fileSystem: false,
@@ -3281,6 +3349,48 @@ async function handleImportData() {
                     </div>
                   </div>
 
+                  <div class="rounded-lg bg-neutral-800/40 border border-neutral-700/40 p-3">
+                    <p class="text-xs font-semibold text-neutral-300 mb-2">Avatar assets</p>
+                    <div class="grid grid-cols-2 gap-2">
+                      <label class="block">
+                        <span class="text-[10px] text-neutral-400 block">Neutral avatar URI</span>
+                        <div class="flex gap-2">
+                          <input v-model="newWaifuAvatarNeutral" placeholder="/assets/waifus/yuki/neutral.png" class="input-field text-xs flex-1" />
+                          <button type="button" class="btn-secondary text-xs shrink-0" @click="pickCustomWaifuAvatar('neutral')">Browse</button>
+                        </div>
+                      </label>
+                      <label class="block">
+                        <span class="text-[10px] text-neutral-400 block">Happy avatar URI</span>
+                        <div class="flex gap-2">
+                          <input v-model="newWaifuAvatarHappy" placeholder="/assets/waifus/yuki/happy.png" class="input-field text-xs flex-1" />
+                          <button type="button" class="btn-secondary text-xs shrink-0" @click="pickCustomWaifuAvatar('happy')">Browse</button>
+                        </div>
+                      </label>
+                      <label class="block">
+                        <span class="text-[10px] text-neutral-400 block">Excited avatar URI</span>
+                        <div class="flex gap-2">
+                          <input v-model="newWaifuAvatarExcited" placeholder="/assets/waifus/yuki/excited.png" class="input-field text-xs flex-1" />
+                          <button type="button" class="btn-secondary text-xs shrink-0" @click="pickCustomWaifuAvatar('excited')">Browse</button>
+                        </div>
+                      </label>
+                      <label class="block">
+                        <span class="text-[10px] text-neutral-400 block">Thinking avatar URI</span>
+                        <div class="flex gap-2">
+                          <input v-model="newWaifuAvatarThinking" placeholder="/assets/waifus/yuki/thinking.png" class="input-field text-xs flex-1" />
+                          <button type="button" class="btn-secondary text-xs shrink-0" @click="pickCustomWaifuAvatar('thinking')">Browse</button>
+                        </div>
+                      </label>
+                      <label class="block col-span-2">
+                        <span class="text-[10px] text-neutral-400 block">Idle animation URI</span>
+                        <div class="flex gap-2">
+                          <input v-model="newWaifuAvatarIdle" placeholder="/assets/waifus/yuki/idle.json" class="input-field text-xs flex-1" />
+                          <button type="button" class="btn-secondary text-xs shrink-0" @click="pickCustomWaifuAvatar('idle')">Browse</button>
+                        </div>
+                        <span class="text-[10px] text-neutral-500 mt-0.5 block">Supports png, svg, and json/lottie. Blank fields fall back to the default assets or your neutral avatar.</span>
+                      </label>
+                    </div>
+                  </div>
+
                   <!-- Personality sliders -->
                   <div class="rounded-lg bg-neutral-800/40 border border-neutral-700/40 p-3">
                     <p class="text-xs font-semibold text-neutral-300 mb-2">Personality traits</p>
@@ -3322,8 +3432,9 @@ async function handleImportData() {
                   <div class="rounded-lg bg-neutral-800/20 border border-neutral-700/30 p-3">
                     <p class="text-xs font-semibold text-neutral-400 mb-2">Preview</p>
                     <div class="flex items-center gap-3">
-                      <div class="w-10 h-10 rounded-full bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center text-sm font-bold text-white">
-                        {{ (newWaifuDisplayName || '?')[0] }}
+                      <div class="w-10 h-10 rounded-full overflow-hidden bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center text-sm font-bold text-white shrink-0">
+                        <img v-if="newWaifuAvatarNeutral" :src="newWaifuAvatarNeutral" alt="Waifu preview avatar" class="w-full h-full object-cover" />
+                        <span v-else>{{ (newWaifuDisplayName || '?')[0] }}</span>
                       </div>
                       <div class="flex-1 min-w-0">
                         <div class="text-sm font-semibold text-white">{{ newWaifuDisplayName || '(no name)' }}</div>
@@ -3392,10 +3503,16 @@ async function handleImportData() {
                   :key="waifu.id"
                   class="flex items-start justify-between gap-3 rounded-lg border border-neutral-800/60 bg-neutral-900/50 p-3"
                 >
-                  <div class="min-w-0">
-                    <div class="text-sm font-semibold text-white truncate">{{ waifu.displayName || waifu.name || waifu.id }}</div>
-                    <div class="text-[11px] text-neutral-500 font-mono truncate">{{ waifu.id }}</div>
-                    <p v-if="waifu.backstory" class="text-xs text-neutral-400 mt-1 line-clamp-2">{{ waifu.backstory }}</p>
+                  <div class="min-w-0 flex items-start gap-3 flex-1">
+                    <div class="w-10 h-10 rounded-full overflow-hidden bg-gradient-to-br from-primary-500/50 to-accent-500/40 flex items-center justify-center text-sm font-bold text-white shrink-0">
+                      <img v-if="getCustomWaifuThumbnail(waifu)" :src="getCustomWaifuThumbnail(waifu)" :alt="`${waifu.displayName || waifu.name || waifu.id} avatar`" class="w-full h-full object-cover" />
+                      <span v-else>{{ (waifu.displayName || waifu.name || waifu.id || '?')[0] }}</span>
+                    </div>
+                    <div class="min-w-0">
+                      <div class="text-sm font-semibold text-white truncate">{{ waifu.displayName || waifu.name || waifu.id }}</div>
+                      <div class="text-[11px] text-neutral-500 font-mono truncate">{{ waifu.id }}</div>
+                      <p v-if="waifu.backstory" class="text-xs text-neutral-400 mt-1 line-clamp-2">{{ waifu.backstory }}</p>
+                    </div>
                   </div>
                   <button
                     class="btn-secondary text-xs shrink-0"

@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build shared packages and runtime
-        run: pnpm -w -r --if-present --filter "!syntax-senpai-mobile" --filter "!syntax-senpai-desktop" run build
+        run: pnpm -r --if-present --filter "!syntax-senpai-mobile" --filter "!syntax-senpai-desktop" run build
       - name: Typecheck
         run: pnpm -w -r --if-present run typecheck
       - name: Unit tests (all packages with test:unit)

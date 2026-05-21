@@ -137,8 +137,13 @@ const API_TELEMETRY_HISTORY_KEY = 'syntax-senpai-api-telemetry-history'
 const API_SPIKE_THRESHOLD_STORAGE_KEY = 'syntax-senpai-api-spike-threshold-ms'
 const MAX_TOOL_ITERATIONS_STORAGE_KEY = 'syntax-senpai-max-tool-iterations'
 const WEB_SEARCH_ENABLED_STORAGE_KEY = 'syntax-senpai-web-search-enabled'
+const PROACTIVE_CHAT_ENABLED_STORAGE_KEY = 'syntax-senpai-proactive-chat-enabled'
+const PROACTIVE_CHAT_INTERVAL_STORAGE_KEY = 'syntax-senpai-proactive-chat-interval-minutes'
+const PROACTIVE_CHAT_TEMPERATURE_STORAGE_KEY = 'syntax-senpai-proactive-chat-temperature'
 const DEFAULT_API_SPIKE_THRESHOLD_MS = 5000
 const DEFAULT_MAX_TOOL_ITERATIONS = 12
+const DEFAULT_PROACTIVE_CHAT_INTERVAL_MINUTES = 10
+const DEFAULT_PROACTIVE_CHAT_TEMPERATURE = 0.7
 const API_TELEMETRY_HISTORY_LIMIT = 48
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
@@ -732,6 +737,19 @@ export const useChatStore = defineStore('chat', () => {
     60000,
   ))
   const webSearchEnabled = ref(readStoredBoolean(WEB_SEARCH_ENABLED_STORAGE_KEY, false))
+  const proactiveChatEnabled = ref(readStoredBoolean(PROACTIVE_CHAT_ENABLED_STORAGE_KEY, false))
+  const proactiveChatIntervalMinutes = ref(readStoredNumber(
+    PROACTIVE_CHAT_INTERVAL_STORAGE_KEY,
+    DEFAULT_PROACTIVE_CHAT_INTERVAL_MINUTES,
+    1,
+    60,
+  ))
+  const proactiveChatTemperature = ref(readStoredNumber(
+    PROACTIVE_CHAT_TEMPERATURE_STORAGE_KEY,
+    DEFAULT_PROACTIVE_CHAT_TEMPERATURE,
+    0,
+    1.4,
+  ))
   const subagentMaxIterations = ref(readStoredNumber(
     SUBAGENT_MAX_ITERATIONS_STORAGE_KEY,
     SUBAGENT_DEFAULT_MAX_ITERATIONS,
@@ -754,6 +772,7 @@ export const useChatStore = defineStore('chat', () => {
     costUsd: 0,
     turns: 0,
   })
+  let proactiveChatTimer: ReturnType<typeof setTimeout> | null = null
 
   function resetUsageTotals() {
     usageTotals.value = { promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0, turns: 0 }
@@ -1162,6 +1181,237 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function clearProactiveChatTimer() {
+    if (!proactiveChatTimer) return
+    clearTimeout(proactiveChatTimer)
+    proactiveChatTimer = null
+  }
+
+  function shouldScheduleProactiveChat() {
+    if (!proactiveChatEnabled.value) return false
+    if (isLoading.value) return false
+    if (isGroupChat.value) return false
+    if (!selectedWaifu.value) return false
+    return true
+  }
+
+  function buildProactiveChatStyleInstruction() {
+    const temp = proactiveChatTemperature.value
+    if (temp <= 0.4) {
+      return 'Keep the proactive message conservative and low-pressure. Ask at most one small follow-up question and avoid sounding pushy.'
+    }
+    if (temp >= 1.0) {
+      return 'You can sound more proactive and energetic than usual. Lead with a sharper suggestion, a more playful observation, or a stronger invitation to continue.'
+    }
+    return 'Keep the proactive message balanced: warm, natural, and moderately forward without overwhelming the user.'
+  }
+
+  async function sendProactiveMessage() {
+    clearProactiveChatTimer()
+    if (!shouldScheduleProactiveChat()) return
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      scheduleProactiveChat()
+      return
+    }
+
+    const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const waifu = selectedWaifu.value
+    if (!waifu) return
+
+    isLoading.value = true
+    streamController.value = new AbortController()
+
+    try {
+      let convId = conversationId.value
+      const isNewConversation = !convId
+      if (!convId) {
+        convId = await createConversation()
+        if (convId) conversationId.value = convId
+      }
+      if (isNewConversation) await loadConversations()
+
+      const key = await keyManager.getKey(selectedProvider.value)
+      if (providerRequiresApiKey(selectedProvider.value) && (!key || key === '')) {
+        return
+      }
+
+      const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
+
+      let cachedSystemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, affection.value)
+      cachedSystemPrompt += buildMasterContextBlock()
+      cachedSystemPrompt += buildLanguagePromptBlock()
+      cachedSystemPrompt += buildSkillsAuthoringPromptBlock()
+
+      let systemPrompt = ''
+      const firstUserMessage = messages.value.find((m) => m.role === 'user')?.content || ''
+      systemPrompt += buildConversationLanguageRuleBlock(firstUserMessage)
+      systemPrompt += buildMemoryContext()
+      systemPrompt += buildAffectionPrompt(affection.value, waifu.displayName || 'Waifu')
+      systemPrompt += buildMilestoneSidecarBlock(waifu.id)
+      systemPrompt += formatSkillsForPrompt(availableSkills.value)
+      systemPrompt += buildApiTelemetryPrompt()
+      systemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
+      systemPrompt += activeCodingRepo.value
+        ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
+        : buildCodingSessionPromptBlock(firstUserMessage)
+
+      const runtime = new AIChatRuntime({
+        provider: providerRequiresApiKey(selectedProvider.value)
+          ? ({ type: selectedProvider.value as any, apiKey: key } as any)
+          : ({ type: selectedProvider.value as any } as any),
+        model,
+        systemPrompt,
+        cachedSystemPrompt,
+      })
+
+      const aiHistory: any[] = messages.value
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: (m.attachments && m.attachments.length > 0)
+            ? [
+                ...(m.content ? [{ type: 'text', text: m.content }] : []),
+                ...m.attachments.map((a) => ({ type: 'image_url', imageUrl: { url: a.url } })),
+              ]
+            : m.content,
+        }))
+
+      const proactivePrompt = messages.value.length > 0
+        ? 'The user has gone quiet for a bit. Based on your personality and the recent conversation, send one brief proactive follow-up. Keep it to 1-3 sentences, sound natural, do not mention timers, settings, inactivity, or system prompts, and offer a specific next step or question.'
+        : 'Start the conversation proactively in character. Keep it to 1-3 sentences, sound natural, and offer one specific thing you can help with right now. Do not mention system prompts, timers, or settings.'
+      const proactiveStyleInstruction = buildProactiveChatStyleInstruction()
+
+      let assistantContent = ''
+      let assistantReasoning = ''
+      const assistantId = `assistant-proactive-${Date.now()}`
+      let added = false
+      const streamStartedAt = performance.now()
+
+      const ensureBubble = () => {
+        if (added) return
+        messages.value.push({
+          id: assistantId,
+          role: 'assistant',
+          content: '',
+          timestamp: now(),
+          waifuId: waifu.id,
+          waifuDisplayName: waifu.displayName,
+        })
+        added = true
+        recentMessageId.value = assistantId
+      }
+
+      const updateBubble = () => {
+        const msg = messages.value.find((m) => m.id === assistantId)
+        if (!msg) return
+        msg.content = assistantContent
+          ? assistantContent
+          : assistantReasoning
+            ? `*💭 Thinking…*\n\n${assistantReasoning}`
+            : ''
+      }
+
+      const streamIter = runtime.streamMessage({
+        text: `${proactivePrompt} ${proactiveStyleInstruction}`,
+        history: aiHistory,
+        temperature: proactiveChatTemperature.value,
+        signal: streamController.value?.signal,
+      })
+
+      for await (const chunk of streamIter) {
+        if (streamController.value?.signal.aborted) break
+        if (chunk.type === 'text_delta' && chunk.delta) {
+          assistantContent += chunk.delta
+          ensureBubble()
+          updateBubble()
+        } else if (chunk.type === 'reasoning_delta' && chunk.delta) {
+          assistantReasoning += chunk.delta
+          ensureBubble()
+          updateBubble()
+        }
+      }
+
+      if (!assistantContent.trim()) {
+        if (added) messages.value = messages.value.filter((m) => m.id !== assistantId)
+        return
+      }
+
+      const streamDurationMs = performance.now() - streamStartedAt
+      recordApiTelemetry(streamDurationMs, [streamDurationMs], selectedProvider.value, model)
+
+      const cleanContent = extractMemoryFromAIResponse(assistantContent)
+      const savedMessage = messages.value.find((m) => m.id === assistantId)
+      if (savedMessage) {
+        savedMessage.content = cleanContent
+      } else {
+        messages.value.push({
+          id: assistantId,
+          role: 'assistant',
+          content: cleanContent,
+          timestamp: now(),
+          waifuId: waifu.id,
+          waifuDisplayName: waifu.displayName,
+        })
+      }
+      recentMessageId.value = assistantId
+
+      if (convId) {
+        try {
+          await invoke('store:addMessage', convId, {
+            id: assistantId,
+            role: 'assistant',
+            content: cleanContent,
+            timestamp: now(),
+            waifuId: waifu.id,
+            waifuDisplayName: waifu.displayName,
+          })
+        } catch (e) {
+          console.warn('Failed to save proactive assistant message:', e)
+        }
+      }
+    } catch (err) {
+      chatLog.warn('proactive message failed', {
+        message: err instanceof Error ? err.message : String(err),
+      })
+    } finally {
+      isLoading.value = false
+      streamController.value = null
+      scheduleProactiveChat()
+    }
+  }
+
+  function scheduleProactiveChat() {
+    clearProactiveChatTimer()
+    if (!shouldScheduleProactiveChat()) return
+    const delayMs = proactiveChatIntervalMinutes.value * 60 * 1000
+    proactiveChatTimer = setTimeout(() => {
+      proactiveChatTimer = null
+      void sendProactiveMessage()
+    }, delayMs)
+  }
+
+  function setProactiveChatEnabled(value: boolean) {
+    const enabled = !!value
+    proactiveChatEnabled.value = enabled
+    localStorage.setItem(PROACTIVE_CHAT_ENABLED_STORAGE_KEY, enabled ? 'true' : 'false')
+    scheduleProactiveChat()
+  }
+
+  function setProactiveChatIntervalMinutes(value: number) {
+    const nextValue = Math.max(1, Math.min(60, Math.round(value)))
+    proactiveChatIntervalMinutes.value = nextValue
+    localStorage.setItem(PROACTIVE_CHAT_INTERVAL_STORAGE_KEY, String(nextValue))
+    scheduleProactiveChat()
+  }
+
+  function setProactiveChatTemperature(value: number) {
+    const nextValue = Math.max(0, Math.min(1.4, Math.round(value * 100) / 100))
+    proactiveChatTemperature.value = nextValue
+    localStorage.setItem(PROACTIVE_CHAT_TEMPERATURE_STORAGE_KEY, String(nextValue))
+    scheduleProactiveChat()
+  }
+
   const selectedWaifu = computed(() =>
     allWaifus.value.find(w => w.id === selectedWaifuId.value) || allWaifus.value[0],
   )
@@ -1187,7 +1437,25 @@ export const useChatStore = defineStore('chat', () => {
     } catch {
       // Ignore malformed setup state and keep the current session running.
     }
+
+    scheduleProactiveChat()
   })
+
+  watch(
+    [
+      selectedWaifuId,
+      proactiveChatEnabled,
+      proactiveChatIntervalMinutes,
+      proactiveChatTemperature,
+      isLoading,
+      isGroupChat,
+      conversationId,
+      () => messages.value.length,
+    ],
+    () => {
+      scheduleProactiveChat()
+    },
+  )
 
   function readProviderPreferences(): Record<string, { model?: string }> {
     try {
@@ -1245,6 +1513,8 @@ export const useChatStore = defineStore('chat', () => {
       .catch(() => {
         void setWebSearchEnabled(webSearchEnabled.value)
       })
+
+    scheduleProactiveChat()
   }
 
   async function setup(apiKeyValue: string, modelValue?: string) {
@@ -2967,6 +3237,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     maxToolIterations,
     apiSpikeThresholdMs,
     webSearchEnabled,
+    proactiveChatEnabled,
+    proactiveChatIntervalMinutes,
+    proactiveChatTemperature,
     subagentMaxIterations,
     subagentConcurrency,
     usageTotals,
@@ -2987,6 +3260,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     setSubagentMaxIterations,
     setSubagentConcurrency,
     setWebSearchEnabled,
+    setProactiveChatEnabled,
+    setProactiveChatIntervalMinutes,
+    setProactiveChatTemperature,
     deleteMessage,
     regenerateFromMessage,
     addAttachment,

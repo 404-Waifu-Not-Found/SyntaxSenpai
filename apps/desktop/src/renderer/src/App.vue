@@ -1861,6 +1861,9 @@ async function handleExportData() {
         providerPreferences: readLocalStorageJson('syntax-senpai-provider-preferences'),
         agentMode: localStorage.getItem('syntax-senpai-agent-mode') || store.agentMode,
         webSearchEnabled: store.webSearchEnabled,
+        proactiveChatEnabled: store.proactiveChatEnabled,
+        proactiveChatIntervalMinutes: store.proactiveChatIntervalMinutes,
+        proactiveChatTemperature: store.proactiveChatTemperature,
         affection: readLocalStorageJson('syntax-senpai-affection'),
         apiTelemetryHistory: readLocalStorageJson(API_TELEMETRY_HISTORY_STORAGE_KEY),
         maxToolIterations: store.maxToolIterations,
@@ -1966,6 +1969,15 @@ async function handleImportData() {
     }
     if (typeof payload?.settings?.webSearchEnabled === 'boolean') {
       store.setWebSearchEnabled(payload.settings.webSearchEnabled)
+    }
+    if (typeof payload?.settings?.proactiveChatEnabled === 'boolean') {
+      store.setProactiveChatEnabled(payload.settings.proactiveChatEnabled)
+    }
+    if (typeof payload?.settings?.proactiveChatIntervalMinutes === 'number') {
+      store.setProactiveChatIntervalMinutes(payload.settings.proactiveChatIntervalMinutes)
+    }
+    if (typeof payload?.settings?.proactiveChatTemperature === 'number') {
+      store.setProactiveChatTemperature(payload.settings.proactiveChatTemperature)
     }
     if (typeof payload?.settings?.maxToolIterations === 'number') {
       store.setMaxToolIterations(payload.settings.maxToolIterations)
@@ -2325,6 +2337,92 @@ async function handleImportData() {
                     <span class="text-sm text-neutral-200">{{ w.displayName }}</span>
                   </label>
                 </div>
+              </div>
+            </div>
+
+            <div class="settings-card mt-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-sm font-semibold text-neutral-200">{{ t('settings.proactiveChat') }}</div>
+                  <p class="mt-1 text-xs text-neutral-400">
+                    {{ t('settings.proactiveChatDescription') }}
+                  </p>
+                </div>
+                <button
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :style="{ background: store.proactiveChatEnabled ? 'linear-gradient(90deg,#f59e0b,#ef4444)' : '#404040' }"
+                  :aria-label="`${store.proactiveChatEnabled ? 'Disable' : 'Enable'} proactive chat`"
+                  @click="store.setProactiveChatEnabled(!store.proactiveChatEnabled)"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: store.proactiveChatEnabled ? 'translateX(20px)' : 'translateX(0)' }"
+                  />
+                </button>
+              </div>
+
+              <div class="mt-4">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                      {{ t('settings.proactiveChatInterval') }}
+                    </div>
+                    <p class="mt-1 text-[11px] text-neutral-500">
+                      {{ t('settings.proactiveChatIntervalHint', { minutes: store.proactiveChatIntervalMinutes }) }}
+                    </p>
+                  </div>
+                  <div class="rounded-full border border-neutral-700/60 bg-neutral-900/60 px-3 py-1 text-sm font-semibold text-neutral-200">
+                    {{ store.proactiveChatIntervalMinutes }} min
+                  </div>
+                </div>
+                <input
+                  class="mt-3 w-full accent-amber-500"
+                  type="range"
+                  min="1"
+                  max="60"
+                  step="1"
+                  :disabled="!store.proactiveChatEnabled"
+                  :value="store.proactiveChatIntervalMinutes"
+                  @input="store.setProactiveChatIntervalMinutes(Number(($event.target as HTMLInputElement).value))"
+                >
+                <p class="mt-2 text-[11px] text-neutral-500">
+                  {{ t('settings.proactiveChatGroupChatNote') }}
+                </p>
+              </div>
+
+              <div class="mt-4 border-t border-neutral-800/70 pt-4">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                      {{ t('settings.proactiveChatTemperature') }}
+                    </div>
+                    <p class="mt-1 text-[11px] text-neutral-500">
+                      {{ t('settings.proactiveChatTemperatureHint', {
+                        temperature: store.proactiveChatTemperature.toFixed(2),
+                        mode: t(
+                          store.proactiveChatTemperature <= 0.4
+                            ? 'settings.proactiveChatModeConservative'
+                            : store.proactiveChatTemperature >= 1
+                              ? 'settings.proactiveChatModeActive'
+                              : 'settings.proactiveChatModeBalanced',
+                        ),
+                      }) }}
+                    </p>
+                  </div>
+                  <div class="rounded-full border border-neutral-700/60 bg-neutral-900/60 px-3 py-1 text-sm font-semibold text-neutral-200">
+                    {{ store.proactiveChatTemperature.toFixed(2) }}
+                  </div>
+                </div>
+                <input
+                  class="mt-3 w-full accent-rose-500"
+                  type="range"
+                  min="0"
+                  max="1.4"
+                  step="0.05"
+                  :disabled="!store.proactiveChatEnabled"
+                  :value="store.proactiveChatTemperature"
+                  @input="store.setProactiveChatTemperature(Number(($event.target as HTMLInputElement).value))"
+                >
               </div>
             </div>
 

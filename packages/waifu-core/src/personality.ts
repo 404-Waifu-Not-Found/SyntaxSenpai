@@ -182,8 +182,9 @@ function formatRelationshipContext(
   const lines = ["## Relationship Context"];
 
   const userNickname = context.waifuNickname || relationship.nickname || "User";
+  const chineseUserAddress = context.waifuNickname || relationship.nickname || "用户";
   lines.push(`You know this user as: ${userNickname}`);
-  lines.push(`When chatting in Chinese, address the user as: 狗秀金`);
+  lines.push(`When chatting in Chinese, address the user as: ${chineseUserAddress}`);
 
   if (relationship.affectionLevel !== undefined) {
     const level = relationship.affectionLevel || context.affectionLevel || 0;

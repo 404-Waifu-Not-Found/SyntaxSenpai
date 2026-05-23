@@ -49,12 +49,14 @@ const MODEL_COST_PER_1K: Array<{ match: RegExp; input: number; output: number }>
   { match: /mixtral-8x7b/i,           input: 0.00024, output: 0.00024 },
 ]
 
+// 根据模型名称粗略估算本轮对话成本，主要给界面展示用，不追求精确计费。
 function estimateCost(model: string, promptTokens: number, completionTokens: number): number {
   const row = MODEL_COST_PER_1K.find((r) => r.match.test(model || ''))
   if (!row) return 0
   return (promptTokens / 1000) * row.input + (completionTokens / 1000) * row.output
 }
 
+// 将模型传回来的 render_card 参数收敛成受控结构，避免渲染层接收任意形状的数据。
 function parseRenderCardArgs(args: unknown): RenderCardPayload | null {
   const obj = args as Record<string, unknown> | null | undefined
   if (!obj || typeof obj !== 'object') return null
@@ -195,6 +197,7 @@ function clampAffection(value: number): number {
  * crosses a tier boundary, the event sits here until the next turn's
  * system prompt picks it up and injects a one-shot sidecar.
  */
+// 好感度跨档位时先暂存到这里，等下一轮 prompt 再消费，避免同一轮里出现重复状态说明。
 const pendingMilestones = new Map<string, MilestoneEvent>()
 
 function updateAffectionWithMilestone(
@@ -262,6 +265,7 @@ function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: s
   const webSearchLine = isWebSearchEnabled
     ? '- web_search → DuckDuckGo result links/snippets only. NOT a realtime data source. Never use it for weather, stocks, scores, prices, time, or any live facts. Use only to find URLs the user can open.'
     : '- web_search is disabled by the user. Do not call it. If links would help, say web search must be enabled in Settings.'
+  // 这段提示词专门约束 agent 如何选工具、何时停止重试以及何时必须先验证结果。
   return `\n\n[Agent Behavior]
 You can act on the user's machine through tools. Your goal is to actually finish the task, verified, not to sound like you finished it.
 
@@ -684,6 +688,7 @@ export const useChatStore = defineStore('chat', () => {
   const { invoke } = useIpc()
   const keyManager = useKeyManager()
 
+  // 这一组状态就是桌面聊天会话的核心运行面：消息、会话、角色、工具和多端桥接都在这里汇总。
   const isSetup = ref(false)
   const selectedWaifuId = ref(builtInWaifus[0]?.id || 'aria')
   // User-authored waifus loaded from <userData>/waifus/*.json via the
@@ -839,6 +844,7 @@ export const useChatStore = defineStore('chat', () => {
    * the regular send pipeline. New peers get a fresh conversation; known
    * peers reuse theirs and become the active conversation.
    */
+  // 微信入口不会单独维护第二套聊天链路，而是先映射到本地会话，再复用 sendMessage 主流程。
   async function handleWeChatInbound(payload: {
     fromUserId: string
     displayName?: string | null
@@ -894,6 +900,7 @@ export const useChatStore = defineStore('chat', () => {
   // Serialized inbound WeChat queue: each item carries its own conversation
   // so the drain switches to it before sending, and a busy `isLoading` turn
   // is waited out rather than silently dropping the message.
+  // 入站消息串行排队的目的，是防止多个联系人并发消息时把回复串到错误会话里。
   const wechatInboundQueue: Array<{ convId: string; text: string; sourceLabel: string }> = []
   let drainingWeChatQueue = false
   async function drainWeChatInboundQueue(): Promise<void> {
@@ -1022,6 +1029,7 @@ export const useChatStore = defineStore('chat', () => {
   // today), flatten `cachedSystemPrompt` into `systemPrompt` so they treat it as
   // a single block. The Anthropic provider keeps them split and adds
   // `cache_control: ephemeral` to the cached prefix.
+  // 对不支持 cachedSystemPrompt 的 provider，这里会在真正发请求前把两段 prompt 合并。
   async function callProviderChat(provider: any, req: any): Promise<any> {
     const finalReq = provider?.id === 'anthropic'
       ? req
@@ -1056,6 +1064,7 @@ export const useChatStore = defineStore('chat', () => {
   // JSON-parsing once at the end) lives in the provider stream itself —
   // tool_call_delta chunks are guaranteed complete by the time they arrive
   // here, so we just collect them.
+  // 这个包装器负责一边把流式 token 推给 UI，一边把最终结果重新组装成 agent loop 能消费的统一格式。
   async function streamProviderChat(provider: any, req: any): Promise<any> {
     const finalReq = provider?.id === 'anthropic'
       ? req
@@ -1908,6 +1917,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
   }
 
   function recordApiTelemetry(totalMs: number, roundTripMs: number[], provider: string, model: string) {
+    // 这里记录整轮回复的耗时画像，后续设置页、提示词和性能告警都会读取这些数据。
     const lastRoundTripMs = roundTripMs.length > 0 ? roundTripMs[roundTripMs.length - 1] : totalMs
     const alert = totalMs >= apiSpikeThresholdMs.value || lastRoundTripMs >= apiSpikeThresholdMs.value
 
@@ -2028,6 +2038,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       const maxRounds = 3
       let pendingTasks = new Map<string, string[]>()
 
+      // 群聊按“轮次 + 委派任务”推进，而不是让所有角色无限制同时输出，避免内容爆炸和重复回答。
       for (let round = 1; round <= maxRounds; round++) {
         const waifusForRound = round === 1
           ? waifus
@@ -2079,6 +2090,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
           let finalContent = ''
 
+          // 每个 waifu 都维护自己的流式消息气泡，确保群聊里能看清是谁在输出、谁在调用工具。
           // Live streaming bubble for this waifu's turn. Used by both the
           // tools+streaming branch and the no-tools streaming branch so the
           // user sees text flowing in as the model produces it.
@@ -2307,6 +2319,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           const { cleanedText, tasks } = extractDelegatedTasks(finalContent || 'Done.')
           const cleanContent = extractMemoryFromAIResponse(cleanedText || 'Done.')
           assistantTurns.push({ waifu, content: cleanContent })
+          // sharedHistory 会把前一个 waifu 的输出注入给后一个 waifu，形成“角色彼此可见”的群聊上下文。
           sharedHistory.push({
             id: `assistant-${waifu.id}-${round}-${assistantTurns.length}`,
             role: 'assistant',
@@ -2408,6 +2421,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     text: string,
     opts: { source?: 'wechat'; sourceLabel?: string } = {},
   ) {
+    // 单聊主入口：命令处理、显式终端执行、普通聊天、agent 工具循环都从这里分流。
     if (isGroupChat.value && groupWaifuIds.value.length > 0) {
       return sendGroupMessage(text)
     }
@@ -2515,6 +2529,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
     const explicitTerminalCommand = extractExplicitTerminalCommand(trimmedText)
     if (explicitTerminalCommand) {
+      // 这一分支是用户显式要求跑命令时的快速通道：直接执行终端，不再经过模型推理。
       const userMsg: Message = {
         id: `user-${Date.now()}`,
         role: 'user',
@@ -2667,6 +2682,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
       if (hasTools) {
         // ── Agentic loop: AI calls terminal, repeats until stop_response ──
+        // 有工具时，模型会在“思考 → 调工具 → 读结果 → 再决定”之间循环，直到 stop_response 给出最终答复。
         const provider = runtime.getProvider()
 
         // Build AI-compatible message history (skip tool-display messages from UI).
@@ -2767,6 +2783,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             updateLiveBubble()
           },
           handleSideEffect: async (tc): Promise<SideEffectResult | null> => {
+            // 这些工具会直接修改 store 状态，因此要在这里拦截处理，而不是交给通用工具执行器黑盒处理。
             if (tc.name === STOP_TOOL_NAME) {
               return {
                 resultContent: 'ok',
@@ -2928,6 +2945,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         }
       } else {
         // ── No tools: streaming mode ──
+        // 无工具模式只负责流式输出文本并在结束后落库，逻辑更简单，但仍复用相同的会话状态。
         const aiMessages = messages.value.map((m) => ({ id: m.id, role: m.role, content: m.content }))
         let assistantContent = ''
         let assistantReasoning = ''
@@ -3102,6 +3120,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
   }
 
   function extractMemoryFromAIResponse(responseText: string): string {
+    // 模型可通过隐藏 memory tag 写长期记忆；这里负责解析标签并把它们从最终展示文本里剥掉。
     // Parse <memory category="..." key="...">value</memory> tags
     const memoryTagRegex = /<memory\s+category="([^"]+)"\s+key="([^"]+)">([^<]+)<\/memory>/gi
     let match: RegExpExecArray | null
@@ -3136,6 +3155,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
   }
 
   function extractAndSaveMemory(userText: string) {
+    // 这是本地启发式记忆提取：即使模型没写 memory tag，也尽量从用户原话里抓常见身份和偏好信息。
     const lower = userText.toLowerCase()
 
     // "remember that..." or "remember my..." patterns
@@ -3208,6 +3228,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
   }
 
   return {
+    // 这里导出的就是给 UI 和其他集成层使用的 store 公共 API。
     isSetup,
     selectedWaifuId,
     customWaifus,

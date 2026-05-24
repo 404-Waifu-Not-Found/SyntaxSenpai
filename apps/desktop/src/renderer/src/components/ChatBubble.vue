@@ -227,9 +227,9 @@ const renderedParts = computed<RenderedPart[]>(() => {
 </script>
 
 <template>
-  <div :class="bubbleClasses">
+  <div :class="['chat-bubble-shell', ...bubbleClasses]">
     <div ref="containerRef">
-      <div class="break-words text-sm">
+      <div class="chat-bubble-content break-words text-sm">
         <template v-if="role === 'assistant'">
           <template v-for="(part, index) in renderedParts" :key="index">
             <div v-if="part.kind === 'html'" class="markdown-content" v-html="part.html" />
@@ -250,7 +250,7 @@ const renderedParts = computed<RenderedPart[]>(() => {
     </div>
     <div
       v-if="timestamp || (showCopy && content)"
-      class="flex items-center gap-2 mt-1"
+      class="chat-bubble-meta flex items-center gap-2 mt-1"
     >
       <p
         v-if="timestamp"

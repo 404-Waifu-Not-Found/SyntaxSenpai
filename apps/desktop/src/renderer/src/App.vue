@@ -704,6 +704,11 @@ interface StrictModeState {
   auditLog: string
 }
 const strictMode = ref<StrictModeState>({ enabled: false, auditLog: '' })
+const overlayWindow = ref<{ enabled: boolean }>({ enabled: false })
+const fullscreenWindow = ref<{ enabled: boolean }>({ enabled: false })
+const showCompactHeaderMenu = ref(false)
+const showCompactStatusDetails = ref(false)
+const compactHeaderMenuRef = ref<HTMLElement | null>(null)
 
 async function refreshStrictMode() {
   try {
@@ -719,6 +724,27 @@ async function refreshStrictMode() {
   }
 }
 
+function applyWindowPresentationState(result: any) {
+  overlayWindow.value.enabled = !!result?.overlayEnabled
+  fullscreenWindow.value.enabled = !!result?.fullscreenEnabled
+  if (overlayWindow.value.enabled) sidebarOpen.value = false
+  if (!overlayWindow.value.enabled) {
+    showCompactHeaderMenu.value = false
+    showCompactStatusDetails.value = false
+  }
+}
+
+async function refreshOverlayWindowMode() {
+  try {
+    const result = await invoke('window:getViewState')
+    if (result?.success) {
+      applyWindowPresentationState(result)
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 async function toggleStrictMode() {
   const next = !strictMode.value.enabled
   const result = await invoke('strictMode:set', next)
@@ -727,6 +753,28 @@ async function toggleStrictMode() {
     showToast(`Strict mode ${next ? 'enabled' : 'disabled'}`, 'success')
   } else {
     showToast(result?.error || 'Failed to toggle strict mode', 'error')
+  }
+}
+
+async function toggleOverlayWindowMode() {
+  const next = !overlayWindow.value.enabled
+  const result = await invoke('window:setDisplayMode', next ? 'overlay' : 'normal')
+  if (result?.success) {
+    applyWindowPresentationState(result)
+    showToast(next ? t('toast.overlayWindowEnabled') : t('toast.overlayWindowDisabled'), 'success')
+  } else {
+    showToast(result?.error || t('toast.overlayWindowFailed'), 'error')
+  }
+}
+
+async function toggleFullscreenWindowMode() {
+  const next = !fullscreenWindow.value.enabled
+  const result = await invoke('window:setDisplayMode', next ? 'fullscreen' : 'normal')
+  if (result?.success) {
+    applyWindowPresentationState(result)
+    showToast(next ? t('toast.fullscreenEnabled') : t('toast.fullscreenDisabled'), 'success')
+  } else {
+    showToast(result?.error || t('toast.fullscreenFailed'), 'error')
   }
 }
 
@@ -1076,6 +1124,7 @@ watch(
     }
     if (tab === 'general') {
       refreshStrictMode()
+      refreshOverlayWindowMode()
     }
   },
 )
@@ -1252,8 +1301,53 @@ const affectionAccentStyle = computed(() => {
 })
 
 const affectionMeterClass = computed(() =>
-  locale.value === 'en' ? 'w-70' : 'w-52',
+  overlayWindow.value.enabled
+    ? (locale.value === 'en' ? 'w-38' : 'w-34')
+    : (locale.value === 'en' ? 'w-70' : 'w-52'),
 )
+
+const compactChatLayout = computed(() => overlayWindow.value.enabled)
+const hasStatusStrip = computed(() =>
+  store.usageTotals.turns > 0 || store.activeTodoList.length > 0 || (contextWindowSize.value > 0 && store.messages.length > 0),
+)
+const compactStatusSummary = computed(() => {
+  const parts: string[] = []
+  if (store.usageTotals.turns > 0) parts.push(`${store.usageTotals.turns} turns`)
+  if (contextWindowSize.value > 0 && store.messages.length > 0) parts.push(`ctx ${contextUsagePercent.value}%`)
+  if (store.activeTodoList.length > 0) parts.push(`${store.activeTodoList.length} todo`)
+  return parts.join(' · ')
+})
+
+function toggleCompactHeaderMenu() {
+  showCompactHeaderMenu.value = !showCompactHeaderMenu.value
+}
+
+function toggleCompactStatusDetails() {
+  showCompactStatusDetails.value = !showCompactStatusDetails.value
+}
+
+function openAgentPanel() {
+  showCompactHeaderMenu.value = false
+  showAgent.value = true
+}
+
+function openMemoryPanel() {
+  showCompactHeaderMenu.value = false
+  showMemory.value = true
+}
+
+function openSettingsPanel() {
+  showCompactHeaderMenu.value = false
+  showSettings.value = true
+}
+
+function onGlobalPointerDown(e: PointerEvent) {
+  if (!showCompactHeaderMenu.value) return
+  const target = e.target as Node | null
+  if (compactHeaderMenuRef.value && target && !compactHeaderMenuRef.value.contains(target)) {
+    showCompactHeaderMenu.value = false
+  }
+}
 
 const appShellStyle = computed(() => ({
   background: `linear-gradient(135deg, ${theme.value.colors.bg}, ${theme.value.colors.surface})`,
@@ -1446,6 +1540,8 @@ function onGlobalKeydown(e: KeyboardEvent) {
 
   // Esc closes the topmost modal.
   if (e.key === 'Escape') {
+    if (showCompactHeaderMenu.value) { showCompactHeaderMenu.value = false; e.preventDefault(); return }
+    if (showCompactStatusDetails.value) { showCompactStatusDetails.value = false; e.preventDefault(); return }
     if (showShortcuts.value) { showShortcuts.value = false; e.preventDefault(); return }
     if (showSettings.value) { showSettings.value = false; e.preventDefault(); return }
     if (showAgent.value) { showAgent.value = false; e.preventDefault(); return }
@@ -1463,6 +1559,7 @@ onMounted(() => {
     store.loadSetup()
     await store.hydrateProviderConfig()
     await loadProviderModels(store.selectedProvider, store.apiKey)
+    await refreshOverlayWindowMode()
     // Hydrate user-authored waifus so they appear in pickers from the
     // first paint, not just after someone opens Settings → Waifus.
     store.refreshCustomWaifus()
@@ -1527,6 +1624,7 @@ onMounted(() => {
   window.addEventListener('app:skill-created', onAppSkillCreated as EventListener)
   window.addEventListener('app:tool-proposed', onAppToolProposed as EventListener)
   window.addEventListener('keydown', onGlobalKeydown)
+  window.addEventListener('pointerdown', onGlobalPointerDown)
 
   startupSplashTimer = window.setTimeout(() => {
     showStartupSplash.value = false
@@ -1547,6 +1645,7 @@ onUnmounted(() => {
   window.removeEventListener('app:skill-created', onAppSkillCreated as EventListener)
   window.removeEventListener('app:tool-proposed', onAppToolProposed as EventListener)
   window.removeEventListener('keydown', onGlobalKeydown)
+  window.removeEventListener('pointerdown', onGlobalPointerDown)
   if (startupSplashTimer !== null) {
     window.clearTimeout(startupSplashTimer)
   }
@@ -1861,6 +1960,7 @@ async function handleExportData() {
         providerPreferences: readLocalStorageJson('syntax-senpai-provider-preferences'),
         agentMode: localStorage.getItem('syntax-senpai-agent-mode') || store.agentMode,
         webSearchEnabled: store.webSearchEnabled,
+        overlayWindowEnabled: overlayWindow.value.enabled,
         proactiveChatEnabled: store.proactiveChatEnabled,
         proactiveChatIntervalMinutes: store.proactiveChatIntervalMinutes,
         proactiveChatTemperature: store.proactiveChatTemperature,
@@ -1969,6 +2069,12 @@ async function handleImportData() {
     }
     if (typeof payload?.settings?.webSearchEnabled === 'boolean') {
       store.setWebSearchEnabled(payload.settings.webSearchEnabled)
+    }
+    if (typeof payload?.settings?.overlayWindowEnabled === 'boolean') {
+      const overlayResult = await invoke('window:setOverlayMode', payload.settings.overlayWindowEnabled)
+      if (overlayResult?.success) {
+        overlayWindow.value.enabled = !!overlayResult.enabled
+      }
     }
     if (typeof payload?.settings?.proactiveChatEnabled === 'boolean') {
       store.setProactiveChatEnabled(payload.settings.proactiveChatEnabled)
@@ -2338,6 +2444,31 @@ async function handleImportData() {
                   </label>
                 </div>
               </div>
+            </div>
+
+            <div class="settings-card mt-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-sm font-semibold text-neutral-200">{{ t('settings.overlayWindow') }}</div>
+                  <p class="mt-1 text-xs text-neutral-400">
+                    {{ t('settings.overlayWindowDescription') }}
+                  </p>
+                </div>
+                <button
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :style="{ background: overlayWindow.enabled ? 'linear-gradient(90deg,#22c55e,#06b6d4)' : '#404040' }"
+                  :aria-label="`${overlayWindow.enabled ? 'Disable' : 'Enable'} overlay window`"
+                  @click="toggleOverlayWindowMode"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: overlayWindow.enabled ? 'translateX(20px)' : 'translateX(0)' }"
+                  />
+                </button>
+              </div>
+              <p class="mt-4 text-[11px] text-neutral-500">
+                {{ t('settings.overlayWindowHint') }}
+              </p>
             </div>
 
             <div class="settings-card mt-4">
@@ -4000,6 +4131,7 @@ async function handleImportData() {
     v-if="store.isSetup"
     :class="[
       'relative flex h-screen w-screen overflow-hidden',
+      compactChatLayout ? 'compact-chat-shell' : '',
     ]"
     :style="appShellStyle"
   >
@@ -4013,6 +4145,7 @@ async function handleImportData() {
 
     <!-- Sidebar -->
     <div
+      v-if="!compactChatLayout"
       :class="[
         'sidebar-wrapper overflow-hidden shrink-0',
         sidebarOpen ? 'sidebar-open' : 'sidebar-closed',
@@ -4176,11 +4309,11 @@ async function handleImportData() {
     </div>
 
     <!-- Main Content -->
-    <div class="flex-1 flex flex-col">
+    <div :class="['flex-1 flex flex-col min-w-0', compactChatLayout ? 'overlay-main-pane' : '']">
       <!-- Header -->
       <div
         :class="[
-          'sticky top-0 z-20 px-6 py-3',
+          compactChatLayout ? 'sticky top-0 z-20 px-3 py-2.5' : 'sticky top-0 z-20 px-6 py-3',
           'glass-surface border-b',
           'flex items-center justify-between',
           !startupAnimDone && appReady ? 'app-slide-in-top' : '',
@@ -4188,8 +4321,9 @@ async function handleImportData() {
         ]"
         :style="secondaryPanelStyle"
       >
-        <div class="flex items-center gap-3 min-w-0">
+        <div :class="['flex items-center min-w-0', compactChatLayout ? 'gap-2' : 'gap-3']">
           <button
+            v-if="!compactChatLayout"
             class="btn-ghost p-2"
             :aria-label="sidebarOpen ? 'Close sidebar' : 'Open sidebar'"
             :aria-expanded="sidebarOpen"
@@ -4197,33 +4331,54 @@ async function handleImportData() {
           >
             {{ sidebarOpen ? '←' : '☰' }}
           </button>
-          <div class="flex items-center gap-4 min-w-0">
+          <div :class="['flex items-center min-w-0', compactChatLayout ? 'gap-2.5' : 'gap-4']">
             <div class="min-w-0">
-              <div class="text-lg font-semibold truncate">
+              <div :class="[compactChatLayout ? 'compact-chat-title text-base font-semibold truncate' : 'text-lg font-semibold truncate']">
                 {{ store.isGroupChat ? store.activeWaifus.map(w => w.displayName).join(' & ') : store.selectedWaifu?.displayName }}
               </div>
-              <div class="text-xs text-neutral-400 truncate">
+              <div v-if="!compactChatLayout" class="text-xs text-neutral-400 truncate">
                 {{ store.isGroupChat ? t('sidebar.groupChat') : store.selectedWaifu?.backstory?.slice(0, 60) }}
               </div>
             </div>
-            <div :class="[affectionMeterClass, 'shrink-0 rounded-xl border px-3 py-2']" :style="affectionBoxStyle">
-              <div class="flex items-center justify-between text-[11px] uppercase tracking-[0.18em]">
+            <div v-if="!compactChatLayout" :class="[affectionMeterClass, 'shrink-0 rounded-xl border px-3 py-2']" :style="affectionBoxStyle">
+              <div :class="['flex items-center justify-between uppercase', compactChatLayout ? 'text-[10px] tracking-[0.14em]' : 'text-[11px] tracking-[0.18em]']">
                 <span>{{ t('header.affection') }}</span>
-                <span>{{ store.affection }} / 100({{ affectionTier }})</span>
+                <span>{{ compactChatLayout ? `${store.affection}/100` : `${store.affection} / 100(${affectionTier})` }}</span>
               </div>
-              <div class="mt-2 h-2 overflow-hidden rounded-full bg-neutral-800/90">
+              <div :class="[compactChatLayout ? 'mt-1.5 h-1.5' : 'mt-2 h-2', 'overflow-hidden rounded-full bg-neutral-800/90']">
                 <div class="h-full rounded-full transition-all duration-500 ease-out" :style="affectionFillStyle" />
               </div>
             </div>
           </div>
         </div>
-        <div class="flex items-center gap-1">
+        <div ref="compactHeaderMenuRef" :class="['flex items-center relative', compactChatLayout ? 'gap-1.5' : 'gap-1']">
+          <button
+            class="window-mode-btn"
+            :class="overlayWindow.enabled ? 'window-mode-btn-active' : ''"
+            :style="overlayWindow.enabled ? primaryButtonStyle : ghostButtonStyle"
+            :title="t('settings.overlayWindow')"
+            :aria-label="t('settings.overlayWindow')"
+            @click="toggleOverlayWindowMode"
+          >
+            浮
+          </button>
+          <button
+            class="window-mode-btn"
+            :class="fullscreenWindow.enabled ? 'window-mode-btn-active' : ''"
+            :style="fullscreenWindow.enabled ? primaryButtonStyle : ghostButtonStyle"
+            title="Fullscreen"
+            aria-label="Toggle fullscreen"
+            @click="toggleFullscreenWindowMode"
+          >
+            满
+          </button>
+          <template v-if="!compactChatLayout">
           <button
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             :title="t('sidebar.agent')"
             :aria-label="t('sidebar.agent')"
-            @click="showAgent = true"
+            @click="openAgentPanel"
           >
             🤖
           </button>
@@ -4232,7 +4387,7 @@ async function handleImportData() {
             :style="ghostButtonStyle"
             title="AI Memory"
             aria-label="Open AI memory"
-            @click="showMemory = true"
+            @click="openMemoryPanel"
           >
             🧠
           </button>
@@ -4241,19 +4396,36 @@ async function handleImportData() {
             :style="ghostButtonStyle"
             :title="t('sidebar.settings')"
             :aria-label="t('sidebar.settings')"
-            @click="showSettings = true"
+            @click="openSettingsPanel"
           >
             ⚙️
           </button>
+          </template>
         </div>
       </div>
 
       <!-- Usage + todo status strip (only when there's something to show) -->
       <div
-        v-if="store.usageTotals.turns > 0 || store.activeTodoList.length > 0 || (contextWindowSize > 0 && store.messages.length > 0)"
-        class="px-4 py-2 border-b border-white/5 flex items-center gap-4 text-[11px] text-neutral-400"
+        v-if="hasStatusStrip && !compactChatLayout"
+        :class="[
+          compactChatLayout
+            ? 'px-3 py-1.5 border-b border-white/5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-neutral-400'
+            : 'px-4 py-2 border-b border-white/5 flex items-center gap-4 text-[11px] text-neutral-400',
+        ]"
       >
-        <div v-if="store.usageTotals.turns > 0" class="flex items-center gap-3 font-mono">
+        <template v-if="compactChatLayout && !showCompactStatusDetails">
+          <button
+            class="compact-status-pill"
+            :title="compactStatusSummary"
+            @click="toggleCompactStatusDetails"
+          >
+            <span class="font-semibold text-neutral-200">Status</span>
+            <span class="truncate">{{ compactStatusSummary }}</span>
+            <span class="text-neutral-500">▾</span>
+          </button>
+        </template>
+        <template v-else>
+        <div v-if="store.usageTotals.turns > 0" :class="['font-mono', compactChatLayout ? 'flex items-center gap-2' : 'flex items-center gap-3']">
           <span :title="t('usage.promptTokens')">
             ↑ {{ store.usageTotals.promptTokens.toLocaleString(bcp47Locale(locale)) }}
           </span>
@@ -4266,11 +4438,11 @@ async function handleImportData() {
         </div>
         <div
           v-if="contextWindowSize > 0 && store.messages.length > 0"
-          class="flex items-center gap-2 ml-auto"
+          :class="['flex items-center gap-2', compactChatLayout ? '' : 'ml-auto']"
           :title="`~${estimatedTokensUsed.toLocaleString()} / ${contextWindowSize.toLocaleString()} tokens (estimated)`"
         >
           <span class="font-mono">ctx</span>
-          <div class="w-24 h-1.5 rounded-full bg-neutral-700/50 overflow-hidden">
+          <div :class="[compactChatLayout ? 'w-18 h-1.5' : 'w-24 h-1.5', 'rounded-full bg-neutral-700/50 overflow-hidden']">
             <div
               class="h-full rounded-full transition-all duration-500"
               :class="contextUsagePercent >= 90 ? 'bg-red-400' : contextUsagePercent >= 70 ? 'bg-amber-400' : 'bg-emerald-500/70'"
@@ -4281,7 +4453,7 @@ async function handleImportData() {
             {{ contextUsagePercent }}%
           </span>
         </div>
-        <div v-if="store.activeTodoList.length > 0" class="flex-1 flex flex-wrap gap-x-3 gap-y-1">
+        <div v-if="store.activeTodoList.length > 0" :class="[compactChatLayout ? 'w-full flex flex-wrap gap-x-2 gap-y-1' : 'flex-1 flex flex-wrap gap-x-3 gap-y-1']">
           <span
             v-for="item in store.activeTodoList"
             :key="item.id"
@@ -4296,34 +4468,48 @@ async function handleImportData() {
             <span>{{ item.text }}</span>
           </span>
         </div>
+        <button
+          v-if="compactChatLayout"
+          class="compact-status-collapse-btn"
+          aria-label="Collapse compact status details"
+          @click="toggleCompactStatusDetails"
+        >
+          ✕
+        </button>
+        </template>
       </div>
 
       <!-- Messages -->
-      <div :class="['flex-1 overflow-y-auto p-4 space-y-4', !startupAnimDone && appReady ? 'app-fade-in-scale' : '', !appReady ? 'opacity-0' : '']">
+      <div :class="[
+        'flex-1 overflow-y-auto',
+        compactChatLayout ? 'p-2.5 space-y-3' : 'p-4 space-y-4',
+        !startupAnimDone && appReady ? 'app-fade-in-scale' : '',
+        !appReady ? 'opacity-0' : '',
+      ]">
         <div
           v-if="store.messages.length === 0"
-          class="flex flex-col items-center justify-center h-full text-center text-neutral-400"
+          :class="['flex flex-col items-center justify-center h-full text-center text-neutral-400', compactChatLayout ? 'px-4' : '']"
         >
-          <div class="text-4xl mb-4" :style="emptyStateGlowStyle">
+          <div :class="[compactChatLayout ? 'text-3xl mb-3' : 'text-4xl mb-4']" :style="emptyStateGlowStyle">
             💬
           </div>
-          <h3 class="text-lg font-semibold text-white mb-2 font-display" :style="emptyStateGlowStyle">
+          <h3 :class="[compactChatLayout ? 'compact-chat-empty-title text-base font-semibold text-white mb-1.5 font-display' : 'text-lg font-semibold text-white mb-2 font-display']" :style="emptyStateGlowStyle">
             {{ store.isGroupChat
               ? t('chat.emptyTitleGroup', { names: store.activeWaifus.map(w => w.displayName).join(', ') })
               : t('chat.emptyTitle', { name: store.selectedWaifu?.displayName || '' })
             }}
           </h3>
-          <p class="text-sm" :style="emptyStateGlowStyle">
+          <p :class="[compactChatLayout ? 'compact-chat-empty-subtitle text-xs' : 'text-sm']" :style="emptyStateGlowStyle">
             {{ t('chat.emptySubtitle') }}
           </p>
         </div>
 
         <div
           v-if="store.messages.length > visibleMessageCount"
-          class="flex justify-center mb-2"
+          :class="[compactChatLayout ? 'flex justify-center mb-1' : 'flex justify-center mb-2']"
         >
           <button
-            class="btn-ghost text-xs text-neutral-400"
+            :class="[compactChatLayout ? 'btn-ghost text-[10px] text-neutral-400 px-2 py-1' : 'btn-ghost text-xs text-neutral-400']"
             aria-label="Show older messages"
             @click="revealOlderMessages"
           >
@@ -4342,13 +4528,13 @@ async function handleImportData() {
             v-for="msg in windowedMessages"
             :key="msg.id"
             :class="[
-              'group flex',
+              compactChatLayout ? 'group flex gap-2' : 'group flex',
               msg.role === 'user' ? 'justify-end items-end' : 'justify-start items-start',
             ]"
           >
-            <div v-if="msg.role !== 'user'" class="mr-3 shrink-0 relative">
+            <div v-if="msg.role !== 'user'" :class="[compactChatLayout ? 'mr-1.5 shrink-0 relative' : 'mr-3 shrink-0 relative']">
               <div
-                class="themed-assistant-avatar w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white"
+                :class="[compactChatLayout ? 'compact-chat-avatar themed-assistant-avatar w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold text-white' : 'themed-assistant-avatar w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white']"
                 :title="msg.waifuDisplayName || store.selectedWaifu?.displayName"
               >
                 {{ msg.waifuDisplayName?.[0] || store.selectedWaifu?.displayName?.[0] || 'A' }}
@@ -4363,16 +4549,19 @@ async function handleImportData() {
               </span>
             </div>
 
-            <div :class="(msg.role !== 'user' || msg.source === 'wechat') ? 'flex flex-col' : ''">
+            <div :class="[
+              (msg.role !== 'user' || msg.source === 'wechat') ? 'flex flex-col min-w-0' : 'min-w-0',
+              compactChatLayout ? 'max-w-[calc(100%-2.25rem)]' : '',
+            ]">
               <span
                 v-if="msg.role !== 'user' && store.isGroupChat && msg.waifuDisplayName"
-                class="text-[11px] text-neutral-400 mb-0.5 ml-1 font-semibold"
+                :class="[compactChatLayout ? 'text-[10px] text-neutral-400 mb-0.5 ml-0.5 font-semibold' : 'text-[11px] text-neutral-400 mb-0.5 ml-1 font-semibold']"
               >
                 {{ msg.waifuDisplayName }}
               </span>
               <span
                 v-if="msg.role === 'user' && msg.source === 'wechat'"
-                class="text-[11px] text-emerald-400/80 mb-0.5 mr-1 font-semibold self-end flex items-center gap-1"
+                :class="[compactChatLayout ? 'text-[10px] text-emerald-400/80 mb-0.5 mr-0.5 font-semibold self-end flex items-center gap-1' : 'text-[11px] text-emerald-400/80 mb-0.5 mr-1 font-semibold self-end flex items-center gap-1']"
                 :title="msg.sourceLabel ? `From WeChat contact: ${msg.sourceLabel}` : 'Received from WeChat'"
               >
                 <span aria-hidden="true">💬</span>
@@ -4399,15 +4588,19 @@ async function handleImportData() {
                   :src="att.url"
                   :alt="att.name"
                   :title="att.name"
-                  class="max-h-40 max-w-[240px] rounded-lg border border-white/10 object-cover"
+                  :class="[compactChatLayout ? 'compact-chat-message-attachment max-h-28 max-w-[180px] rounded-lg border border-white/10 object-cover' : 'max-h-40 max-w-[240px] rounded-lg border border-white/10 object-cover']"
                 />
               </div>
               <div
                 v-if="msg.role === 'assistant' && !msg.id.startsWith('tool-')"
-                class="flex gap-2 mt-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+                :class="[
+                  compactChatLayout
+                    ? 'flex flex-wrap gap-1.5 mt-1 ml-0.5 opacity-100 transition-opacity duration-150'
+                    : 'flex gap-2 mt-1 ml-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150',
+                ]"
               >
                 <button
-                  class="text-[11px] text-neutral-500 hover:text-primary-300 transition-colors"
+                  :class="[compactChatLayout ? 'text-[10px] text-neutral-500 hover:text-primary-300 transition-colors' : 'text-[11px] text-neutral-500 hover:text-primary-300 transition-colors']"
                   :title="t('message.regenerateTitle')"
                   :aria-label="t('message.regenerateTitle')"
                   @click="store.regenerateFromMessage(msg.id)"
@@ -4415,7 +4608,7 @@ async function handleImportData() {
                   {{ t('message.regenerate') }}
                 </button>
                 <button
-                  class="text-[11px] text-neutral-500 hover:text-red-400 transition-colors"
+                  :class="[compactChatLayout ? 'text-[10px] text-neutral-500 hover:text-red-400 transition-colors' : 'text-[11px] text-neutral-500 hover:text-red-400 transition-colors']"
                   :title="t('message.deleteTitle')"
                   :aria-label="t('message.deleteTitle')"
                   @click="store.deleteMessage(msg.id)"
@@ -4425,8 +4618,8 @@ async function handleImportData() {
               </div>
             </div>
 
-            <div v-if="msg.role === 'user'" class="ml-3 shrink-0">
-              <div class="themed-user-avatar w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white">
+            <div v-if="msg.role === 'user'" :class="[compactChatLayout ? 'ml-1.5 shrink-0' : 'ml-3 shrink-0']">
+              <div :class="[compactChatLayout ? 'compact-chat-avatar themed-user-avatar w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold text-white' : 'themed-user-avatar w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white']">
                 U
               </div>
             </div>
@@ -4447,7 +4640,12 @@ async function handleImportData() {
 
       <!-- Input -->
       <div
-        :class="['glass-surface border-t p-4 relative', !startupAnimDone && appReady ? 'app-slide-in-bottom' : '', !appReady ? 'opacity-0' : '']"
+        :class="[
+          'glass-surface border-t relative',
+          compactChatLayout ? 'p-3' : 'p-4',
+          !startupAnimDone && appReady ? 'app-slide-in-bottom' : '',
+          !appReady ? 'opacity-0' : '',
+        ]"
         :style="secondaryPanelStyle"
         @dragover.prevent="isDraggingFiles = true"
         @dragleave.prevent="isDraggingFiles = false"
@@ -4461,9 +4659,13 @@ async function handleImportData() {
         </div>
 
         <!-- Coding-mode pill -->
-        <div v-if="store.activeCodingRepo" class="flex items-center gap-2 mb-2">
+        <div v-if="store.activeCodingRepo && !compactChatLayout" :class="[compactChatLayout ? 'flex flex-wrap items-center gap-1.5 mb-2' : 'flex items-center gap-2 mb-2']">
           <button
-            class="flex items-center gap-2 px-2.5 py-1 rounded-full text-xs bg-primary-500/15 hover:bg-primary-500/25 ring-1 ring-primary-500/40 text-primary-100 transition-colors"
+            :class="[
+              compactChatLayout
+                ? 'flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] bg-primary-500/15 hover:bg-primary-500/25 ring-1 ring-primary-500/40 text-primary-100 transition-colors max-w-full'
+                : 'flex items-center gap-2 px-2.5 py-1 rounded-full text-xs bg-primary-500/15 hover:bg-primary-500/25 ring-1 ring-primary-500/40 text-primary-100 transition-colors',
+            ]"
             :title="store.activeCodingRepo.path"
             @click="openCodingPickerFromPill"
           >
@@ -4473,7 +4675,7 @@ async function handleImportData() {
             <span class="font-mono text-primary-200/80">{{ store.activeCodingRepo.branch ?? 'HEAD' }}</span>
           </button>
           <button
-            class="text-[10px] px-2 py-1 rounded-full bg-white/5 hover:bg-white/10 text-neutral-400 hover:text-white transition-colors"
+            :class="[compactChatLayout ? 'text-[10px] px-1.5 py-1 rounded-full bg-white/5 hover:bg-white/10 text-neutral-400 hover:text-white transition-colors' : 'text-[10px] px-2 py-1 rounded-full bg-white/5 hover:bg-white/10 text-neutral-400 hover:text-white transition-colors']"
             title="Exit coding mode"
             @click="exitCodingMode"
           >
@@ -4482,14 +4684,14 @@ async function handleImportData() {
         </div>
 
         <!-- Pending-attachment thumbnail row -->
-        <div v-if="store.pendingAttachments.length > 0" class="flex flex-wrap gap-2 mb-2">
+        <div v-if="store.pendingAttachments.length > 0" :class="[compactChatLayout ? 'flex flex-wrap gap-1.5 mb-2' : 'flex flex-wrap gap-2 mb-2']">
           <div
             v-for="att in store.pendingAttachments"
             :key="att.id"
             class="relative group rounded-lg overflow-hidden border border-white/10 bg-black/30"
             :title="att.name"
           >
-            <img :src="att.url" :alt="att.name" class="h-16 w-16 object-cover" />
+            <img :src="att.url" :alt="att.name" :class="[compactChatLayout ? 'compact-chat-pending-attachment h-12 w-12 object-cover' : 'h-16 w-16 object-cover']" />
             <button
               class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
               :title="t('input.removeAttachment', { name: att.name })"
@@ -4500,7 +4702,7 @@ async function handleImportData() {
           </div>
         </div>
 
-        <div class="flex gap-3 items-end">
+        <div :class="[compactChatLayout ? 'flex flex-wrap gap-2 items-end' : 'flex gap-3 items-end']">
           <input
             ref="fileInputRef"
             type="file"
@@ -4510,7 +4712,7 @@ async function handleImportData() {
             @change="handleFilePick"
           />
           <button
-            class="btn-ghost min-w-fit !px-2"
+            :class="[compactChatLayout ? 'compact-chat-icon-btn btn-ghost min-w-fit !px-2 h-10' : 'btn-ghost min-w-fit !px-2']"
             :title="t('input.attachImage')"
             :aria-label="t('input.attachImage')"
             :disabled="store.isLoading"
@@ -4527,7 +4729,7 @@ async function handleImportData() {
             :disabled="store.isLoading"
             rows="1"
             :class="[
-              'input-field flex-1 resize-none',
+              compactChatLayout ? 'compact-chat-input input-field flex-1 min-w-[12rem] resize-none text-sm leading-5 py-2.5' : 'input-field flex-1 resize-none',
               'disabled:opacity-50',
             ]"
             style="max-height: 100px"
@@ -4538,7 +4740,11 @@ async function handleImportData() {
           />
           <button
             v-if="store.isLoading"
-            class="btn-primary min-w-fit flex items-center justify-center gap-2 bg-rose-600/80 hover:bg-rose-600 border-rose-500/40 text-white"
+            :class="[
+              compactChatLayout
+                ? 'compact-chat-action-btn btn-primary w-full flex items-center justify-center gap-2 bg-rose-600/80 hover:bg-rose-600 border-rose-500/40 text-white'
+                : 'btn-primary min-w-fit flex items-center justify-center gap-2 bg-rose-600/80 hover:bg-rose-600 border-rose-500/40 text-white',
+            ]"
             :aria-label="t('chat.stop')"
             type="button"
             @click="store.stopStream()"
@@ -4548,7 +4754,11 @@ async function handleImportData() {
           </button>
           <button
             v-else
-            class="btn-primary themed-btn-primary min-w-fit flex items-center justify-center gap-2"
+            :class="[
+              compactChatLayout
+                ? 'compact-chat-action-btn btn-primary themed-btn-primary w-full flex items-center justify-center gap-2'
+                : 'btn-primary themed-btn-primary min-w-fit flex items-center justify-center gap-2',
+            ]"
             :style="primaryButtonStyle"
             :aria-label="t('chat.send')"
             :disabled="!store.inputValue.trim() && store.pendingAttachments.length === 0"
@@ -4557,7 +4767,7 @@ async function handleImportData() {
             {{ t('chat.send') }}
           </button>
         </div>
-        <p class="text-xs text-neutral-500 mt-2">
+        <p v-if="!compactChatLayout" class="text-xs text-neutral-500 mt-2">
           {{ t('chat.inputHint') }}
         </p>
       </div>
@@ -4710,5 +4920,191 @@ async function handleImportData() {
 
 .sidebar-closed {
   width: 0;
+}
+
+.compact-chat-shell .sidebar-open {
+  width: 14rem;
+}
+
+.compact-chat-shell :deep(.chat-bubble-shell) {
+  max-width: min(100%, var(--compact-bubble-max-width));
+  padding: 0.7rem 0.8rem;
+  border-radius: 1rem;
+}
+
+.compact-chat-shell :deep(.chat-bubble-content) {
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.compact-chat-shell {
+  --compact-base-font: clamp(11px, calc(8.8px + 0.7vw), 13px);
+  --compact-title-font: clamp(12px, calc(9.6px + 0.75vw), 14px);
+  --compact-empty-title-font: clamp(13px, calc(10.4px + 0.85vw), 15px);
+  --compact-empty-subtitle-font: clamp(10px, calc(8.4px + 0.45vw), 12px);
+  --compact-avatar-size: clamp(1.7rem, calc(1.35rem + 0.95vw), 2rem);
+  --compact-avatar-font: clamp(10px, calc(8px + 0.45vw), 12px);
+  --compact-bubble-font: clamp(11px, calc(8.8px + 0.62vw), 13px);
+  --compact-bubble-max-width: clamp(14.5rem, calc(10.5rem + 22vw), 19rem);
+  --compact-message-attachment-max-width: clamp(8.5rem, calc(5.5rem + 18vw), 11.25rem);
+  --compact-message-attachment-max-height: clamp(5.75rem, calc(4.4rem + 8vw), 7rem);
+  --compact-meta-font: clamp(9px, calc(7.5px + 0.35vw), 11px);
+  --compact-input-font: clamp(11px, calc(8.8px + 0.62vw), 13px);
+  --compact-mode-btn-font: clamp(9px, calc(7.6px + 0.32vw), 11px);
+  --compact-mode-btn-size: clamp(1.7rem, calc(1.45rem + 0.45vw), 1.9rem);
+  --compact-icon-btn-size: clamp(2rem, calc(1.55rem + 1.1vw), 2.4rem);
+  --compact-action-btn-height: clamp(2.15rem, calc(1.75rem + 1vw), 2.7rem);
+  --compact-action-btn-font: clamp(10px, calc(8.2px + 0.5vw), 12px);
+  --compact-action-btn-padding-x: clamp(0.7rem, calc(0.45rem + 0.8vw), 1rem);
+  --compact-pending-attachment-size: clamp(2.75rem, calc(2.1rem + 1.6vw), 3.4rem);
+  font-size: var(--compact-base-font);
+}
+
+.compact-chat-shell .compact-chat-title {
+  font-size: var(--compact-title-font);
+  line-height: 1.15;
+}
+
+.compact-chat-shell .compact-chat-empty-title {
+  font-size: var(--compact-empty-title-font);
+}
+
+.compact-chat-shell .compact-chat-empty-subtitle {
+  font-size: var(--compact-empty-subtitle-font);
+}
+
+.compact-chat-shell :deep(.chat-bubble-content) {
+  font-size: var(--compact-bubble-font);
+  line-height: 1.4;
+}
+
+.compact-chat-shell :deep(.chat-bubble-meta) {
+  font-size: var(--compact-meta-font);
+}
+
+.compact-chat-shell .compact-chat-input {
+  font-size: var(--compact-input-font);
+  line-height: 1.35;
+}
+
+.compact-chat-shell .compact-chat-avatar {
+  width: var(--compact-avatar-size);
+  height: var(--compact-avatar-size);
+  font-size: var(--compact-avatar-font);
+}
+
+.compact-chat-shell .window-mode-btn {
+  min-width: var(--compact-mode-btn-size);
+  height: var(--compact-mode-btn-size);
+  font-size: var(--compact-mode-btn-font);
+}
+
+.compact-chat-shell .compact-chat-icon-btn {
+  min-width: var(--compact-icon-btn-size);
+  height: var(--compact-icon-btn-size);
+  padding-left: 0;
+  padding-right: 0;
+  font-size: var(--compact-action-btn-font);
+}
+
+.compact-chat-shell .compact-chat-action-btn {
+  min-height: var(--compact-action-btn-height);
+  padding-left: var(--compact-action-btn-padding-x);
+  padding-right: var(--compact-action-btn-padding-x);
+  font-size: var(--compact-action-btn-font);
+  line-height: 1.2;
+}
+
+.compact-chat-shell .compact-chat-message-attachment {
+  max-width: var(--compact-message-attachment-max-width);
+  max-height: var(--compact-message-attachment-max-height);
+}
+
+.compact-chat-shell .compact-chat-pending-attachment {
+  width: var(--compact-pending-attachment-size);
+  height: var(--compact-pending-attachment-size);
+}
+
+.compact-chat-shell :deep(.chat-bubble-meta) {
+  margin-top: 0.35rem;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.compact-chat-shell :deep(.markdown-content p) {
+  margin-bottom: 0.5rem;
+  line-height: 1.45;
+}
+
+.compact-chat-shell :deep(.markdown-content ul),
+.compact-chat-shell :deep(.markdown-content ol) {
+  margin-bottom: 0.6rem;
+  padding-left: 1rem;
+}
+
+.compact-chat-shell :deep(.markdown-content pre) {
+  padding: 0.65rem;
+  font-size: 0.75rem;
+}
+
+.compact-header-menu-btn {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.55rem;
+  border-radius: 0.8rem;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgb(229 229 229);
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.compact-header-menu-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.window-mode-btn {
+  min-width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.75rem;
+  font-weight: 700;
+  transition: transform 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+
+.window-mode-btn:hover {
+  transform: translateY(-1px);
+}
+
+.window-mode-btn-active {
+  border-color: transparent;
+}
+
+.compact-status-pill {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 10, 10, 0.32);
+  padding: 0.35rem 0.65rem;
+  min-width: 0;
+}
+
+.compact-status-collapse-btn {
+  margin-left: auto;
+  border-radius: 999px;
+  padding: 0.1rem 0.45rem;
+  color: rgb(163 163 163);
+  transition: color 150ms ease, background-color 150ms ease;
+}
+
+.compact-status-collapse-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
 }
 </style>

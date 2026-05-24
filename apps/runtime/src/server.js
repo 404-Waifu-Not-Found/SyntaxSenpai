@@ -211,7 +211,8 @@ async function handler(request, response) {
     statusCode = 500
     log.error({ err: error }, 'request handler threw')
     jsonResponse(response, statusCode, {
-      error: error instanceof Error ? error.message : String(error)
+      error: 'Internal server error',
+      requestId
     })
   } finally {
     const durationMs = performance.now() - startedAt

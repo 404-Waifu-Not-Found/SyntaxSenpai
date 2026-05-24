@@ -28,17 +28,15 @@ export interface Skill extends SkillFrontmatter {
   slug: string;
 }
 
-const FRONTMATTER_RE = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?([\s\S]*)$/;
-
 /**
  * Parse a SKILL.md file into frontmatter + body. Returns null if the
  * file isn't valid — caller can skip or surface an error.
  */
 export function parseSkillFile(raw: string, slug: string): Skill | null {
-  const match = FRONTMATTER_RE.exec(raw.trim());
-  if (!match) return null;
+  const parsed = splitFrontmatter(raw);
+  if (!parsed) return null;
 
-  const frontmatter = parseFrontmatter(match[1]);
+  const frontmatter = parseFrontmatter(parsed.frontmatter);
   if (!frontmatter) return null;
   if (!frontmatter.name || !frontmatter.description) return null;
 
@@ -46,8 +44,23 @@ export function parseSkillFile(raw: string, slug: string): Skill | null {
     slug,
     name: frontmatter.name,
     description: frontmatter.description,
-    body: (match[2] || '').trim(),
+    body: parsed.body.trim(),
   };
+}
+
+function splitFrontmatter(raw: string): { frontmatter: string; body: string } | null {
+  const lines = raw.replace(/^\uFEFF/, '').trimStart().split(/\r?\n/);
+  if (lines[0]?.trim() !== '---') return null;
+
+  for (let i = 1; i < lines.length; i += 1) {
+    if (lines[i].trim() === '---') {
+      return {
+        frontmatter: lines.slice(1, i).join('\n'),
+        body: lines.slice(i + 1).join('\n'),
+      };
+    }
+  }
+  return null;
 }
 
 function parseFrontmatter(raw: string): SkillFrontmatter | null {
@@ -67,9 +80,21 @@ function parseFrontmatter(raw: string): SkillFrontmatter | null {
 
 function stripQuotes(value: string): string {
   if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-    return value.slice(1, -1);
+    if (value.startsWith('"')) {
+      try {
+        const parsed = JSON.parse(value);
+        return typeof parsed === 'string' ? parsed : value.slice(1, -1);
+      } catch {
+        return value.slice(1, -1);
+      }
+    }
+    return value.slice(1, -1).replace(/''/g, "'");
   }
   return value;
+}
+
+function quoteYamlString(value: string): string {
+  return JSON.stringify(String(value));
 }
 
 /**
@@ -78,9 +103,7 @@ function stripQuotes(value: string): string {
  * loader expects.
  */
 export function serializeSkill(skill: Pick<Skill, 'name' | 'description' | 'body'>): string {
-  const safeName = skill.name.replace(/"/g, '\\"');
-  const safeDescription = skill.description.replace(/"/g, '\\"');
-  return `---\nname: "${safeName}"\ndescription: "${safeDescription}"\n---\n\n${skill.body.trim()}\n`;
+  return `---\nname: ${quoteYamlString(skill.name)}\ndescription: ${quoteYamlString(skill.description)}\n---\n\n${skill.body.trim()}\n`;
 }
 
 /**

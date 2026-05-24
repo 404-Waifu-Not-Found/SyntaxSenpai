@@ -18,7 +18,7 @@ if (typeof electronModule === 'string') {
   process.exit(0)
 }
 
-const { app, BrowserWindow, ipcMain, shell, clipboard, globalShortcut, Tray, Menu, nativeImage, screen } = electronModule
+const { app, BrowserWindow, ipcMain, clipboard, globalShortcut, Tray, Menu, nativeImage, screen } = electronModule
 const { join } = require('path')
 const fs = require('fs')
 import { registerChatIpc } from './ipc/chat'

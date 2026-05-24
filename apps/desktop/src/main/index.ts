@@ -45,6 +45,7 @@ const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow: any = null
 let tray: any = null
+let currentWindowFrameless = false
 
 const NORMAL_WINDOW_MIN_WIDTH = 800
 const NORMAL_WINDOW_MIN_HEIGHT = 600
@@ -126,6 +127,14 @@ function getActiveBoundsForMode(mode: WindowMode): WindowBounds {
   return mode === 'overlay' ? windowState.overlayBounds : windowState.normalBounds
 }
 
+function shouldUseFramelessWindow(mode: WindowMode): boolean {
+  return mode === 'overlay'
+}
+
+function shouldUseTransparentWindow(mode: WindowMode): boolean {
+  return mode === 'overlay'
+}
+
 function clampToRange(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
 }
@@ -182,6 +191,11 @@ function getOverlayBoundsForActivation(currentBounds?: { x: number; y: number; w
 
 function applyWindowMode(mode: WindowMode) {
   if (!mainWindow || mainWindow.isDestroyed()) return
+  const targetFrameless = shouldUseFramelessWindow(mode)
+  if (currentWindowFrameless !== targetFrameless) {
+    recreateWindowForMode(mode)
+    return
+  }
   const wasFullscreen = mainWindow.isFullScreen()
   if (mode !== 'fullscreen' && wasFullscreen) {
     mainWindow.setFullScreen(false)
@@ -228,6 +242,53 @@ function registerWindowStateTracking() {
   if (!mainWindow) return
   mainWindow.on('resize', () => updateStoredBoundsFromWindow())
   mainWindow.on('move', () => updateStoredBoundsFromWindow())
+}
+
+function recreateWindowForMode(mode: WindowMode) {
+  const previousWindow = mainWindow
+  const previousBounds = previousWindow && !previousWindow.isDestroyed()
+    ? previousWindow.getBounds()
+    : undefined
+
+  if (previousBounds && windowState.mode !== 'fullscreen') {
+    const previousKey = windowState.mode === 'overlay' ? 'overlayBounds' : 'normalBounds'
+    const previousMinWidth = windowState.mode === 'overlay' ? OVERLAY_WINDOW_MIN_WIDTH : NORMAL_WINDOW_MIN_WIDTH
+    const previousMinHeight = windowState.mode === 'overlay' ? OVERLAY_WINDOW_MIN_HEIGHT : NORMAL_WINDOW_MIN_HEIGHT
+    windowState[previousKey] = sanitizeBounds(previousBounds, windowState[previousKey], previousMinWidth, previousMinHeight)
+  }
+
+  const nextMinWidth = mode === 'overlay' ? OVERLAY_WINDOW_MIN_WIDTH : NORMAL_WINDOW_MIN_WIDTH
+  const nextMinHeight = mode === 'overlay' ? OVERLAY_WINDOW_MIN_HEIGHT : NORMAL_WINDOW_MIN_HEIGHT
+  const nextBounds = mode === 'overlay'
+    ? getOverlayBoundsForActivation(previousBounds, windowState.overlayBounds)
+    : sanitizeBounds(previousBounds ?? windowState.normalBounds, NORMAL_WINDOW_DEFAULT_BOUNDS, nextMinWidth, nextMinHeight)
+
+  windowState.mode = mode
+  if (mode === 'overlay') {
+    windowState.overlayBounds = nextBounds
+  } else if (mode === 'normal') {
+    windowState.normalBounds = nextBounds
+  }
+  saveWindowState()
+
+  createWindow(mode)
+  const replacementWindow = mainWindow
+
+  if (replacementWindow && !replacementWindow.isDestroyed()) {
+    if (mode === 'fullscreen') {
+      replacementWindow.setFullScreen(true)
+    }
+    replacementWindow.show()
+    replacementWindow.focus()
+  }
+
+  if (previousWindow && !previousWindow.isDestroyed()) {
+    previousWindow.removeAllListeners('resize')
+    previousWindow.removeAllListeners('move')
+    previousWindow.removeAllListeners('closed')
+    previousWindow.hide()
+    previousWindow.destroy()
+  }
 }
 
 function toggleMainWindow() {
@@ -296,21 +357,27 @@ function registerGlobalShortcuts() {
   }
 }
 
-function createWindow(): void {
+function createWindow(forcedMode?: WindowMode): void {
   if (!windowState) windowState = loadWindowState()
-  const mode = windowState.mode === 'overlay'
-    ? 'overlay'
-    : windowState.mode === 'fullscreen'
-      ? 'fullscreen'
-      : 'normal'
+  const mode = forcedMode
+    ?? (windowState.mode === 'overlay'
+      ? 'overlay'
+      : windowState.mode === 'fullscreen'
+        ? 'fullscreen'
+        : 'normal')
   const bounds = mode === 'overlay'
     ? getOverlayBoundsForActivation(undefined, getActiveBoundsForMode(mode))
     : getActiveBoundsForMode(mode)
-  mainWindow = new BrowserWindow({
+  const createdWindow = new BrowserWindow({
     width: bounds.width,
     height: bounds.height,
     ...(typeof bounds.x === 'number' ? { x: bounds.x } : {}),
     ...(typeof bounds.y === 'number' ? { y: bounds.y } : {}),
+    transparent: shouldUseTransparentWindow(mode),
+    backgroundColor: shouldUseTransparentWindow(mode) ? '#00000000' : '#10131c',
+    frame: !shouldUseFramelessWindow(mode),
+    maximizable: mode !== 'overlay',
+    fullscreenable: mode !== 'overlay',
     minWidth: mode === 'overlay' ? OVERLAY_WINDOW_MIN_WIDTH : NORMAL_WINDOW_MIN_WIDTH,
     minHeight: mode === 'overlay' ? OVERLAY_WINDOW_MIN_HEIGHT : NORMAL_WINDOW_MIN_HEIGHT,
     alwaysOnTop: mode === 'overlay',
@@ -326,16 +393,21 @@ function createWindow(): void {
       contextIsolation: true
     }
   })
+  mainWindow = createdWindow
+  currentWindowFrameless = shouldUseFramelessWindow(mode)
 
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5173')
-    mainWindow.webContents.openDevTools()
+    createdWindow.loadURL('http://localhost:5173')
+    createdWindow.webContents.openDevTools()
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    createdWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 
-  mainWindow.on('closed', () => {
-    mainWindow = null
+  createdWindow.on('closed', () => {
+    if (mainWindow === createdWindow) {
+      mainWindow = null
+      currentWindowFrameless = false
+    }
   })
 
   registerWindowStateTracking()

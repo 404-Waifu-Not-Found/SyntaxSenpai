@@ -259,7 +259,7 @@ function decodeDuckDuckGoRedirect(url: string): string {
   try {
     const parsed = new URL(url, 'https://duckduckgo.com')
     const uddg = parsed.searchParams.get('uddg')
-    return uddg ? decodeURIComponent(uddg) : parsed.toString()
+    return uddg || parsed.toString()
   } catch {
     return url
   }

@@ -50,6 +50,43 @@ function revealOlderMessages() {
   )
 }
 
+const showRenameConversationModal = ref(false)
+const renameConversationId = ref<string | null>(null)
+const renameConversationValue = ref('')
+const renameConversationInputRef = ref<HTMLInputElement | null>(null)
+
+function renameConversationPrompt(conversation: { id: string; title?: string }) {
+  renameConversationId.value = conversation.id
+  renameConversationValue.value = String(conversation.title || '').trim()
+  showRenameConversationModal.value = true
+
+  void nextTick(() => {
+    renameConversationInputRef.value?.focus()
+    renameConversationInputRef.value?.select()
+  })
+}
+
+function closeRenameConversationModal() {
+  showRenameConversationModal.value = false
+  renameConversationId.value = null
+  renameConversationValue.value = ''
+}
+
+async function submitRenameConversation() {
+  const conversationId = renameConversationId.value
+  const trimmedTitle = renameConversationValue.value.trim()
+  const currentConversation = store.conversations.find((conversation: any) => conversation.id === conversationId)
+  const currentTitle = String(currentConversation?.title || '').trim()
+
+  if (!conversationId || !trimmedTitle || trimmedTitle === currentTitle) {
+    closeRenameConversationModal()
+    return
+  }
+
+  await store.renameConversation(conversationId, trimmedTitle)
+  closeRenameConversationModal()
+}
+
 // Reset the window whenever the user switches conversations so opening an
 // old thread starts at the tail, not wherever they paged to in another chat.
 watch(
@@ -1542,6 +1579,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     if (showCompactHeaderMenu.value) { showCompactHeaderMenu.value = false; e.preventDefault(); return }
     if (showCompactStatusDetails.value) { showCompactStatusDetails.value = false; e.preventDefault(); return }
+    if (showRenameConversationModal.value) { closeRenameConversationModal(); e.preventDefault(); return }
     if (showShortcuts.value) { showShortcuts.value = false; e.preventDefault(); return }
     if (showSettings.value) { showSettings.value = false; e.preventDefault(); return }
     if (showAgent.value) { showAgent.value = false; e.preventDefault(); return }
@@ -2225,6 +2263,42 @@ async function handleImportData() {
   <!-- Sakura petal overlay (fixed, behind UI content, toggled via theme.ui.petals) -->
   <Teleport to="body">
     <SakuraPetals v-if="theme.ui.petals" />
+  </Teleport>
+
+  <Teleport to="body">
+    <Transition name="modal-backdrop">
+      <div
+        v-if="showRenameConversationModal"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-[90]"
+        @click.self="closeRenameConversationModal()"
+      >
+        <div class="modal-glass rounded-t-3xl sm:rounded-2xl p-6 max-w-md w-full mx-0 sm:mx-4">
+          <h2 class="text-xl font-bold text-white mb-2">
+            {{ t('conversation.renameTitle') }}
+          </h2>
+          <p class="text-sm text-neutral-400 mb-5">
+            {{ t('conversation.renamePrompt') }}
+          </p>
+
+          <input
+            ref="renameConversationInputRef"
+            v-model="renameConversationValue"
+            class="input-field mb-6"
+            maxlength="120"
+            @keydown.enter.prevent="submitRenameConversation()"
+          >
+
+          <div class="flex gap-2">
+            <button class="btn-secondary flex-1" @click="closeRenameConversationModal()">
+              {{ t('settings.cancel') }}
+            </button>
+            <button class="btn-primary flex-1" @click="submitRenameConversation()">
+              {{ t('settings.save') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </Teleport>
 
   <!-- Toast Notification -->
@@ -4278,6 +4352,13 @@ async function handleImportData() {
                 <span class="text-[10px] text-neutral-500 shrink-0 tabular-nums">{{ relativeTime(c.updatedAt) }}</span>
               </div>
               <div class="flex gap-0.5 shrink-0 items-center opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                <button
+                  class="text-[11px] leading-none px-1 text-neutral-400 hover:text-cyan-300 transition-colors"
+                  :title="t('conversation.renameTitle')"
+                  @click.stop="renameConversationPrompt(c)"
+                >
+                  &#9998;
+                </button>
                 <button
                   :class="[
                     'text-[11px] leading-none px-1 transition-colors',

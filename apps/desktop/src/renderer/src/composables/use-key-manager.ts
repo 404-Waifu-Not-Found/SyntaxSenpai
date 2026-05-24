@@ -1,6 +1,6 @@
 import { useIpc } from './use-ipc'
 
-const SERVICE = 'syntax-senpai-keys'
+const LEGACY_LOCAL_STORAGE_SERVICE = 'syntax-senpai-keys'
 const PROVIDER_ALIASES: Record<string, string[]> = {
   'minimax-cn': ['minimax-global'],
   'minimax-global': ['minimax-cn'],
@@ -15,6 +15,14 @@ function getProviderKeys(provider: string) {
 export function useKeyManager() {
   const { invoke } = useIpc()
 
+  function clearLegacyLocalKeys() {
+    try {
+      localStorage.removeItem(LEGACY_LOCAL_STORAGE_SERVICE)
+    } catch {
+      // best effort cleanup of legacy plaintext fallback
+    }
+  }
+
   async function setKey(provider: string, key: string): Promise<void> {
     const providers = getProviderKeys(provider)
     let stored = false
@@ -28,13 +36,8 @@ export function useKeyManager() {
       }
     }
 
-    if (stored) return
-
-    const keys = JSON.parse(localStorage.getItem(SERVICE) || '{}')
-    for (const providerKey of providers) {
-      keys[providerKey] = key
-    }
-    localStorage.setItem(SERVICE, JSON.stringify(keys))
+    clearLegacyLocalKeys()
+    if (!stored) throw new Error('Secure key storage is unavailable.')
   }
 
   async function getKey(provider: string): Promise<string | null> {
@@ -49,10 +52,7 @@ export function useKeyManager() {
       }
     }
 
-    const keys = JSON.parse(localStorage.getItem(SERVICE) || '{}')
-    for (const providerKey of providers) {
-      if (keys[providerKey]) return keys[providerKey]
-    }
+    clearLegacyLocalKeys()
     return null
   }
 
@@ -69,18 +69,8 @@ export function useKeyManager() {
       }
     }
 
-    if (deleted) return true
-
-    const keys = JSON.parse(localStorage.getItem(SERVICE) || '{}')
-    let localDeleted = false
-    for (const providerKey of providers) {
-      if (keys[providerKey]) {
-        delete keys[providerKey]
-        localDeleted = true
-      }
-    }
-    if (localDeleted) localStorage.setItem(SERVICE, JSON.stringify(keys))
-    return localDeleted
+    clearLegacyLocalKeys()
+    return deleted
   }
 
   return { setKey, getKey, deleteKey }

@@ -1387,7 +1387,9 @@ function onGlobalPointerDown(e: PointerEvent) {
 }
 
 const appShellStyle = computed(() => ({
-  background: `linear-gradient(135deg, ${theme.value.colors.bg}, ${theme.value.colors.surface})`,
+  background: overlayWindow.value.enabled
+    ? 'transparent'
+    : `linear-gradient(135deg, ${theme.value.colors.bg}, ${theme.value.colors.surface})`,
   color: theme.value.colors.fg,
 }))
 
@@ -2333,7 +2335,10 @@ async function handleImportData() {
     >
       <div
         v-if="showStartupSplash"
-        class="fixed inset-0 z-[-1] flex items-center justify-center overflow-hidden bg-neutral-950"
+        :class="[
+          'fixed inset-0 z-[-1] flex items-center justify-center overflow-hidden',
+          compactChatLayout ? 'bg-transparent' : 'bg-neutral-950',
+        ]"
       >
         <div class="absolute inset-0 opacity-70" :style="startupAccentStyle" />
         <div class="absolute h-90 w-90 rounded-full border border-white/10 animate-ping opacity-20" />
@@ -4204,13 +4209,13 @@ async function handleImportData() {
   <div
     v-if="store.isSetup"
     :class="[
-      'relative flex h-screen w-screen overflow-hidden',
-      compactChatLayout ? 'compact-chat-shell' : '',
+      'relative flex h-screen w-screen',
+      compactChatLayout ? 'compact-chat-shell overlay-window-shell overflow-visible p-2.5' : 'overflow-hidden',
     ]"
     :style="appShellStyle"
   >
     <!-- Ambient background -->
-    <div class="absolute inset-0 pointer-events-none -z-10 opacity-60">
+    <div v-if="!compactChatLayout" class="absolute inset-0 pointer-events-none -z-10 opacity-60">
       <div
         class="absolute inset-0"
         :style="{ background: `radial-gradient(circle at 10% 10%, rgba(var(--primary-rgb),0.12), transparent 8%), radial-gradient(circle at 90% 90%, rgba(var(--accent-rgb),0.08), transparent 18%)`, filter: 'blur(40px)' }"
@@ -4397,6 +4402,7 @@ async function handleImportData() {
           compactChatLayout ? 'sticky top-0 z-20 px-3 py-2.5' : 'sticky top-0 z-20 px-6 py-3',
           'glass-surface border-b',
           'flex items-center justify-between',
+          compactChatLayout ? 'overlay-drag-region' : '',
           !startupAnimDone && appReady ? 'app-slide-in-top' : '',
           !appReady ? 'opacity-0' : '',
         ]"
@@ -4432,10 +4438,9 @@ async function handleImportData() {
             </div>
           </div>
         </div>
-        <div ref="compactHeaderMenuRef" :class="['flex items-center relative', compactChatLayout ? 'gap-1.5' : 'gap-1']">
+        <div ref="compactHeaderMenuRef" :class="['flex items-center relative', compactChatLayout ? 'gap-1.5 overlay-no-drag' : 'gap-1']">
           <button
-            class="window-mode-btn"
-            :class="overlayWindow.enabled ? 'window-mode-btn-active' : ''"
+            :class="['window-mode-btn', compactChatLayout ? 'overlay-no-drag' : '', overlayWindow.enabled ? 'window-mode-btn-active' : '']"
             :style="overlayWindow.enabled ? primaryButtonStyle : ghostButtonStyle"
             :title="t('settings.overlayWindow')"
             :aria-label="t('settings.overlayWindow')"
@@ -4444,8 +4449,7 @@ async function handleImportData() {
             浮
           </button>
           <button
-            class="window-mode-btn"
-            :class="fullscreenWindow.enabled ? 'window-mode-btn-active' : ''"
+            :class="['window-mode-btn', compactChatLayout ? 'overlay-no-drag' : '', fullscreenWindow.enabled ? 'window-mode-btn-active' : '']"
             :style="fullscreenWindow.enabled ? primaryButtonStyle : ghostButtonStyle"
             title="Fullscreen"
             aria-label="Toggle fullscreen"
@@ -5023,6 +5027,10 @@ async function handleImportData() {
   --compact-title-font: clamp(12px, calc(9.6px + 0.75vw), 14px);
   --compact-empty-title-font: clamp(13px, calc(10.4px + 0.85vw), 15px);
   --compact-empty-subtitle-font: clamp(10px, calc(8.4px + 0.45vw), 12px);
+  --overlay-shell-radius: clamp(1rem, calc(0.65rem + 1vw), 1.35rem);
+  --overlay-shell-shadow: 0 18px 42px rgba(3, 6, 16, 0.42), 0 6px 18px rgba(15, 23, 42, 0.28);
+  --overlay-shell-border: rgba(255, 255, 255, 0.1);
+  --overlay-shell-background: linear-gradient(180deg, rgba(10, 12, 22, 0.72), rgba(8, 10, 18, 0.64));
   --compact-avatar-size: clamp(1.7rem, calc(1.35rem + 0.95vw), 2rem);
   --compact-avatar-font: clamp(10px, calc(8px + 0.45vw), 12px);
   --compact-bubble-font: clamp(11px, calc(8.8px + 0.62vw), 13px);
@@ -5039,6 +5047,37 @@ async function handleImportData() {
   --compact-action-btn-padding-x: clamp(0.7rem, calc(0.45rem + 0.8vw), 1rem);
   --compact-pending-attachment-size: clamp(2.75rem, calc(2.1rem + 1.6vw), 3.4rem);
   font-size: var(--compact-base-font);
+}
+
+.compact-chat-shell.overlay-window-shell {
+  box-sizing: border-box;
+}
+
+.compact-chat-shell .overlay-main-pane {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--overlay-shell-radius);
+  border: 1px solid var(--overlay-shell-border);
+  background: var(--overlay-shell-background);
+  box-shadow: var(--overlay-shell-shadow);
+}
+
+.compact-chat-shell .overlay-main-pane::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.compact-chat-shell .overlay-drag-region {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.compact-chat-shell .overlay-no-drag {
+  -webkit-app-region: no-drag;
 }
 
 .compact-chat-shell .compact-chat-title {

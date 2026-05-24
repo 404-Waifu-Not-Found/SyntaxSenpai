@@ -1,20 +1,32 @@
 <!doctype html>
 <html>
-  <head>
+
+<head>
     <meta charset="utf-8" />
     <title>SyntaxSenpai Desktop</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
-      body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; margin: 0; padding: 16px; background: #f6f7fb; color: #111; }
-      header { padding: 12px 0; }
-      h1 { margin: 0; font-size: 20px; }
-      main { margin-top: 16px; }
-      #app { padding: 12px; background: #fff; border-radius: 8px; box-shadow: 0 4px 14px rgba(16,24,40,0.06); }
+        html,
+        body,
+        #app {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background: transparent;
+        }
+        
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+            color: #111;
+            overflow: hidden;
+        }
     </style>
-  </head>
-  <body>
-    <header><h1>SyntaxSenpai Desktop (Dev)</h1></header>
-    <main><div id="app">Loading...</div></main>
+</head>
+
+<body>
+    <div id="app">Loading...</div>
     <script src="./renderer.js"></script>
-  </body>
+</body>
+
 </html>

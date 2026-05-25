@@ -497,6 +497,19 @@ ipcMain.handle('window:setOverlayMode', (_e: any, enabled: boolean) => {
 
 app.whenReady().then(() => {
   windowState = loadWindowState()
+
+  // Register a custom protocol so the renderer can load Live2D model files
+  // from userData via fetch() regardless of whether the window was loaded
+  // from the Vite dev server (http://) or a file:// origin (production).
+  // Maps userdata://<relative-path> to <userData>/<relative-path>.
+  const { protocol, net } = electronModule
+  const { pathToFileURL: ptfu } = require('node:url')
+  protocol.handle('userdata', (request: any) => {
+    const relPath = decodeURIComponent(request.url.replace(/^userdata:\/\//, ''))
+    const absPath = join(app.getPath('userData'), relPath)
+    return net.fetch(ptfu(absPath).toString())
+  })
+
   createWindow()
 
   // Ensure chat DB path is set to userData

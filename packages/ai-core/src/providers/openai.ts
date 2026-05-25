@@ -105,7 +105,12 @@ export class OpenAIProvider extends OpenAICompatibleProvider {
       messages,
     };
     if (tools && tools.length > 0) body.tools = tools;
-    if (stream) body.stream = true;
+    if (stream) {
+      body.stream = true;
+      // Ask OpenAI-compatible streaming endpoints to emit a final usage chunk.
+      // Providers that don't recognize stream_options ignore it harmlessly.
+      body.stream_options = { include_usage: true };
+    }
     return body;
   }
 
@@ -221,8 +226,20 @@ export class OpenAIProvider extends OpenAICompatibleProvider {
       toolCallBuffers.clear();
     };
 
+    let pendingDone = false;
+    let finalUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
+
     for await (const chunk of stream as any) {
-      const delta = chunk.choices[0]?.delta;
+      // OpenAI emits a final chunk with empty choices and a populated `usage`
+      // object when stream_options.include_usage is set. Capture it.
+      if (chunk?.usage && typeof chunk.usage.total_tokens === "number") {
+        finalUsage = {
+          promptTokens: chunk.usage.prompt_tokens || 0,
+          completionTokens: chunk.usage.completion_tokens || 0,
+          totalTokens: chunk.usage.total_tokens || 0,
+        };
+      }
+      const delta = chunk.choices?.[0]?.delta;
       // DeepSeek reasoner emits chain-of-thought as delta.reasoning_content,
       // separate from delta.content. Surface it so the UI can render it live.
       if (delta?.reasoning_content) {
@@ -257,17 +274,20 @@ export class OpenAIProvider extends OpenAICompatibleProvider {
         }
       }
 
-      if (chunk.choices[0]?.finish_reason) {
+      if (chunk.choices?.[0]?.finish_reason) {
         yield* flushToolCalls();
-        yield {
-          type: "done",
-        };
+        // Defer "done" until the stream ends so we can attach the usage chunk
+        // that OpenAI emits AFTER the finish_reason chunk.
+        pendingDone = true;
       }
     }
 
     // Stream closed without an explicit finish_reason chunk — flush any
     // pending tool calls so callers don't silently lose them.
     yield* flushToolCalls();
+    if (pendingDone || finalUsage) {
+      yield { type: "done", usage: finalUsage };
+    }
   }
 }
 

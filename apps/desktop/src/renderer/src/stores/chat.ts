@@ -401,10 +401,11 @@ function buildWeChatSessionPromptBlock(binding: WeChatBinding | null): string {
   return `\n\n[WeChat Session]
 Right now you are NOT talking to the desktop app user — you are chatting live with ${who} through the WeChat mobile app. Every message in this conversation arrived from WeChat, and your reply is delivered straight back to their WeChat. Treat it exactly like texting someone on your phone.
 - Reply like you're texting: short, conversational, prose over lists.
-- WeChat cannot deliver long messages. Never send a wall of text. If you have more than a few sentences, break it into short paragraphs separated by blank lines — each paragraph is delivered as its own message bubble, so make each one a self-contained thought.
-- WeChat does NOT render tables, charts, complex markdown, or wide code blocks. For structured output (tables, comparisons, long code, multi-section answers), call wechat_send with as_image=true to render it as a PNG.
-- To actively text a WeChat contact (e.g. the user asks you to message someone), use wechat_send for a single message or send_multi_messages for several back-to-back bubbles. Your normal reply does not need these — your final_message is auto-relayed and long replies are already split into natural bubbles.
-- Your top-level final_message is auto-relayed to ${who}, so keep it self-contained and concise. Do NOT include internal tool output, debug logs, or "Sent text..." confirmations — they only see that string in WeChat.`
+- **NEVER use newlines / line breaks / \\n inside a single WeChat message.** WeChat displays each message as a single line and treats Enter as "send", so a multi-line message either gets mangled or sent prematurely. Every individual bubble must be one continuous line of text with no internal \\n, no blank lines, no bullet lists stacked vertically.
+- Instead of breaking one message across lines, break your reply into MANY short single-line messages and send them back-to-back via send_multi_messages — one sentence (or one short thought) per bubble, exactly like a real person texting. Prefer many short bubbles over one long one.
+- WeChat does NOT render tables, charts, complex markdown, or wide code blocks. For anything that genuinely needs multiple lines (tables, comparisons, long code, multi-section answers), call wechat_send with as_image=true to render it as a PNG — that is the only way to deliver multi-line content.
+- To actively text a WeChat contact (e.g. the user asks you to message someone), use wechat_send for a single one-line message or send_multi_messages for several back-to-back single-line bubbles.
+- Your top-level final_message is auto-relayed to ${who} as a single bubble, so keep it to ONE line with no \\n. If your reply is longer than one sentence, send the body via send_multi_messages (each entry one line) and keep final_message to a brief one-line closer or empty. Do NOT include internal tool output, debug logs, or "Sent text..." confirmations — they only see that string in WeChat.`
 }
 
 function buildAffectionPrompt(affection: number, waifuName: string): string {
@@ -2308,6 +2309,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                 finalContent += chunk.delta
                 ensureBubble()
                 scheduleFlush()
+              } else if (chunk.type === 'done' && chunk.usage) {
+                recordUsage(model, chunk.usage)
               }
             }
             // Final synchronous write so the bubble reflects the complete
@@ -2985,6 +2988,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             assistantReasoning += chunk.delta
             ensureBubble()
             updateBubble()
+          } else if (chunk.type === 'done' && chunk.usage) {
+            recordUsage(model, chunk.usage)
           }
         }
 

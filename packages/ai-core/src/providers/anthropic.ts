@@ -169,8 +169,24 @@ export class AnthropicProvider extends BaseAIProvider {
 
     let toolBuffer = "";
     let inToolUse = false;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let cacheCreationInputTokens: number | undefined;
+    let cacheReadInputTokens: number | undefined;
 
     for await (const event of stream) {
+      if (event.type === "message_start") {
+        const u = (event as any).message?.usage;
+        if (u) {
+          inputTokens = u.input_tokens ?? 0;
+          outputTokens = u.output_tokens ?? outputTokens;
+          cacheCreationInputTokens = u.cache_creation_input_tokens ?? cacheCreationInputTokens;
+          cacheReadInputTokens = u.cache_read_input_tokens ?? cacheReadInputTokens;
+        }
+      } else if (event.type === "message_delta") {
+        const u = (event as any).usage;
+        if (u && typeof u.output_tokens === "number") outputTokens = u.output_tokens;
+      }
       if (event.type === "content_block_delta") {
         if (event.delta.type === "text_delta") {
           yield {
@@ -206,6 +222,13 @@ export class AnthropicProvider extends BaseAIProvider {
       } else if (event.type === "message_stop") {
         yield {
           type: "done",
+          usage: {
+            promptTokens: inputTokens,
+            completionTokens: outputTokens,
+            totalTokens: inputTokens + outputTokens,
+            cacheCreationInputTokens,
+            cacheReadInputTokens,
+          },
         };
       }
     }

@@ -701,9 +701,9 @@ function isPluginTool(name: string): boolean {
 
 /**
  * Returns tools available for a given agent mode.
- * - ask:  terminal (read-only commands enforced by prompt) + stop
- * - auto: terminal + stop
- * - full: terminal + stop
+ * - ask:  all eligible tools; caller must request user approval before executing actions
+ * - auto: all tools; caller should run AI approval before executing actions
+ * - full: all tools; caller may execute directly
  *
  * Plugin-contributed tools (loaded via loadPluginTools) are appended
  * unconditionally — per-plugin enable/disable is handled on the main
@@ -713,9 +713,7 @@ export function getToolsForMode(
   mode: AgentMode,
   options: { webSearchEnabled?: boolean; codingMode?: boolean } = {},
 ): ToolDefinition[] {
-  // All modes get tools; the system prompt controls safety boundaries.
   // Coding-mode tools (git_commit / git_push / github_pr_create) only appear when /code is active.
-  void mode
   const base = agentTools.filter((tool) => {
     if (tool.name === 'web_search') return options.webSearchEnabled === true
     if (CODING_MODE_TOOLS.has(tool.name)) return options.codingMode === true

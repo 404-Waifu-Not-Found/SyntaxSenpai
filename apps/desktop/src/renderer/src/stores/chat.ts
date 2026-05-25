@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { buildSystemPrompt, builtInWaifus, detectMilestone, describeMilestone, formatSkillsForPrompt, rankMemories } from '@syntax-senpai/waifu-core'
 import type { SentimentResult, MilestoneEvent, Waifu, Skill } from '@syntax-senpai/waifu-core'
-import { AIChatRuntime, withRetry, classifyError, describeError } from '@syntax-senpai/ai-core'
+import { AIChatRuntime, withRetry, classifyError, describeError, type ToolCall } from '@syntax-senpai/ai-core'
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
 import { createLogger } from '../composables/logger'
@@ -56,6 +56,56 @@ function estimateCost(model: string, promptTokens: number, completionTokens: num
   return (promptTokens / 1000) * row.input + (completionTokens / 1000) * row.output
 }
 
+function isPlainWaifuObject(v: unknown): v is Record<string, unknown> {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false
+  const proto = Object.getPrototypeOf(v)
+  return proto === Object.prototype || proto === null
+}
+
+function deepMergeWaifu<T extends Record<string, unknown>>(base: T, patch: Record<string, unknown>): T {
+  const out: Record<string, unknown> = { ...base }
+  for (const key of Object.keys(patch)) {
+    const baseVal = (base as Record<string, unknown>)[key]
+    const patchVal = patch[key]
+    if (isPlainWaifuObject(baseVal) && isPlainWaifuObject(patchVal)) {
+      out[key] = deepMergeWaifu(baseVal as Record<string, unknown>, patchVal as Record<string, unknown>)
+    } else {
+      out[key] = patchVal
+    }
+  }
+  return out as T
+}
+
+/**
+ * Combine built-in waifus with the user's custom-waifu files.
+ *
+ * Customs that share an id with a built-in deep-merge on top of it (so a
+ * sparse shadow file carrying only `{ id, avatar: { live2dModel: ... } }`
+ * surfaces the override while keeping the built-in's defaults). Customs
+ * with a brand-new id are appended.
+ */
+export function mergeWaifus(builtIns: any[], customs: any[]): any[] {
+  const byId = new Map<string, any>()
+  for (const w of builtIns) {
+    if (w && typeof w.id === 'string') byId.set(w.id, w)
+  }
+  for (const w of customs) {
+    if (!w || typeof w.id !== 'string') continue
+    const existing = byId.get(w.id)
+    if (existing) {
+      // Preserve `isBuiltIn` from the built-in record so UI affordances
+      // (delete, edit) keep treating it as a built-in even though a custom
+      // shadow file exists on disk.
+      const merged = deepMergeWaifu(existing, w)
+      merged.isBuiltIn = existing.isBuiltIn ?? true
+      byId.set(w.id, merged)
+    } else {
+      byId.set(w.id, { ...w, isBuiltIn: false })
+    }
+  }
+  return Array.from(byId.values())
+}
+
 // 将模型传回来的 render_card 参数收敛成受控结构，避免渲染层接收任意形状的数据。
 function parseRenderCardArgs(args: unknown): RenderCardPayload | null {
   const obj = args as Record<string, unknown> | null | undefined
@@ -101,6 +151,12 @@ export interface Message {
   attachments?: MessageAttachment[]
   sentiment?: SentimentResult
   subagents?: SubagentSnapshot[]
+  pendingApproval?: {
+    id: string
+    toolName: string
+    label: string
+    status: 'pending' | 'approved' | 'denied'
+  }
   /** Where a user message originated, when not typed in the desktop app. */
   source?: 'wechat'
   /** Human-readable origin label (e.g. the WeChat peer's display name). */
@@ -137,6 +193,7 @@ interface ApiTelemetryAlert {
 const PROVIDER_PREFERENCES_KEY = 'syntax-senpai-provider-preferences'
 const API_TELEMETRY_HISTORY_KEY = 'syntax-senpai-api-telemetry-history'
 const API_SPIKE_THRESHOLD_STORAGE_KEY = 'syntax-senpai-api-spike-threshold-ms'
+const ENABLE_TIMEOUTS_AND_ITERATION_CAPS_STORAGE_KEY = 'syntax-senpai-enable-timeouts-and-iteration-caps'
 const MAX_TOOL_ITERATIONS_STORAGE_KEY = 'syntax-senpai-max-tool-iterations'
 const WEB_SEARCH_ENABLED_STORAGE_KEY = 'syntax-senpai-web-search-enabled'
 const PROACTIVE_CHAT_ENABLED_STORAGE_KEY = 'syntax-senpai-proactive-chat-enabled'
@@ -144,6 +201,7 @@ const PROACTIVE_CHAT_INTERVAL_STORAGE_KEY = 'syntax-senpai-proactive-chat-interv
 const PROACTIVE_CHAT_TEMPERATURE_STORAGE_KEY = 'syntax-senpai-proactive-chat-temperature'
 const DEFAULT_API_SPIKE_THRESHOLD_MS = 5000
 const DEFAULT_MAX_TOOL_ITERATIONS = 12
+const UNCAPPED_AGENT_ITERATION_BUDGET = 1000
 const DEFAULT_PROACTIVE_CHAT_INTERVAL_MINUTES = 10
 const DEFAULT_PROACTIVE_CHAT_TEMPERATURE = 0.7
 const API_TELEMETRY_HISTORY_LIMIT = 48
@@ -333,6 +391,22 @@ Efficiency rules:
 Persona rules:
 - Stay fully in character as ${waifuName} at all times, even while running commands. Never sound like a generic assistant.
 - In stop_response.final_message, report what was actually done (and any caveats), fully in character.`
+}
+
+function buildAgentAccessPrompt(mode: AgentMode): string {
+  if (mode === 'ask') {
+    return `\n\n[Agent Access Mode]
+Mode: Ask before running.
+You may propose machine-action tool calls, but the app will pause and show the user Approve/Deny buttons before each action actually executes. Keep each requested action small, clearly tied to the user's goal, and easy for the user to evaluate.`
+  }
+  if (mode === 'auto') {
+    return `\n\n[Agent Access Mode]
+Mode: Auto Mode with AI approval.
+You may propose tool calls, but every machine-action tool call is reviewed by a separate AI approval pass before execution. Use the least invasive tool that can complete the task, keep arguments specific, and expect unsafe, destructive, unrelated, or privacy-invasive actions to be denied.`
+  }
+  return `\n\n[Agent Access Mode]
+Mode: Full access.
+Machine-action tools are available without an AI approval gate. Use this access narrowly, verify results, and avoid destructive actions unless the user explicitly requested them.`
 }
 
 const CODING_TRIGGERS = [
@@ -723,7 +797,11 @@ export const useChatStore = defineStore('chat', () => {
   // waifus:list IPC. Refreshed at store init and after import/delete
   // so picker + active-waifu resolution see them without restart.
   const customWaifus = ref<Waifu[]>([])
-  const allWaifus = computed<Waifu[]>(() => [...builtInWaifus, ...customWaifus.value])
+  // Custom waifus are layered on top of built-ins keyed by id, with the
+  // custom file deep-merged onto the built-in defaults. This is how partial
+  // overrides (e.g. assigning a Live2D model to a built-in waifu) become
+  // visible — the on-disk shadow file only carries the patched fields.
+  const allWaifus = computed<Waifu[]>(() => mergeWaifus(builtInWaifus, customWaifus.value))
   const selectedProvider = ref('anthropic')
   const selectedModel = ref(DEFAULT_MODEL_BY_PROVIDER.anthropic)
   const apiKey = ref('')
@@ -757,6 +835,7 @@ export const useChatStore = defineStore('chat', () => {
   const apiTelemetry = ref<ApiTelemetry>(createEmptyApiTelemetry())
   const apiTelemetryHistory = ref<ApiTelemetrySample[]>(loadApiTelemetryHistory())
   const apiTelemetryAlert = ref<ApiTelemetryAlert>(createEmptyApiAlert())
+  const enableTimeoutsAndIterationCaps = ref(readStoredBoolean(ENABLE_TIMEOUTS_AND_ITERATION_CAPS_STORAGE_KEY, false))
   const maxToolIterations = ref(readStoredNumber(
     MAX_TOOL_ITERATIONS_STORAGE_KEY,
     DEFAULT_MAX_TOOL_ITERATIONS,
@@ -795,6 +874,12 @@ export const useChatStore = defineStore('chat', () => {
     SUBAGENT_MIN_CONCURRENCY,
     SUBAGENT_HARD_MAX_CONCURRENCY,
   ))
+  const effectiveMaxToolIterations = computed(() =>
+    enableTimeoutsAndIterationCaps.value ? maxToolIterations.value : UNCAPPED_AGENT_ITERATION_BUDGET,
+  )
+  const effectiveSubagentMaxIterations = computed(() =>
+    enableTimeoutsAndIterationCaps.value ? subagentMaxIterations.value : UNCAPPED_AGENT_ITERATION_BUDGET,
+  )
 
   // Cumulative token + cost counters for the current conversation. Reset on
   // conversation switch. Stored on the store so App.vue can render them.
@@ -828,6 +913,7 @@ export const useChatStore = defineStore('chat', () => {
   // Active todo list rendered as a message bubble. Populated by the todo_write
   // tool; rendered by App.vue next to the assistant messages.
   const activeTodoList = ref<TodoItem[]>([])
+  const approvalResolvers = new Map<string, (approved: boolean) => void>()
 
   // ── WeChat (iLink) inbound binding ────────────────────────────────────────
   // Each entry maps a conversationId → the WeChat peer + most recent
@@ -1067,7 +1153,7 @@ export const useChatStore = defineStore('chat', () => {
           cachedSystemPrompt: undefined,
         }
     return await withRetry(() => provider.chat(finalReq), {
-      maxAttempts: 4,
+      maxAttempts: enableTimeoutsAndIterationCaps.value ? 4 : 1,
       signal: req.signal,
       onRetry: (err, attempt, delayMs) => {
         const kind = err.kind === 'rate_limit' ? 'Rate limited' :
@@ -1141,7 +1227,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     return await withRetry(drain, {
-      maxAttempts: 4,
+      maxAttempts: enableTimeoutsAndIterationCaps.value ? 4 : 1,
       signal: req.signal,
       onRetry: (err, attempt, delayMs) => {
         const kind = err.kind === 'rate_limit' ? 'Rate limited' :
@@ -1157,9 +1243,136 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  function isAutoApprovalExemptTool(toolName: string): boolean {
+    return [
+      STOP_TOOL_NAME,
+      SET_AFFECTION_TOOL_NAME,
+      TODO_WRITE_TOOL_NAME,
+      TODO_READ_TOOL_NAME,
+      RENAME_CHAT_TOOL_NAME,
+      RENDER_CARD_TOOL_NAME,
+    ].includes(toolName)
+  }
+
+  function approveToolApproval(approvalId: string) {
+    const resolver = approvalResolvers.get(approvalId)
+    if (!resolver) return
+    approvalResolvers.delete(approvalId)
+    const msg = messages.value.find((message) => message.pendingApproval?.id === approvalId)
+    if (msg?.pendingApproval) {
+      msg.pendingApproval.status = 'approved'
+      msg.content = `${msg.pendingApproval.label}\n\nApproved. Running now...`
+    }
+    resolver(true)
+  }
+
+  function denyToolApproval(approvalId: string) {
+    const resolver = approvalResolvers.get(approvalId)
+    if (!resolver) return
+    approvalResolvers.delete(approvalId)
+    const msg = messages.value.find((message) => message.pendingApproval?.id === approvalId)
+    if (msg?.pendingApproval) {
+      msg.pendingApproval.status = 'denied'
+      msg.content = `${msg.pendingApproval.label}\n\nDenied by user.`
+    }
+    resolver(false)
+  }
+
+  function requestUserToolApproval(toolCall: ToolCall): Promise<boolean> {
+    const approvalId = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const label = describeToolCall(toolCall)
+    const details = JSON.stringify(toolCall.arguments ?? {}, null, 2).slice(0, 2000)
+    const content = `Approve this action?\n\n\`${label}\`${details && details !== '{}' ? `\n\n\`\`\`json\n${details}\n\`\`\`` : ''}`
+    messages.value.push({
+      id: approvalId,
+      role: 'assistant',
+      content,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      pendingApproval: {
+        id: approvalId,
+        toolName: toolCall.name,
+        label,
+        status: 'pending',
+      },
+    })
+    recentMessageId.value = approvalId
+
+    return new Promise((resolve) => {
+      approvalResolvers.set(approvalId, resolve)
+    })
+  }
+
+  function extractApprovalJson(text: string): { approved?: boolean; reason?: string } | null {
+    const trimmed = String(text || '').trim()
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim()
+    const candidate = fenced || trimmed.match(/\{[\s\S]*\}/)?.[0] || trimmed
+    try {
+      return JSON.parse(candidate)
+    } catch {
+      return null
+    }
+  }
+
+  async function reviewToolCallForAutoMode(provider: any, model: string, toolCall: ToolCall, userGoal: string): Promise<{ approved: boolean; reason: string }> {
+    if (agentMode.value !== 'auto' || isAutoApprovalExemptTool(toolCall.name)) {
+      return { approved: true, reason: 'Approval not required.' }
+    }
+
+    const response = await callProviderChat(provider, {
+      model,
+      messages: [
+        {
+          id: `approval-${Date.now()}`,
+          role: 'user',
+          content: `User goal:\n${userGoal.slice(0, 3000)}\n\nRequested tool call:\n${JSON.stringify({
+            name: toolCall.name,
+            arguments: toolCall.arguments,
+          }, null, 2)}`,
+        },
+      ],
+      tools: [],
+      systemPrompt:
+        'You are SyntaxSenpai Auto Mode action reviewer. Approve only tool calls that are clearly necessary, scoped to the user goal, and not destructive or privacy-invasive beyond what the user requested. Deny commands that delete data, rewrite history, exfiltrate secrets, install unknown software, run sudo/admin escalation, force-push, or act outside the task scope. Reply only as compact JSON: {"approved":true|false,"reason":"short reason"}.',
+      cachedSystemPrompt: undefined,
+      signal: streamController.value?.signal,
+    })
+
+    const parsed = extractApprovalJson(response?.content || '')
+    if (!parsed || typeof parsed.approved !== 'boolean') {
+      return { approved: false, reason: 'Auto Mode reviewer did not return a valid approval decision.' }
+    }
+    return {
+      approved: parsed.approved,
+      reason: typeof parsed.reason === 'string' && parsed.reason.trim()
+        ? parsed.reason.trim()
+        : parsed.approved ? 'Approved by Auto Mode reviewer.' : 'Denied by Auto Mode reviewer.',
+    }
+  }
+
+  async function executeToolCallForAgentMode(provider: any, model: string, toolCall: ToolCall, userGoal: string): Promise<string> {
+    if (agentMode.value === 'ask' && !isAutoApprovalExemptTool(toolCall.name)) {
+      const approved = await requestUserToolApproval(toolCall)
+      if (!approved) {
+        return `User denied ${toolCall.name}. Do not retry this action unless the user changes their mind. Explain what was not run and ask how to proceed.`
+      }
+    }
+    if (agentMode.value === 'auto') {
+      const decision = await reviewToolCallForAutoMode(provider, model, toolCall, userGoal)
+      if (!decision.approved) {
+        return `Auto Mode denied ${toolCall.name}: ${decision.reason}`
+      }
+    }
+    return executeToolCall(toolCall)
+  }
+
   function setAgentMode(mode: AgentMode) {
     agentMode.value = mode
     localStorage.setItem('syntax-senpai-agent-mode', mode)
+  }
+
+  function setEnableTimeoutsAndIterationCaps(enabled: boolean) {
+    enableTimeoutsAndIterationCaps.value = !!enabled
+    localStorage.setItem(ENABLE_TIMEOUTS_AND_ITERATION_CAPS_STORAGE_KEY, enabled ? 'true' : 'false')
   }
 
   function setMaxToolIterations(value: number) {
@@ -1937,8 +2150,9 @@ You are aware of your most recent API timing data.
 - Last provider round-trip: ${lastRoundTrip} ms
 - Provider round-trips used: ${rounds}
 - Recent average reply time: ${average} ms
-- Maximum tool iterations allowed for a reply: ${maxToolIterations.value}
-- Response-time spike threshold: ${apiSpikeThresholdMs.value} ms
+- Timeout/retry and iteration caps: ${enableTimeoutsAndIterationCaps.value ? 'enabled' : 'disabled'}
+- Maximum tool iterations allowed for a reply: ${enableTimeoutsAndIterationCaps.value ? String(maxToolIterations.value) : 'uncapped by user setting'}
+- Response-time spike threshold: ${enableTimeoutsAndIterationCaps.value ? `${apiSpikeThresholdMs.value} ms` : 'disabled'}
 - ${latestAlert}
 
 Do not mention these timings unless the user asks about speed, latency, slowness, or performance. If they do ask, use these numbers accurately and stay in character.`
@@ -1947,7 +2161,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
   function recordApiTelemetry(totalMs: number, roundTripMs: number[], provider: string, model: string) {
     // 这里记录整轮回复的耗时画像，后续设置页、提示词和性能告警都会读取这些数据。
     const lastRoundTripMs = roundTripMs.length > 0 ? roundTripMs[roundTripMs.length - 1] : totalMs
-    const alert = totalMs >= apiSpikeThresholdMs.value || lastRoundTripMs >= apiSpikeThresholdMs.value
+    const alert = enableTimeoutsAndIterationCaps.value && (totalMs >= apiSpikeThresholdMs.value || lastRoundTripMs >= apiSpikeThresholdMs.value)
 
     apiTelemetry.value = {
       lastResponseMs: totalMs,
@@ -2090,6 +2304,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             if (systemInfo && systemInfo.homedir) {
               cachedSystemPrompt += `\n\n[System Environment]\nOS: ${systemInfo.platform}\nUsername: ${systemInfo.username}\nHome directory: ${systemInfo.homedir}\nShell: ${systemInfo.shell ?? 'unknown'}`
             }
+            cachedSystemPrompt += buildAgentAccessPrompt(agentMode.value)
             cachedSystemPrompt += buildAgentBehaviorPrompt(systemInfo?.shell, waifu.displayName || 'your waifu persona', webSearchEnabled.value)
           }
 
@@ -2128,7 +2343,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           if (hasTools) {
             const provider = runtime.getProvider()
             const aiHistory = [...sharedHistory]
-            const maxIterations = maxToolIterations.value
+            const maxIterations = effectiveMaxToolIterations.value
             const toolMsgIds: string[] = []
             const pendingCards: RenderCardPayload[] = []
 
@@ -2243,8 +2458,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                     model,
                     cwd: activeCodingRepo.value?.path,
                     parentMaxIterations: maxIterations,
+                    subagentMaxIterations: effectiveSubagentMaxIterations.value,
                     abortSignal: streamController.value?.signal,
-                    executeTool: (call) => executeToolCall(call),
+                    executeTool: (call) => executeToolCallForAgentMode(provider, model, call, trimmedText),
                     onSnapshot: (snaps) => {
                       const msg = messages.value.find((m) => m.id === dispatchMsgId) as (Message & { subagents?: SubagentSnapshot[] }) | undefined
                       if (msg) msg.subagents = snaps as SubagentSnapshot[]
@@ -2260,7 +2476,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                 }
                 return null
               },
-              executeTool: (toolCall) => executeToolCall(toolCall),
+              executeTool: (toolCall) => executeToolCallForAgentMode(provider, model, toolCall, trimmedText),
               onToolStart: (toolCall) => {
                 const label = describeToolCall(toolCall)
                 const toolMsgId = `tool-${waifu.id}-${Date.now()}-${toolCall.id}`
@@ -2701,6 +2917,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         if (sys && sys.homedir) {
           cachedSystemPrompt += `\n\n[System Environment]\nOS: ${sys.platform}\nUsername: ${sys.username}\nHome directory: ${sys.homedir}\nShell: ${sys.shell ?? 'unknown'}`
         }
+        cachedSystemPrompt += buildAgentAccessPrompt(agentMode.value)
         cachedSystemPrompt += buildAgentBehaviorPrompt(sys?.shell, waifu?.displayName || 'your waifu persona', webSearchEnabled.value)
       }
 
@@ -2734,7 +2951,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               : m.content,
           }))
 
-        const maxIterations = maxToolIterations.value
+        const maxIterations = effectiveMaxToolIterations.value
         const toolMsgIds: string[] = [] // track tool bubbles so we can remove them later
         const apiRoundTrips: number[] = []
         const pendingCards: RenderCardPayload[] = []
@@ -2876,10 +3093,10 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                 model,
                 cwd: activeCodingRepo.value?.path,
                 parentMaxIterations: maxIterations,
-                subagentMaxIterations: subagentMaxIterations.value,
+                subagentMaxIterations: effectiveSubagentMaxIterations.value,
                 concurrency: subagentConcurrency.value,
                 abortSignal: streamController.value?.signal,
-                executeTool: (call) => executeToolCall(call),
+                executeTool: (call) => executeToolCallForAgentMode(provider, model, call, trimmedText),
                 onSnapshot: (snaps) => {
                   const msg = messages.value.find((m) => m.id === dispatchMsgId) as (Message & { subagents?: SubagentSnapshot[] }) | undefined
                   if (msg) msg.subagents = snaps as SubagentSnapshot[]
@@ -2895,7 +3112,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             }
             return null
           },
-          executeTool: (tc) => executeToolCall(tc),
+          executeTool: (tc) => executeToolCallForAgentMode(provider, model, tc, trimmedText),
           onToolStart: (tc) => {
             const label = describeToolCall(tc)
             const toolMsgId = `tool-${Date.now()}-${tc.id}`
@@ -3293,6 +3510,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     apiTelemetry,
     apiTelemetryHistory,
     apiTelemetryAlert,
+    enableTimeoutsAndIterationCaps,
     maxToolIterations,
     apiSpikeThresholdMs,
     webSearchEnabled,
@@ -3303,6 +3521,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     subagentConcurrency,
     usageTotals,
     activeTodoList,
+    approveToolApproval,
+    denyToolApproval,
     pendingAttachments,
     userMemories,
     sidebarFilter,
@@ -3314,6 +3534,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     saveApiKey,
     setup,
     setAgentMode,
+    setEnableTimeoutsAndIterationCaps,
     setMaxToolIterations,
     setApiSpikeThresholdMs,
     setSubagentMaxIterations,

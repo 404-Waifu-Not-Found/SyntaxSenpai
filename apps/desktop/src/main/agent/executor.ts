@@ -363,6 +363,89 @@ export async function webSearch(query: string, limit = 5) {
   }
 }
 
-module.exports = { runCommand, readFile, writeFile, listDirectory, openExternal, webSearch, getAllowlist, saveAllowlist, addAllowed, removeAllowed }
+/**
+ * Fetch a single URL and return its body as text/markdown or raw HTML.
+ * Unlike webSearch (DuckDuckGo result links), this retrieves the actual page
+ * the model/user named. http(s) only; 15s timeout; 2 MB body cap.
+ */
+export async function webFetch(url: string, format = 'text') {
+  try {
+    const target = String(url || '').trim()
+    if (!target) return { success: false, error: 'url is required' }
+    let parsed: URL
+    try {
+      parsed = new URL(target)
+    } catch {
+      return { success: false, error: `invalid URL: ${target}` }
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { success: false, error: 'only http(s) URLs are allowed' }
+    }
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15000)
+    let response: Response
+    try {
+      response = await fetch(parsed.toString(), {
+        headers: { 'user-agent': 'SyntaxSenpai/0.0.1 (+https://github.com/unoxyrich/SyntaxSenpai)' },
+        signal: controller.signal,
+        redirect: 'follow',
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status} ${response.statusText}` }
+    }
+
+    const contentType = response.headers.get('content-type') || ''
+    const MAX_BYTES = 2 * 1024 * 1024
+    const raw = await response.text()
+    const body = raw.length > MAX_BYTES ? raw.slice(0, MAX_BYTES) : raw
+    const truncated = raw.length > MAX_BYTES
+
+    const wantsHtml = format === 'html'
+    const isHtml = /text\/html|application\/xhtml/i.test(contentType) || /^\s*<(?:!doctype|html)/i.test(body)
+    let content: string
+    if (wantsHtml || !isHtml) {
+      content = body
+    } else {
+      // Strip scripts/styles, convert block tags to newlines, drop the rest —
+      // a readable text/markdown view that keeps paragraph structure.
+      content = body
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<\/(?:p|div|h[1-6]|li|tr|section|article)>/gi, '\n')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<li[^>]*>/gi, '- ')
+        .replace(/<h[1-6][^>]*>/gi, '\n## ')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/gi, '\'')
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/[ \t]+/g, ' ')
+        .replace(/ *\n */g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+    }
+
+    return {
+      success: true,
+      url: parsed.toString(),
+      contentType,
+      truncated,
+      content,
+    }
+  } catch (err: any) {
+    const aborted = err?.name === 'AbortError'
+    return { success: false, error: aborted ? 'request timed out after 15s' : (err?.message || String(err)) }
+  }
+}
+
+module.exports = { runCommand, readFile, writeFile, listDirectory, openExternal, webSearch, webFetch, getAllowlist, saveAllowlist, addAllowed, removeAllowed }
 
 export {}

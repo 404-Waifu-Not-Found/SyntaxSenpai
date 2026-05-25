@@ -57,6 +57,10 @@ export function registerAgentIpc() {
     return await executor.webSearch(query, limit)
   })
 
+  ipcMain.handle('agent:webFetch', async (_event: any, url: string, format?: string) => {
+    return await executor.webFetch(url, format)
+  })
+
   ipcMain.handle('agent:webSearchEnabled:get', async () => {
     try {
       return { success: true, enabled: isWebSearchEnabled() }

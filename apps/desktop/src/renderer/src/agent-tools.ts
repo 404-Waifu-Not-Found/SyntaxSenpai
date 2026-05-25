@@ -18,6 +18,7 @@ export type AgentMode = 'ask' | 'auto' | 'full'
 export const STOP_TOOL_NAME = 'stop_response'
 export const SET_AFFECTION_TOOL_NAME = 'set_affection'
 export const TODO_WRITE_TOOL_NAME = 'todo_write'
+export const TODO_READ_TOOL_NAME = 'todoread'
 export const RENAME_CHAT_TOOL_NAME = 'rename_chat'
 export const RENDER_CARD_TOOL_NAME = 'render_card'
 export const GIT_COMMIT_TOOL_NAME = 'git_commit'
@@ -154,6 +155,112 @@ export const agentTools: ToolDefinition[] = [
     },
   },
   {
+    name: 'glob',
+    description:
+      'Find files by glob pattern, fast. Returns matching file paths newest-first (by modification time). ' +
+      'Use this to locate files when you know part of a name or an extension but not the location — e.g. "**/*.test.ts", "src/**/index.*", "package.json". ' +
+      'A pattern with no slash matches at any depth. node_modules / .git / dist are skipped automatically. Prefer this over `find` or `ls -R` in the terminal.',
+    parameters: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'Glob pattern. Supports *, **, ?, {a,b}, [..]. A bare pattern like "*.ts" matches at any depth.' },
+        cwd: { type: 'string', description: 'Directory to search from. Defaults to the active repo / current working directory.' },
+        limit: { type: 'integer', description: 'Max paths to return (1-1000). Default 200.' },
+      },
+      required: ['pattern'],
+    },
+  },
+  {
+    name: 'grep',
+    description:
+      'Search file contents by regular expression across a directory tree. Returns file:line:text matches. ' +
+      'Uses ripgrep when available (fast), otherwise a built-in scanner. Use this to find where a symbol or string is defined or used before editing. ' +
+      'Prefer this over `grep` / `rg` in the terminal — the output is parsed and capped.',
+    parameters: {
+      type: 'object',
+      properties: {
+        pattern: { type: 'string', description: 'Regular expression to search for (NOT a glob). Escape regex metacharacters if you mean them literally.' },
+        path: { type: 'string', description: 'File or directory to search. Defaults to the active repo / current working directory.' },
+        include: { type: 'string', description: 'Optional glob restricting which files are searched, e.g. "*.ts" or "src/**/*.vue".' },
+        ignore_case: { type: 'boolean', description: 'Case-insensitive match. Default false.' },
+        limit: { type: 'integer', description: 'Max matches to return (1-500). Default 150.' },
+      },
+      required: ['pattern'],
+    },
+  },
+  {
+    name: 'list',
+    description:
+      'List a directory as an indented tree to a bounded depth. Use it to learn the shape of a project or folder. ' +
+      'node_modules / .git / dist are shown as "(skipped)" rather than expanded. Prefer this over `ls` / `tree` in the terminal.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Directory to list. Defaults to the active repo / current working directory.' },
+        depth: { type: 'integer', description: 'How many levels deep to recurse (1-6). Default 2.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'patch',
+    description:
+      'Apply a unified diff to one or more files in a single call. Use this when you have several related edits across files, or multiple hunks in one file — it is more reliable than a long chain of edit_file calls. ' +
+      'The diff must be standard unified-diff format (--- a/path, +++ b/path, @@ hunks). Use /dev/null as the old path to create a file, or as the new path to delete one. Paths resolve relative to cwd. ' +
+      'For a single small change, edit_file is still simpler.',
+    parameters: {
+      type: 'object',
+      properties: {
+        patch: { type: 'string', description: 'The unified diff text. Include ---/+++ headers and @@ hunk markers. Small line-offset drift is tolerated — context lines relocate hunks.' },
+        cwd: { type: 'string', description: 'Directory the a/ b/ paths are relative to. Defaults to the active repo / current working directory.' },
+      },
+      required: ['patch'],
+    },
+  },
+  {
+    name: 'webfetch',
+    description:
+      'Fetch the contents of a specific URL. Unlike web_search (which only returns result links), this retrieves the actual page — use it to read documentation, an article, a raw file, or an API response the user named or that a search turned up. ' +
+      'http(s) only, 15s timeout, 2 MB cap. HTML is converted to readable text unless format="html".',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'The http(s) URL to fetch.' },
+        format: { type: 'string', enum: ['text', 'markdown', 'html'], description: '"text"/"markdown" (default) strip HTML to readable text; "html" returns raw HTML.' },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'lsp_diagnostics',
+    description:
+      'Get real compiler / linter diagnostics (errors and warnings) for a source file from a language server — typescript-language-server, pyright, gopls, or rust-analyzer depending on the file type. ' +
+      'Use this AFTER editing a .ts/.tsx/.js/.jsx/.py/.go/.rs file to verify your change actually type-checks, instead of (or before) running a full build. Returns each diagnostic with line/column, severity and message. ' +
+      'If the required language server is not installed it returns an install hint — relay that to the user.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path to the source file to check. `~` is expanded.' },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'lsp_hover',
+    description:
+      'Ask the language server for the type, signature, and documentation of the symbol at a given position in a source file (.ts/.tsx/.js/.jsx/.py/.go/.rs). ' +
+      'Use this to learn what a variable, function, or import actually is without guessing. line and column are 1-based, matching the numbers read_file shows.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path to the source file. `~` is expanded.' },
+        line: { type: 'integer', description: '1-based line number of the symbol (as shown by read_file).' },
+        column: { type: 'integer', description: '1-based column of the symbol on that line.' },
+      },
+      required: ['path', 'line', 'column'],
+    },
+  },
+  {
     name: 'clipboard_read',
     description:
       'Read the user\'s system clipboard (text only). Use when the user says "check my clipboard", "what I copied", "the URL I have", or similar. Returns the current clipboard text.',
@@ -280,6 +387,14 @@ export const agentTools: ToolDefinition[] = [
       },
       required: ['items'],
     },
+  },
+  {
+    name: TODO_READ_TOOL_NAME,
+    description:
+      'Read the current visible todo checklist for this conversation (the one you post with todo_write). ' +
+      'Use it at the start of a turn on a multi-step task to recall what is still pending before deciding the next action. ' +
+      'Returns the items and their statuses, or a note that no list exists yet.',
+    parameters: { type: 'object', properties: {}, required: [] },
   },
   {
     name: 'web_search',
@@ -690,6 +805,74 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
       return `Edited ${res.path} at offset ${res.replacedAt} (${deltaLabel})`
     }
 
+    case 'glob': {
+      const limit = args.limit !== undefined ? Number(args.limit) : undefined
+      const res = await ipc.invoke('fs:glob', args.pattern, args.cwd, limit)
+      if (!res.success) return `Error: ${res.error}`
+      if (!Array.isArray(res.files) || res.files.length === 0) return `No files match "${args.pattern}".`
+      const header = `${res.count} file(s) match "${args.pattern}"${res.truncated ? ` (showing newest ${res.files.length})` : ''}:`
+      return `${header}\n${res.files.join('\n')}`
+    }
+
+    case 'grep': {
+      const opts = {
+        include: args.include,
+        ignoreCase: (args as any).ignore_case === true || String((args as any).ignore_case) === 'true',
+        limit: args.limit !== undefined ? Number(args.limit) : undefined,
+      }
+      const res = await ipc.invoke('fs:grep', args.pattern, args.path, opts)
+      if (!res.success) return `Error: ${res.error}`
+      if (!Array.isArray(res.matches) || res.matches.length === 0) return `No matches for /${args.pattern}/.`
+      const lines = res.matches.map((m: any) => `${m.file}:${m.line}: ${m.text}`)
+      const header = `${res.count} match(es)${res.truncated ? ' (truncated)' : ''} for /${args.pattern}/:`
+      return `${header}\n${lines.join('\n')}`
+    }
+
+    case 'list': {
+      const depth = args.depth !== undefined ? Number(args.depth) : undefined
+      const res = await ipc.invoke('fs:list', args.path, depth)
+      if (!res.success) return `Error: ${res.error}`
+      const header = `${res.path} (depth ${res.depth}, ${res.count} entries${res.truncated ? ', truncated' : ''}):`
+      return `${header}\n${res.tree || '(empty directory)'}`
+    }
+
+    case 'patch': {
+      const res = await ipc.invoke('fs:patch', (args as any).patch, args.cwd)
+      if (!res.success) {
+        const partial = Array.isArray(res.applied) && res.applied.length
+          ? `\nApplied before the failure: ${res.applied.join('; ')}`
+          : ''
+        return `Error: ${res.error}${partial}`
+      }
+      return `Patch applied:\n${(res.applied || []).join('\n')}`
+    }
+
+    case 'webfetch': {
+      const res = await ipc.invoke('agent:webFetch', args.url, (args as any).format)
+      if (!res.success) return `webfetch error: ${res.error}`
+      const head = `Fetched ${res.url} (${res.contentType || 'unknown content-type'})${res.truncated ? ' [truncated to 2 MB]' : ''}`
+      return `${head}\n\n${res.content || '(empty body)'}`
+    }
+
+    case 'lsp_diagnostics': {
+      const res = await ipc.invoke('lsp:diagnostics', args.path)
+      if (!res.success) return `lsp_diagnostics error: ${res.error}`
+      if (res.count === 0) return `No diagnostics — the language server reports ${args.path} as clean.`
+      const lines = res.diagnostics.map((d: any) =>
+        `${String(d.severity).toUpperCase()} ${d.line}:${d.character} — ${d.message}${d.source ? ` [${d.source}${d.code ? ' ' + d.code : ''}]` : ''}`,
+      )
+      return `${res.count} diagnostic(s) for ${args.path}:\n${lines.join('\n')}`
+    }
+
+    case 'lsp_hover': {
+      const res = await ipc.invoke('lsp:hover', args.path, Number(args.line), Number((args as any).column))
+      if (!res.success) return `lsp_hover error: ${res.error}`
+      if (!res.found) {
+        return `No hover info at ${args.path}:${args.line}:${(args as any).column} — the symbol wasn't recognized, or the server is still indexing.`
+      }
+      return res.contents
+    }
+
     case 'web_search': {
       if (localStorage.getItem('syntax-senpai-web-search-enabled') !== 'true') {
         return 'Web search is disabled. Enable it in Settings before using web_search.'
@@ -811,6 +994,11 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
       const done = items.filter((i) => i.status === 'done').length
       return `Todo list updated (${done}/${items.length} done).`
     }
+
+    case TODO_READ_TOOL_NAME:
+      // The live list lives in the chat store; the loop intercepts this call.
+      // If we reach here the store had no list yet.
+      return 'No todo list has been posted yet. Use todo_write to create one.'
 
     case RENAME_CHAT_TOOL_NAME: {
       // Actual rename happens in the chat store loop (which has conversation
@@ -1002,6 +1190,22 @@ export function describeToolCall(toolCall: ToolCall): string {
       return `write_file(${args.path ?? ''})`
     case 'edit_file':
       return `edit_file(${args.path ?? ''})`
+    case 'glob':
+      return `glob(${String(args.pattern ?? '')})`
+    case 'grep':
+      return `grep(/${String(args.pattern ?? '')}/${args.path ? `, ${args.path}` : ''})`
+    case 'list':
+      return `list(${args.path ?? '.'})`
+    case 'patch': {
+      const files = String((args as any).patch ?? '').match(/^\+\+\+ /gm)
+      return `patch(${files ? files.length : 1} file${files && files.length !== 1 ? 's' : ''})`
+    }
+    case 'webfetch':
+      return `webfetch(${String(args.url ?? '').slice(0, 60)})`
+    case 'lsp_diagnostics':
+      return `lsp_diagnostics(${args.path ?? ''})`
+    case 'lsp_hover':
+      return `lsp_hover(${args.path ?? ''}:${args.line ?? ''}:${args.column ?? ''})`
     case 'web_search':
       return `web_search("${String(args.query ?? '').slice(0, 60)}")`
     case 'clipboard_read':
@@ -1020,6 +1224,8 @@ export function describeToolCall(toolCall: ToolCall): string {
       return `github_pr_create("${String((args as any).title ?? '').slice(0, 60)}"${(args as any).draft ? ', draft' : ''})`
     case TODO_WRITE_TOOL_NAME:
       return `todo_write(${Array.isArray((args as any).items) ? (args as any).items.length : 0} items)`
+    case TODO_READ_TOOL_NAME:
+      return 'todoread()'
     case RENAME_CHAT_TOOL_NAME:
       return `rename_chat(${String((args as any).title ?? '').slice(0, 60)})`
     case 'spotify_now_playing':

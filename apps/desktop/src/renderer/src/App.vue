@@ -128,7 +128,7 @@ const rainbowToggleBg = computed(() => {
   const c3 = hslToHex((h + 120) % 360, s, l)
   return `linear-gradient(to right, ${c1}, ${c2}, ${c3})`
 })
-type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'plugins' | 'skills' | 'waifus' | 'mobile' | 'wechat'
+type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'plugins' | 'skills' | 'waifus' | 'live2d' | 'mobile' | 'wechat'
 const settingsTab = ref<SettingsTabId>('general')
 const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = [
   { id: 'general', label: 'General', icon: '⚙️' },
@@ -140,6 +140,7 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = 
   { id: 'plugins', label: 'Plugins', icon: '🧩' },
   { id: 'skills', label: 'Skills', icon: '📘' },
   { id: 'waifus', label: 'Waifus', icon: '💗' },
+  { id: 'live2d', label: 'Live2D', icon: '🎭' },
   { id: 'mobile', label: 'Mobile', icon: '📱' },
   { id: 'wechat', label: 'WeChat', icon: '💬' },
 ]
@@ -1174,6 +1175,66 @@ const showSettings = ref(false)
 const showLive2DPanel = ref(false)
 
 const currentWaifuLive2D = computed(() => store.selectedWaifu?.avatar?.live2dModel ?? null)
+
+// ── Live2D import tab state ─────────────────────────────────────────────────
+const live2dImporting = ref(false)
+const live2dImportedPath = ref('')
+const live2dImportedName = ref('')
+
+async function importLive2DModelForCurrentWaifu() {
+  live2dImporting.value = true
+  try {
+    const result = await invoke('waifus:importLive2DModel')
+    if (result?.success) {
+      live2dImportedPath.value = result.modelJsonPath
+      live2dImportedName.value = result.displayName
+      showToast(`Live2D model "${result.displayName}" imported!`, 'success')
+    } else if (!result?.canceled) {
+      showToast(result?.error || 'Could not import model', 'error')
+    }
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  } finally {
+    live2dImporting.value = false
+  }
+}
+
+async function assignLive2DToCurrentWaifu() {
+  if (!live2dImportedPath.value || !store.selectedWaifu) return
+  try {
+    await invoke('waifus:update', {
+      id: store.selectedWaifu.id,
+      avatar: {
+        ...(store.selectedWaifu.avatar ?? {}),
+        live2dModel: {
+          modelJsonPath: live2dImportedPath.value,
+          displayName: live2dImportedName.value,
+        },
+      },
+    })
+    showToast(`Live2D model assigned to ${store.selectedWaifu.name}!`, 'success')
+    live2dImportedPath.value = ''
+    live2dImportedName.value = ''
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  }
+}
+
+async function removeLive2DFromCurrentWaifu() {
+  if (!store.selectedWaifu) return
+  try {
+    await invoke('waifus:update', {
+      id: store.selectedWaifu.id,
+      avatar: {
+        ...(store.selectedWaifu.avatar ?? {}),
+        live2dModel: null,
+      },
+    })
+    showToast('Live2D model removed.', 'success')
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  }
+}
 const latestSentimentExpression = computed(() => {
   for (let i = store.messages.length - 1; i >= 0; i--) {
     const m = (store.messages as any[])[i]
@@ -3899,6 +3960,80 @@ async function handleImportData() {
                   </button>
                 </li>
               </ul>
+            </div>
+          </div>
+
+          <!-- Live2D Import Tab -->
+          <div v-if="settingsTab === 'live2d'">
+            <div class="settings-card mb-3">
+              <h3 class="text-sm font-bold text-white mb-1">🎭 Import Live2D Model</h3>
+              <p class="text-xs text-neutral-400 mb-4">
+                Import a Live2D Cubism 4 model folder to use as your waifu's avatar. The folder must contain a
+                <code class="bg-neutral-700/60 px-0.5 rounded">.model3.json</code> file and
+                <code class="bg-neutral-700/60 px-0.5 rounded">live2dcubismcore.min.js</code>.
+              </p>
+
+              <!-- Current waifu info -->
+              <div class="flex items-center gap-2 mb-4 rounded bg-neutral-700/40 px-3 py-2">
+                <span class="text-lg">{{ store.selectedWaifu?.avatar?.live2dModel ? '🎭' : '💗' }}</span>
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-semibold text-white truncate">{{ store.selectedWaifu?.name ?? 'No waifu selected' }}</p>
+                  <p class="text-[10px] text-neutral-400 truncate">
+                    {{ currentWaifuLive2D ? `Live2D: ${currentWaifuLive2D.displayName || currentWaifuLive2D.modelJsonPath}` : 'No Live2D model assigned' }}
+                  </p>
+                </div>
+                <button
+                  v-if="currentWaifuLive2D"
+                  class="btn-secondary text-xs px-2 py-1 text-rose-400 hover:text-rose-300"
+                  title="Remove Live2D model from this waifu"
+                  @click="removeLive2DFromCurrentWaifu()"
+                >
+                  Remove
+                </button>
+              </div>
+
+              <!-- Import area -->
+              <div class="flex flex-col gap-3">
+                <div v-if="live2dImportedPath" class="flex items-center gap-2 rounded bg-emerald-900/30 border border-emerald-700/40 px-3 py-2">
+                  <span class="text-emerald-400 text-sm">✓</span>
+                  <span class="text-[11px] text-emerald-300 font-semibold truncate flex-1">{{ live2dImportedName || live2dImportedPath }}</span>
+                  <button
+                    class="text-neutral-500 hover:text-neutral-300 text-xs"
+                    @click="live2dImportedPath = ''; live2dImportedName = ''"
+                  >✕</button>
+                </div>
+
+                <button
+                  class="btn-secondary w-full"
+                  :disabled="live2dImporting"
+                  @click="importLive2DModelForCurrentWaifu()"
+                >
+                  {{ live2dImporting ? 'Importing…' : live2dImportedPath ? 'Import different model…' : 'Import model folder…' }}
+                </button>
+
+                <button
+                  v-if="live2dImportedPath && store.selectedWaifu"
+                  class="btn-primary w-full"
+                  @click="assignLive2DToCurrentWaifu()"
+                >
+                  Assign to {{ store.selectedWaifu.name }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Tips card -->
+            <div class="settings-card">
+              <h4 class="text-xs font-bold text-neutral-300 mb-2">Tips</h4>
+              <ul class="text-[11px] text-neutral-400 space-y-1 list-disc list-inside">
+                <li>Supported format: Live2D Cubism 4 (<code class="bg-neutral-700/60 px-0.5 rounded">.model3.json</code>)</li>
+                <li>The model folder is copied into the app's data directory.</li>
+                <li>After assigning, toggle the avatar panel with the 🎭 button in the toolbar.</li>
+                <li>To switch waifus, go to <strong class="text-neutral-300">Settings → General</strong> first, then come back here.</li>
+              </ul>
+            </div>
+
+            <div class="flex gap-2 mt-3">
+              <button class="btn-primary flex-1" @click="showSettings = false">Done</button>
             </div>
           </div>
 

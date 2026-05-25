@@ -12,9 +12,11 @@
     "test:unit": "vitest run --environment node"
   },
   "dependencies": {
-    "@syntax-senpai/ai-core": "workspace:*"
+    "@syntax-senpai/ai-core": "workspace:*",
+    "adm-zip": "^0.5.16"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
     "typescript": "^5.7.2"
   }
 }

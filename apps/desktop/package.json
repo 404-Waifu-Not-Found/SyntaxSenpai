@@ -13,6 +13,7 @@
     "start": "electron dist/main/index.js",
     "build": "electron-vite build",
     "typecheck": "vue-tsc --noEmit",
+    "test:unit": "vitest run --environment node",
     "lint": "eslint . --ext .ts,.vue",
     "postinstall": "electron-builder install-app-deps"
   },
@@ -65,6 +66,12 @@
       "dist/renderer/**/*",
       "dist/preload/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/",
+        "to": "."
+      }
     ],
     "mac": {
       "target": ["dmg", "zip"],

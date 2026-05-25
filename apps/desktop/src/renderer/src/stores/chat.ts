@@ -6,7 +6,7 @@ import { AIChatRuntime, withRetry, classifyError, describeError } from '@syntax-
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
 import { createLogger } from '../composables/logger'
-import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, loadPluginTools, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, CARD_MARKER_FENCE, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
+import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, loadPluginTools, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, TODO_READ_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, CARD_MARKER_FENCE, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
 import { runAgentTurn, type SideEffectResult } from '../agent/run-turn'
 import {
   dispatchSubagents,
@@ -260,6 +260,18 @@ function createWaifuSystemPrompt(waifu: any, provider: string, model: string, af
   )
 }
 
+/** Render the active todo checklist for the todoread tool result. */
+function formatTodoList(items: TodoItem[]): string {
+  if (!Array.isArray(items) || items.length === 0) {
+    return 'No todo list has been posted yet. Use todo_write to create one.'
+  }
+  const mark = (s: TodoItem['status']): string =>
+    s === 'done' ? '[x]' : s === 'in_progress' ? '[~]' : '[ ]'
+  const done = items.filter((i) => i.status === 'done').length
+  const lines = items.map((i) => `${mark(i.status)} ${i.text}`)
+  return `Current todo list (${done}/${items.length} done):\n${lines.join('\n')}`
+}
+
 function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: string, isWebSearchEnabled: boolean): string {
   const shellLine = shell ? `\n- Shell: ${shell}. Each terminal call is a new process — \`cd\` does NOT persist between calls; use absolute paths or chain with \`&&\`.` : ''
   const webSearchLine = isWebSearchEnabled
@@ -269,11 +281,19 @@ function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: s
   return `\n\n[Agent Behavior]
 You can act on the user's machine through tools. Your goal is to actually finish the task, verified, not to sound like you finished it.
 
-Tool selection — prioritize terminal commands for solving problems:
-- terminal → default first choice: running programs, git, installs, diagnostics, network checks, realtime data via public APIs, command-line verification. NOT for editing text files.
+Tool selection — use the dedicated tool, not a shell workaround:
+- terminal → running programs, git, installs, diagnostics, network checks, realtime data via public APIs, command-line verification. NOT for reading, editing, searching, or listing files.
 - read_file → look at source/config/logs. Always use this before edit_file so you know the exact whitespace.
 - write_file → create a new file, or deliberately replace a whole file.
 - edit_file → change one specific block of an existing file. Exact-string match, must be unique.
+- patch → apply a unified diff across several files or several hunks in one call. Use for multi-file / multi-hunk edits; edit_file is fine for a single small change.
+- glob → find files by name or pattern (e.g. "**/*.test.ts", "src/**/index.*"). Use instead of \`find\`.
+- grep → search file contents by regex across a directory tree. Use instead of shell \`grep\`/\`rg\` to locate where code is defined or used before editing.
+- list → view a directory as a tree. Use instead of \`ls -R\`.
+- lsp_diagnostics → real type-checker / linter errors for a .ts/.tsx/.js/.jsx/.py/.go/.rs file, straight from a language server. Run it after editing code to confirm it still compiles.
+- lsp_hover → ask the language server for the type, signature, and docs of a symbol at a line:column instead of guessing.
+- todo_write / todoread → post and re-read your visible task checklist for multi-step work.
+- webfetch → fetch and read the ACTUAL contents of a URL (docs pages, articles, raw files, API responses). web_search only returns links; webfetch returns the page body.
 ${webSearchLine}
 - rename_chat → name the current conversation so the sidebar is useful. Call it once after the user's first message (pick a short, specific title — you are allowed personality) and again whenever the topic clearly shifts. Don't repeat-call it for the same topic.
 - render_card → display structured information as a rich inline visual card. Use ONLY for: current weather (type="weather"), tabular data with 3+ rows (type="table"), link previews with title+description+site (type="link_preview"), or before/after code diffs (type="code_comparison"). Do NOT use for prose, jokes, single values, greetings, or simple factual sentences. Call it BEFORE stop_response; the card appears alongside your final_message automatically, so don't also describe the same numbers in words.${shellLine}
@@ -351,9 +371,10 @@ Repository:
 Rules for this session:
 - Treat ${repo.path} as the project root. All relative paths in tool calls must resolve inside it.
 - For terminal commands, always cd to the repo as the first step of a compound command (e.g. \`cd "${repo.path}" && pnpm test\`). The git_commit / git_push / github_pr_create tools already scope to this path — just pass \`cwd\` unset or the repo path.
+- Locate code with glob / grep / list (pass \`${repo.path}\` as the search root), not with shell \`find\`/\`grep\`. Use lsp_hover to confirm a symbol's real type.
 - Before edits: read_file the target first. Follow the repo's existing patterns (indentation, quoting, import order) — do not reformat untouched lines.
-- Prefer edit_file over write_file for partial changes. Use write_file only for new files or intentional full rewrites.
-- Verify before stop_response: if the repo has a typecheck/lint/test relevant to your change, run it. Fix failures; do not report success over a broken build.
+- Prefer edit_file over write_file for partial changes; use patch for edits spanning multiple files. write_file only for new files or intentional full rewrites.
+- Verify before stop_response: run lsp_diagnostics on each source file you changed, and if the repo has a typecheck/lint/test relevant to your change, run that too. Fix failures; do not report success over a broken build.
 
 Git authoring rules (ONLY act when the user has explicitly asked):
 - git_commit: first call git_diff to confirm what's staged, then write a concise message that explains the *why* in 1–2 sentences. Subject ≤ 60 chars, lowercase conventional-commit style (feat:/fix:/refactor:/docs:/chore:) unless the repo's git log uses a different convention. Never commit lockfiles or .env files unless the user asked.
@@ -372,17 +393,22 @@ function buildCodingSessionPromptBlock(userText: string): string {
   return `\n\n[Coding Session]
 This message looks like a coding task. Raise your bar:
 
+Explore before you touch anything:
+- Don't guess where code lives. Use glob to find files by name/pattern, grep to find where a symbol or string is defined and used, and list to see a directory's shape.
+- For anything non-trivial (new feature, a bug that crosses files, a refactor), grep for the relevant symbols and skim the siblings of the file you'll change. Understand the existing pattern before adding to it — don't invent a new one if the repo already has one.
+- Use lsp_hover when you need to know the real type or signature of a symbol instead of assuming.
+
 Read before you write:
-- Before any edit_file or write_file, read the target file with read_file so you know its exact contents, indentation style, and surrounding context.
-- For anything non-trivial (new feature, bug that crosses files, refactor), first skim siblings or related files to understand existing patterns. Don't invent a new pattern if the repo already has one.
+- Before any edit_file, write_file, or patch, read the target file with read_file so you know its exact contents, indentation style, and surrounding context.
 
 Prefer surgical edits:
-- edit_file > write_file whenever part of the file should survive. Only use write_file for new files or full rewrites you have explicit reason to do.
+- edit_file > write_file whenever part of the file should survive. Only use write_file for new files or deliberate full rewrites.
+- patch is the right tool when one change spans several files or several hunks — apply it in one call instead of a long chain of edit_file calls.
 - If edit_file fails because old_text isn't unique, expand the snippet with a few more lines of context — don't guess.
 
 Match the codebase:
 - Match the file's indentation (tabs vs spaces, 2 vs 4), quoting style, semicolon convention, trailing-comma convention, and import order. Do NOT reformat lines you weren't asked to touch.
-- Use existing utilities/helpers before creating new ones. Grep the repo if unsure.
+- Use existing utilities/helpers before creating new ones — grep for them first.
 
 Finish the job:
 - No TODO placeholders, no \`throw new Error('not implemented')\`, no commented-out code unless the user asked for a stub.
@@ -390,9 +416,10 @@ Finish the job:
 - When you reference a location in your reply, use \`file.ext:line\` format so the user can jump to it.
 
 Verify before stop_response:
-- If the project has a typecheck, lint, or test command that's relevant to your change and it's reasonable to run, run it. If something fails, fix it — don't report success.
+- After editing a .ts/.tsx/.js/.jsx/.py/.go/.rs file, run lsp_diagnostics on it to confirm it still type-checks — this is faster and more precise than a full build for catching your own mistakes.
+- If the project also has a typecheck, lint, or test command relevant to your change and it's reasonable to run, run it. If something fails, fix it — don't report success over a broken build.
 - Read back the file you edited with read_file to confirm the change landed as intended, unless you just wrote it fresh.
-- stop_response.final_message should state what actually changed and any follow-ups the user still needs to do (e.g. install a new dep, restart the dev server).`
+- stop_response.final_message should state what actually changed (\`file.ext:line\`) and any follow-ups the user still needs to do (e.g. install a new dep, restart the dev server).`
 }
 
 function buildWeChatSessionPromptBlock(binding: WeChatBinding | null): string {
@@ -2178,6 +2205,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                   activeTodoList.value = items
                   return { resultContent: `Todo list updated (${items.filter((i) => i.status === 'done').length}/${items.length} done).` }
                 }
+                if (toolCall.name === TODO_READ_TOOL_NAME) {
+                  return { resultContent: formatTodoList(activeTodoList.value) }
+                }
                 if (toolCall.name === RENAME_CHAT_TOOL_NAME) {
                   const renameResult = await applyRenameChat((toolCall.arguments as any).title, conversationId.value)
                   return { resultContent: renameResult }
@@ -2808,6 +2838,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               const items = parseTodoList((tc.arguments as any).items)
               activeTodoList.value = items
               return { resultContent: `Todo list updated (${items.filter((i) => i.status === 'done').length}/${items.length} done).` }
+            }
+            if (tc.name === TODO_READ_TOOL_NAME) {
+              return { resultContent: formatTodoList(activeTodoList.value) }
             }
             if (tc.name === RENAME_CHAT_TOOL_NAME) {
               const renameResult = await applyRenameChat((tc.arguments as any).title, conversationId.value)

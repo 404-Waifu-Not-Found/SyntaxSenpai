@@ -45,11 +45,25 @@ export interface AvatarAsset {
 }
 
 /**
+ * Reference to an imported Live2D model (Cubism 2 or 4)
+ */
+export interface Live2DModelRef {
+  /** Absolute path to the .model.json (Cubism 2) or .model3.json (Cubism 4) */
+  modelJsonPath: string;
+  /** Display name shown in settings */
+  displayName: string;
+  /** Maps WaifuExpression names to Live2D motion group names */
+  expressionMotions?: Partial<Record<WaifuExpression, string>>;
+}
+
+/**
  * Waifu avatar with expressions
  */
 export interface WaifuAvatar {
   expressions: Record<WaifuExpression, AvatarAsset>;
   idleAnimation?: string; // key or URI to Lottie/Skia animation
+  /** If set, the Live2D model is rendered instead of static expression images */
+  live2dModel?: Live2DModelRef;
 }
 
 /**

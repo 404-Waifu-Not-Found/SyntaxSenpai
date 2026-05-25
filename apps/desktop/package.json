@@ -31,6 +31,8 @@
     "electron-squirrel-startup": "^1.0.1",
     "html-to-image": "^1.11.13",
     "keytar": "^7.9.0",
+    "pixi.js": "^6.5.10",
+    "pixi-live2d-display": "^0.4.0",
     "pinia": "^3.0.2",
     "vue": "^3.5.13",
     "ws": "^8.21.0",

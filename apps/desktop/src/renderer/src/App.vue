@@ -12,6 +12,7 @@ import { loadPluginTools } from './agent-tools'
 import ChatBubble from './components/ChatBubble.vue'
 import SubagentPanel from './components/SubagentPanel.vue'
 import AppAvatar from './components/AppAvatar.vue'
+import Live2DAvatar from './components/Live2DAvatar.vue'
 import TypingDots from './components/TypingDots.vue'
 import MessageSkeleton from './components/MessageSkeleton.vue'
 import QrPairModal from './components/QrPairModal.vue'
@@ -418,6 +419,10 @@ const newWaifuAvatarHappy = ref('')
 const newWaifuAvatarExcited = ref('')
 const newWaifuAvatarThinking = ref('')
 const newWaifuAvatarIdle = ref('')
+// Live2D
+const newWaifuLive2DModelPath = ref('')
+const newWaifuLive2DModelName = ref('')
+const newWaifuLive2DImporting = ref(false)
 const newWaifuCreating = ref(false)
 const newWaifuError = ref('')
 const aiEnhancing = ref<'grammar' | 'personality' | null>(null)
@@ -444,6 +449,8 @@ function resetWaifuForm() {
   newWaifuAvatarExcited.value = ''
   newWaifuAvatarThinking.value = ''
   newWaifuAvatarIdle.value = ''
+  newWaifuLive2DModelPath.value = ''
+  newWaifuLive2DModelName.value = ''
   newWaifuError.value = ''
   aiEnhanceError.value = ''
   aiEnhancing.value = null
@@ -495,6 +502,24 @@ async function pickCustomWaifuAvatar(target: 'neutral' | 'happy' | 'excited' | '
     else newWaifuAvatarIdle.value = selectedUri
   } catch (err: any) {
     showToast(err?.message || String(err), 'error')
+  }
+}
+
+async function importLive2DModel() {
+  newWaifuLive2DImporting.value = true
+  try {
+    const result = await invoke('waifus:importLive2DModel')
+    if (result?.success) {
+      newWaifuLive2DModelPath.value = result.modelJsonPath
+      newWaifuLive2DModelName.value = result.displayName
+      showToast(`Live2D model "${result.displayName}" imported!`, 'success')
+    } else if (!result?.canceled) {
+      showToast(result?.error || 'Could not import model', 'error')
+    }
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  } finally {
+    newWaifuLive2DImporting.value = false
   }
 }
 
@@ -629,6 +654,12 @@ async function createCustomWaifu() {
           sad: buildAvatarAsset(neutralAvatarUri, '/assets/waifus/default/sad.png'),
         },
         idleAnimation: idleAvatarUri,
+        ...(newWaifuLive2DModelPath.value ? {
+          live2dModel: {
+            modelJsonPath: newWaifuLive2DModelPath.value,
+            displayName: newWaifuLive2DModelName.value,
+          },
+        } : {}),
       },
       capabilities: {
         fileSystem: false,
@@ -1140,6 +1171,16 @@ function applyPreset(preset: typeof colorPresets[0]) {
 
 const sidebarOpen = ref(true)
 const showSettings = ref(false)
+const showLive2DPanel = ref(false)
+
+const currentWaifuLive2D = computed(() => store.selectedWaifu?.avatar?.live2dModel ?? null)
+const latestSentimentExpression = computed(() => {
+  for (let i = store.messages.length - 1; i >= 0; i--) {
+    const m = (store.messages as any[])[i]
+    if (m.role === 'assistant' && m.sentiment?.expression) return m.sentiment.expression
+  }
+  return 'neutral'
+})
 
 // Lazy-refresh plugin and custom-waifu lists when their tabs become visible,
 // so Settings stays fast to open and data is fresh when the user gets there.
@@ -3699,6 +3740,33 @@ async function handleImportData() {
                     </div>
                   </div>
 
+                  <!-- Live2D model -->
+                  <div class="rounded-lg bg-neutral-800/40 border border-neutral-700/40 p-3">
+                    <p class="text-xs font-semibold text-neutral-300 mb-1">Live2D model <span class="text-[10px] text-neutral-500 font-normal">(optional — overrides static images)</span></p>
+                    <p class="text-[10px] text-neutral-500 mb-2 leading-snug">
+                      Import a Cubism 2 (<code class="bg-neutral-700/60 px-0.5 rounded">.model.json</code>) or Cubism 4
+                      (<code class="bg-neutral-700/60 px-0.5 rounded">.model3.json</code>) model folder. For Cubism 4, include
+                      <code class="bg-neutral-700/60 px-0.5 rounded">live2dcubismcore.min.js</code> in the same folder.
+                    </p>
+                    <div v-if="newWaifuLive2DModelPath" class="flex items-center gap-2 mb-2 rounded bg-neutral-700/40 px-2 py-1.5">
+                      <span class="text-[11px] text-green-400 font-semibold truncate flex-1">{{ newWaifuLive2DModelName || newWaifuLive2DModelPath }}</span>
+                      <button
+                        type="button"
+                        class="text-[10px] text-red-400 hover:text-red-300 shrink-0"
+                        title="Remove Live2D model"
+                        @click="newWaifuLive2DModelPath = ''; newWaifuLive2DModelName = ''"
+                      >Remove</button>
+                    </div>
+                    <button
+                      type="button"
+                      :disabled="newWaifuLive2DImporting"
+                      class="btn-secondary text-xs"
+                      @click="importLive2DModel()"
+                    >
+                      {{ newWaifuLive2DImporting ? 'Importing…' : 'Import model folder…' }}
+                    </button>
+                  </div>
+
                   <!-- Personality sliders -->
                   <div class="rounded-lg bg-neutral-800/40 border border-neutral-700/40 p-3">
                     <p class="text-xs font-semibold text-neutral-300 mb-2">Personality traits</p>
@@ -4459,6 +4527,16 @@ async function handleImportData() {
           </button>
           <template v-if="!compactChatLayout">
           <button
+            v-if="currentWaifuLive2D"
+            class="btn-ghost p-2"
+            :style="ghostButtonStyle"
+            :title="showLive2DPanel ? 'Hide avatar' : 'Show Live2D avatar'"
+            :aria-label="showLive2DPanel ? 'Hide avatar' : 'Show Live2D avatar'"
+            @click="showLive2DPanel = !showLive2DPanel"
+          >
+            🪆
+          </button>
+          <button
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             :title="t('sidebar.agent')"
@@ -4857,6 +4935,39 @@ async function handleImportData() {
         </p>
       </div>
     </div>
+
+    <!-- Floating Live2D avatar panel -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition-all duration-300 ease-out"
+        enter-from-class="opacity-0 scale-90 translate-y-4"
+        leave-active-class="transition-all duration-200 ease-in"
+        leave-to-class="opacity-0 scale-90 translate-y-4"
+      >
+        <div
+          v-if="showLive2DPanel && currentWaifuLive2D"
+          class="fixed bottom-20 right-4 z-[60] rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-black/30 backdrop-blur-sm"
+          style="width: 280px; height: 380px;"
+        >
+          <!-- Header bar -->
+          <div class="absolute top-0 inset-x-0 z-10 flex items-center justify-between px-3 py-1.5 bg-gradient-to-b from-black/60 to-transparent">
+            <span class="text-xs font-semibold text-white/80 truncate">{{ store.selectedWaifu?.displayName }}</span>
+            <button
+              class="text-white/60 hover:text-white/90 text-lg leading-none"
+              title="Close"
+              @click="showLive2DPanel = false"
+            >×</button>
+          </div>
+          <Live2DAvatar
+            :model-path="currentWaifuLive2D.modelJsonPath"
+            :expression="latestSentimentExpression"
+            :motion-map="currentWaifuLive2D.expressionMotions"
+            :width="280"
+            :height="380"
+          />
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 

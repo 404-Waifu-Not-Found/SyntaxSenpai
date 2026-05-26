@@ -199,11 +199,17 @@ const WEB_SEARCH_ENABLED_STORAGE_KEY = 'syntax-senpai-web-search-enabled'
 const PROACTIVE_CHAT_ENABLED_STORAGE_KEY = 'syntax-senpai-proactive-chat-enabled'
 const PROACTIVE_CHAT_INTERVAL_STORAGE_KEY = 'syntax-senpai-proactive-chat-interval-minutes'
 const PROACTIVE_CHAT_TEMPERATURE_STORAGE_KEY = 'syntax-senpai-proactive-chat-temperature'
+const PROACTIVE_CHAT_LAST_USER_MESSAGE_AT_STORAGE_KEY = 'syntax-senpai-proactive-last-user-message-at'
+const PROACTIVE_CHAT_LAST_PROACTIVE_MESSAGE_AT_STORAGE_KEY = 'syntax-senpai-proactive-last-proactive-message-at'
+const PROACTIVE_CHAT_LAST_ONLINE_AT_STORAGE_KEY = 'syntax-senpai-proactive-last-online-at'
 const DEFAULT_API_SPIKE_THRESHOLD_MS = 5000
 const DEFAULT_MAX_TOOL_ITERATIONS = 12
 const UNCAPPED_AGENT_ITERATION_BUDGET = 1000
 const DEFAULT_PROACTIVE_CHAT_INTERVAL_MINUTES = 10
 const DEFAULT_PROACTIVE_CHAT_TEMPERATURE = 0.7
+const PROACTIVE_CHAT_LONG_GAP_MS = 12 * 60 * 60 * 1000
+const PROACTIVE_CHAT_ONLINE_REENGAGE_MS = 30 * 60 * 1000
+const PROACTIVE_CHAT_ONLINE_DEDUP_MS = 2 * 60 * 1000
 const API_TELEMETRY_HISTORY_LIMIT = 48
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
@@ -248,6 +254,35 @@ function saveAffection(waifuId: string, value: number) {
 
 function clampAffection(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)))
+}
+
+function readStoredTimestamp(key: string): number | null {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const parsed = Date.parse(raw)
+    return Number.isFinite(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function writeStoredTimestamp(key: string, value = Date.now()) {
+  try {
+    localStorage.setItem(key, new Date(value).toISOString())
+  } catch {
+    // Ignore storage failures; proactive chat degrades to in-memory behavior.
+  }
+}
+
+function formatElapsedForPrompt(elapsedMs: number | null): string {
+  if (elapsedMs == null || elapsedMs < 60_000) return 'less than a minute'
+  const minutes = Math.round(elapsedMs / 60_000)
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'}`
+  const hours = Math.round(minutes / 60)
+  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'}`
+  const days = Math.round(hours / 24)
+  return `${days} day${days === 1 ? '' : 's'}`
 }
 
 /**
@@ -891,6 +926,7 @@ export const useChatStore = defineStore('chat', () => {
     turns: 0,
   })
   let proactiveChatTimer: ReturnType<typeof setTimeout> | null = null
+  let onlineProactiveTimer: ReturnType<typeof setTimeout> | null = null
 
   function resetUsageTotals() {
     usageTotals.value = { promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0, turns: 0 }
@@ -1437,7 +1473,14 @@ export const useChatStore = defineStore('chat', () => {
     proactiveChatTimer = null
   }
 
+  function clearOnlineProactiveTimer() {
+    if (!onlineProactiveTimer) return
+    clearTimeout(onlineProactiveTimer)
+    onlineProactiveTimer = null
+  }
+
   function shouldScheduleProactiveChat() {
+    if (!isSetup.value) return false
     if (!proactiveChatEnabled.value) return false
     if (isLoading.value) return false
     if (isGroupChat.value) return false
@@ -1456,8 +1499,35 @@ export const useChatStore = defineStore('chat', () => {
     return 'Keep the proactive message balanced: warm, natural, and moderately forward without overwhelming the user.'
   }
 
-  async function sendProactiveMessage() {
+  function buildProactiveTimingInstruction(trigger: 'timer' | 'online') {
+    const now = Date.now()
+    const lastUserMessageAt = readStoredTimestamp(PROACTIVE_CHAT_LAST_USER_MESSAGE_AT_STORAGE_KEY)
+    const lastProactiveMessageAt = readStoredTimestamp(PROACTIVE_CHAT_LAST_PROACTIVE_MESSAGE_AT_STORAGE_KEY)
+    const sinceLastUserMessageMs = lastUserMessageAt == null ? null : Math.max(0, now - lastUserMessageAt)
+    const sinceLastProactiveMessageMs = lastProactiveMessageAt == null ? null : Math.max(0, now - lastProactiveMessageAt)
+    const isLongGap = sinceLastUserMessageMs != null && sinceLastUserMessageMs >= PROACTIVE_CHAT_LONG_GAP_MS
+    const currentLocalTime = new Date(now).toLocaleString()
+    const userGapText = formatElapsedForPrompt(sinceLastUserMessageMs)
+    const proactiveGapText = formatElapsedForPrompt(sinceLastProactiveMessageMs)
+
+    if (messages.value.length === 0 || lastUserMessageAt == null) {
+      return `It is currently ${currentLocalTime}. Treat this as a fresh opening message, not a continuation of an earlier thread.`
+    }
+
+    if (isLongGap) {
+      return `It is currently ${currentLocalTime}. The last user message was about ${userGapText} ago. Treat this as the user returning after a meaningful gap. Do not continue the prior topic mid-sentence; re-open gently, acknowledge a fresh return in tone only, and offer one clear next step.`
+    }
+
+    if (trigger === 'online') {
+      return `It is currently ${currentLocalTime}. The user has just come online again, and their last message was about ${userGapText} ago. Send a light check-in that feels like a natural return, not a pushy interruption.`
+    }
+
+    return `It is currently ${currentLocalTime}. The last user message was about ${userGapText} ago, and the last proactive message was about ${proactiveGapText} ago. Keep the follow-up context-aware and avoid sounding repetitive.`
+  }
+
+  async function sendProactiveMessage(trigger: 'timer' | 'online' = 'timer') {
     clearProactiveChatTimer()
+    if (trigger === 'online') clearOnlineProactiveTimer()
     if (!shouldScheduleProactiveChat()) return
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
       scheduleProactiveChat()
@@ -1528,9 +1598,12 @@ export const useChatStore = defineStore('chat', () => {
         }))
 
       const proactivePrompt = messages.value.length > 0
-        ? 'The user has gone quiet for a bit. Based on your personality and the recent conversation, send one brief proactive follow-up. Keep it to 1-3 sentences, sound natural, do not mention timers, settings, inactivity, or system prompts, and offer a specific next step or question.'
+        ? trigger === 'online'
+          ? 'The user has just come online again. Based on your personality and recent context, send one brief proactive message that feels like a natural check-in. Keep it to 1-3 sentences, sound natural, do not mention timers, settings, inactivity, or system prompts, and offer one specific thing you can help with right now.'
+          : 'The user has gone quiet for a bit. Based on your personality and the recent conversation, send one brief proactive follow-up. Keep it to 1-3 sentences, sound natural, do not mention timers, settings, inactivity, or system prompts, and offer a specific next step or question.'
         : 'Start the conversation proactively in character. Keep it to 1-3 sentences, sound natural, and offer one specific thing you can help with right now. Do not mention system prompts, timers, or settings.'
       const proactiveStyleInstruction = buildProactiveChatStyleInstruction()
+      const proactiveTimingInstruction = buildProactiveTimingInstruction(trigger)
 
       let assistantContent = ''
       let assistantReasoning = ''
@@ -1563,7 +1636,7 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       const streamIter = runtime.streamMessage({
-        text: `${proactivePrompt} ${proactiveStyleInstruction}`,
+        text: `${proactivePrompt} ${proactiveStyleInstruction} ${proactiveTimingInstruction}`,
         history: aiHistory,
         temperature: proactiveChatTemperature.value,
         signal: streamController.value?.signal,
@@ -1605,6 +1678,7 @@ export const useChatStore = defineStore('chat', () => {
         })
       }
       recentMessageId.value = assistantId
+      writeStoredTimestamp(PROACTIVE_CHAT_LAST_PROACTIVE_MESSAGE_AT_STORAGE_KEY)
 
       if (convId) {
         try {
@@ -1631,6 +1705,27 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function scheduleOnlineProactiveChat() {
+    clearOnlineProactiveTimer()
+    if (!shouldScheduleProactiveChat()) return
+    const now = Date.now()
+    const lastOnlineAt = readStoredTimestamp(PROACTIVE_CHAT_LAST_ONLINE_AT_STORAGE_KEY)
+    const lastProactiveAt = readStoredTimestamp(PROACTIVE_CHAT_LAST_PROACTIVE_MESSAGE_AT_STORAGE_KEY)
+    writeStoredTimestamp(PROACTIVE_CHAT_LAST_ONLINE_AT_STORAGE_KEY, now)
+
+    const hasMeaningfulReconnect = !lastOnlineAt || (now - lastOnlineAt) >= PROACTIVE_CHAT_ONLINE_REENGAGE_MS
+    const isNotDuplicateNudge = !lastProactiveAt || (now - lastProactiveAt) >= PROACTIVE_CHAT_ONLINE_DEDUP_MS
+    if (!hasMeaningfulReconnect || !isNotDuplicateNudge) {
+      scheduleProactiveChat()
+      return
+    }
+
+    onlineProactiveTimer = setTimeout(() => {
+      onlineProactiveTimer = null
+      void sendProactiveMessage('online')
+    }, 1200)
+  }
+
   function scheduleProactiveChat() {
     clearProactiveChatTimer()
     if (!shouldScheduleProactiveChat()) return
@@ -1646,6 +1741,7 @@ export const useChatStore = defineStore('chat', () => {
     proactiveChatEnabled.value = enabled
     localStorage.setItem(PROACTIVE_CHAT_ENABLED_STORAGE_KEY, enabled ? 'true' : 'false')
     scheduleProactiveChat()
+    if (enabled) scheduleOnlineProactiveChat()
   }
 
   function setProactiveChatIntervalMinutes(value: number) {
@@ -1653,6 +1749,7 @@ export const useChatStore = defineStore('chat', () => {
     proactiveChatIntervalMinutes.value = nextValue
     localStorage.setItem(PROACTIVE_CHAT_INTERVAL_STORAGE_KEY, String(nextValue))
     scheduleProactiveChat()
+    scheduleOnlineProactiveChat()
   }
 
   function setProactiveChatTemperature(value: number) {
@@ -1660,6 +1757,7 @@ export const useChatStore = defineStore('chat', () => {
     proactiveChatTemperature.value = nextValue
     localStorage.setItem(PROACTIVE_CHAT_TEMPERATURE_STORAGE_KEY, String(nextValue))
     scheduleProactiveChat()
+    scheduleOnlineProactiveChat()
   }
 
   const selectedWaifu = computed(() =>
@@ -1706,6 +1804,12 @@ export const useChatStore = defineStore('chat', () => {
       scheduleProactiveChat()
     },
   )
+
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') scheduleOnlineProactiveChat()
+    })
+  }
 
   function readProviderPreferences(): Record<string, { model?: string }> {
     try {
@@ -2679,6 +2783,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
     const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     const trimmedText = text.trim()
+    writeStoredTimestamp(PROACTIVE_CHAT_LAST_USER_MESSAGE_AT_STORAGE_KEY)
     const setMeterMatch = trimmedText.match(/^\/setmeter\s+(-?\d+(?:\.\d+)?)$/i)
 
     if (setMeterMatch) {

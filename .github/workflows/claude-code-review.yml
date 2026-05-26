@@ -31,8 +31,14 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Skip when Claude token missing
+        if: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN == '' }}
+        run: echo "Skipping Claude review because CLAUDE_CODE_OAUTH_TOKEN is not configured."
+
       - name: Run Claude Code Review
         id: claude-review
+        if: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        continue-on-error: true
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

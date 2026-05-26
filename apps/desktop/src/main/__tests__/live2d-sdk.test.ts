@@ -22,10 +22,22 @@ const REAL_HEADER = `
  */
 `.trim()
 
+/**
+ * TS 5.7+ made Uint8Array generic; Node's `Buffer` (whose `.slice().buffer` is
+ * typed as `ArrayBufferLike`) is no longer directly assignable to
+ * `Uint8Array<ArrayBufferLike>`.  Node's Buffer is *always* backed by a plain
+ * ArrayBuffer at runtime, so this zero-copy cast is safe.
+ */
+function u8(buf: Buffer): Uint8Array<ArrayBuffer> {
+  return buf as unknown as Uint8Array<ArrayBuffer>
+}
+
 function makeFakeCoreBuffer(size = 80 * 1024, headerText = REAL_HEADER): Buffer {
   const header = Buffer.from(headerText + '\n', 'utf8')
   const filler = Buffer.alloc(Math.max(0, size - header.length), 0x20)
-  return Buffer.concat([header, filler])
+  // Cast required: TS 5.7+ Uint8Array is generic; Buffer's ArrayBufferLike
+  // backing makes it structurally incompatible without an explicit assertion.
+  return Buffer.concat([header, filler] as unknown as Uint8Array[])
 }
 
 function makeUserData(): string {
@@ -65,7 +77,7 @@ describe('getCubismCoreStatus', () => {
   it('reports installed when the file exists', () => {
     fs.mkdirSync(cubismCoreDir(ud), { recursive: true })
     const buf = makeFakeCoreBuffer()
-    fs.writeFileSync(cubismCorePath(ud), buf)
+    fs.writeFileSync(cubismCorePath(ud), u8(buf))
     const status = getCubismCoreStatus(ud)
     expect(status.installed).toBe(true)
     expect(status.size).toBe(buf.length)
@@ -92,7 +104,7 @@ describe('downloadCubismCore', () => {
 
   it('overwrites a previously installed file (re-install)', async () => {
     fs.mkdirSync(cubismCoreDir(ud), { recursive: true })
-    fs.writeFileSync(cubismCorePath(ud), makeFakeCoreBuffer(60 * 1024))
+    fs.writeFileSync(cubismCorePath(ud), u8(makeFakeCoreBuffer(60 * 1024)))
     const newer = makeFakeCoreBuffer(100 * 1024)
     const fetchImpl: any = async () => makeOkResponse(newer)
     const result = await downloadCubismCore(ud, { fetchImpl })
@@ -101,7 +113,7 @@ describe('downloadCubismCore', () => {
   })
 
   it('rejects responses without the Live2D header', async () => {
-    const evil = Buffer.concat([Buffer.from('not real cubism'.padEnd(80 * 1024, ' '), 'utf8')])
+    const evil = Buffer.concat([Buffer.from('not real cubism'.padEnd(80 * 1024, ' '), 'utf8')] as unknown as Uint8Array[])
     const fetchImpl: any = async () => makeOkResponse(evil)
     const result = await downloadCubismCore(ud, { fetchImpl })
     expect(result.success).toBe(false)
@@ -158,7 +170,7 @@ describe('findBundledCubismCore', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-bundled-'))
     try {
       const file = path.join(dir, 'live2dcubismcore.min.js')
-      fs.writeFileSync(file, makeFakeCoreBuffer())
+      fs.writeFileSync(file, u8(makeFakeCoreBuffer()))
       expect(findBundledCubismCore([file])).toBe(file)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
@@ -190,7 +202,7 @@ describe('ensureCubismCore (caching)', () => {
   it('falls back to bundled file when nothing is cached (no network call)', async () => {
     const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-bundle-src-'))
     const bundled = path.join(bundleDir, 'live2dcubismcore.min.js')
-    fs.writeFileSync(bundled, makeFakeCoreBuffer())
+    fs.writeFileSync(bundled, u8(makeFakeCoreBuffer()))
 
     let calls = 0
     const fetchImpl: any = async () => { calls++; throw new Error('network should not be touched') }
@@ -208,11 +220,11 @@ describe('ensureCubismCore (caching)', () => {
 
   it('still re-fetches from bundle when cached file is corrupt', async () => {
     fs.mkdirSync(cubismCoreDir(ud), { recursive: true })
-    fs.writeFileSync(cubismCorePath(ud), Buffer.alloc(100 * 1024, 0x20)) // bad
+    fs.writeFileSync(cubismCorePath(ud), u8(Buffer.alloc(100 * 1024, 0x20))) // bad
 
     const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-bundle-src2-'))
     const bundled = path.join(bundleDir, 'live2dcubismcore.min.js')
-    fs.writeFileSync(bundled, makeFakeCoreBuffer())
+    fs.writeFileSync(bundled, u8(makeFakeCoreBuffer()))
 
     let calls = 0
     const fetchImpl: any = async () => { calls++; throw new Error('not allowed') }
@@ -230,7 +242,7 @@ describe('ensureCubismCore (caching)', () => {
     const bundleDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-bundle-bad-'))
     const bundled = path.join(bundleDir, 'live2dcubismcore.min.js')
     // Big enough to pass the size check but missing the Cubism header.
-    fs.writeFileSync(bundled, Buffer.alloc(100 * 1024, 0x20))
+    fs.writeFileSync(bundled, u8(Buffer.alloc(100 * 1024, 0x20)))
 
     let calls = 0
     const fetchImpl: any = async () => { calls++; return makeOkResponse(makeFakeCoreBuffer()) }
@@ -261,7 +273,7 @@ describe('ensureCubismCore (caching)', () => {
   it('returns cached when a valid file already exists (no network call)', async () => {
     fs.mkdirSync(cubismCoreDir(ud), { recursive: true })
     const buf = makeFakeCoreBuffer()
-    fs.writeFileSync(cubismCorePath(ud), buf)
+    fs.writeFileSync(cubismCorePath(ud), u8(buf))
 
     let calls = 0
     const fetchImpl: any = async () => { calls++; return makeOkResponse(buf) }
@@ -274,7 +286,7 @@ describe('ensureCubismCore (caching)', () => {
 
   it('re-downloads when a cached file is corrupt and no bundle is available', async () => {
     fs.mkdirSync(cubismCoreDir(ud), { recursive: true })
-    fs.writeFileSync(cubismCorePath(ud), Buffer.alloc(100 * 1024, 0x20)) // no header
+    fs.writeFileSync(cubismCorePath(ud), u8(Buffer.alloc(100 * 1024, 0x20))) // no header
 
     let calls = 0
     const fetchImpl: any = async () => { calls++; return makeOkResponse(makeFakeCoreBuffer()) }
@@ -325,7 +337,7 @@ describe('copyCubismCoreInto', () => {
   it('copies the cached SDK into the target dir', () => {
     fs.mkdirSync(cubismCoreDir(ud), { recursive: true })
     const buf = makeFakeCoreBuffer()
-    fs.writeFileSync(cubismCorePath(ud), buf)
+    fs.writeFileSync(cubismCorePath(ud), u8(buf))
 
     expect(copyCubismCoreInto(ud, modelDir)).toBe(true)
     const copied = fs.readFileSync(path.join(modelDir, CUBISM_CORE_FILENAME))
@@ -334,7 +346,7 @@ describe('copyCubismCoreInto', () => {
 
   it('overwrites any pre-existing per-model SDK', () => {
     fs.mkdirSync(cubismCoreDir(ud), { recursive: true })
-    fs.writeFileSync(cubismCorePath(ud), makeFakeCoreBuffer(80 * 1024))
+    fs.writeFileSync(cubismCorePath(ud), u8(makeFakeCoreBuffer(80 * 1024)))
     fs.writeFileSync(path.join(modelDir, CUBISM_CORE_FILENAME), 'stale')
 
     expect(copyCubismCoreInto(ud, modelDir)).toBe(true)

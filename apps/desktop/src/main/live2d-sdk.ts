@@ -107,7 +107,10 @@ export async function ensureCubismCore(
   const bundled = findBundledCubismCore(options.bundledSearchPaths)
   if (bundled) {
     try {
-      const buf = fs.readFileSync(bundled)
+      const rawBuf = fs.readFileSync(bundled)
+      // Node's fs.readFileSync always returns an ArrayBuffer-backed Buffer;
+      // the cast is safe and needed because TS 5.7+ made Uint8Array generic.
+      const buf = new Uint8Array(rawBuf.buffer as ArrayBuffer, rawBuf.byteOffset, rawBuf.byteLength)
       const validation = validateBuffer(buf)
       if (validation.ok) {
         fs.mkdirSync(cubismCoreDir(userDataDir), { recursive: true })
@@ -204,7 +207,9 @@ export async function downloadCubismCore(
         error: `HTTP ${res.status} ${res.statusText || ''} from ${url}`.trim(),
       }
     }
-    const buf = Buffer.from(await res.arrayBuffer())
+    // res.arrayBuffer() returns ArrayBuffer; Uint8Array<ArrayBuffer> satisfies
+    // Node's ArrayBufferView in TS 5.7+ without a cast.
+    const buf = new Uint8Array(await res.arrayBuffer())
     const validation = validateBuffer(buf)
     if (!validation.ok) {
       return { success: false, path: filePath, error: validation.reason }
@@ -250,14 +255,14 @@ interface ValidationFail {
   reason: string
 }
 
-function validateBuffer(buf: Buffer): ValidationOk | ValidationFail {
+function validateBuffer(buf: Uint8Array<ArrayBuffer>): ValidationOk | ValidationFail {
   if (buf.length < MIN_CORE_BYTES) {
     return { ok: false, reason: `Downloaded file too small (${buf.length} bytes)` }
   }
   if (buf.length > MAX_CORE_BYTES) {
     return { ok: false, reason: `Downloaded file too large (${buf.length} bytes)` }
   }
-  const headerSlice = buf.subarray(0, 4096).toString('utf8')
+  const headerSlice = new TextDecoder('utf-8').decode(buf.subarray(0, 4096))
   if (!headerSlice.includes(REQUIRED_HEADER_MARKER)) {
     return {
       ok: false,
@@ -273,9 +278,9 @@ function validateCachedFile(filePath: string): ValidationOk | null {
     if (stat.size < MIN_CORE_BYTES || stat.size > MAX_CORE_BYTES) return null
     const fd = fs.openSync(filePath, 'r')
     try {
-      const sniff = Buffer.alloc(Math.min(4096, stat.size))
+      const sniff = new Uint8Array(Math.min(4096, stat.size))
       fs.readSync(fd, sniff, 0, sniff.length, 0)
-      if (!sniff.toString('utf8').includes(REQUIRED_HEADER_MARKER)) return null
+      if (!new TextDecoder('utf-8').decode(sniff).includes(REQUIRED_HEADER_MARKER)) return null
       return { ok: true, size: stat.size }
     } finally {
       fs.closeSync(fd)

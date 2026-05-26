@@ -1227,11 +1227,22 @@ const LIVE2D_PANEL_MAX_HEIGHT = 920
 const LIVE2D_CHARACTER_MIN_SCALE = 0.35
 const LIVE2D_CHARACTER_MAX_SCALE = 2.8
 const LIVE2D_PANEL_MARGIN = 12
+const LIVE2D_RENDER_SCALE_MIN = 1
+const LIVE2D_RENDER_SCALE_MAX = 4
+const LIVE2D_RENDER_SCALE_STEP = 0.5
+const LIVE2D_RENDER_SCALE_DEFAULT = Math.min(
+  LIVE2D_RENDER_SCALE_MAX,
+  Math.max(
+    LIVE2D_RENDER_SCALE_MIN,
+    Math.round((typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1) / LIVE2D_RENDER_SCALE_STEP) * LIVE2D_RENDER_SCALE_STEP,
+  ),
+)
 
 const live2dPanelPosition = ref({ x: 0, y: 0 })
 const live2dPanelSize = ref({ width: LIVE2D_PANEL_BASE_WIDTH, height: LIVE2D_PANEL_BASE_HEIGHT })
 const live2dCharacterScale = ref(1)
 const live2dCharacterOffset = ref({ x: 0, y: 0 })
+const live2dRenderScale = ref(LIVE2D_RENDER_SCALE_DEFAULT)
 const live2dPanelDragging = ref(false)
 const live2dPanelResizing = ref(false)
 const live2dCharacterDragging = ref(false)
@@ -1259,6 +1270,20 @@ const live2dResolutionOptions = [
   { value: '540x720', label: '540 × 720' },
   { value: '720x920', label: '720 × 920' },
 ]
+
+const live2dRenderScaleOptions = [
+  { value: 1,   label: '1× — Standard (lightest GPU)' },
+  { value: 1.5, label: '1.5× — Slightly sharper' },
+  { value: 2,   label: '2× — Sharp (Recommended for HiDPI)' },
+  { value: 2.5, label: '2.5× — Very sharp' },
+  { value: 3,   label: '3× — Ultra sharp (heavy GPU)' },
+  { value: 4,   label: '4× — Maximum (very heavy GPU)' },
+]
+
+function clampLive2DRenderScale(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return LIVE2D_RENDER_SCALE_DEFAULT
+  return Math.min(Math.max(value, LIVE2D_RENDER_SCALE_MIN), LIVE2D_RENDER_SCALE_MAX)
+}
 const live2dPanelWidth = computed(() => Math.round(live2dPanelSize.value.width))
 const live2dPanelHeight = computed(() => Math.round(live2dPanelSize.value.height))
 const selectedLive2DResolution = computed(() => {
@@ -1267,6 +1292,10 @@ const selectedLive2DResolution = computed(() => {
 })
 const currentLive2DResolutionLabel = computed(() => `${live2dPanelWidth.value} × ${live2dPanelHeight.value}`)
 const live2dCharacterScalePercent = computed(() => Math.round(live2dCharacterScale.value * 100))
+const live2dDevicePixelRatio = computed(() => (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1))
+const live2dBackingCanvasLabel = computed(
+  () => `${Math.round(live2dPanelWidth.value * live2dRenderScale.value)} × ${Math.round(live2dPanelHeight.value * live2dRenderScale.value)}`,
+)
 const live2dPanelStyle = computed(() => ({
   width: `${live2dPanelWidth.value}px`,
   height: `${live2dPanelHeight.value}px`,
@@ -1293,6 +1322,7 @@ function saveLive2DPanelLayout() {
       characterScale: live2dCharacterScale.value,
       characterOffsetX: live2dCharacterOffset.value.x,
       characterOffsetY: live2dCharacterOffset.value.y,
+      renderScale: live2dRenderScale.value,
     }))
   } catch {
     /* localStorage may be unavailable; placement can remain session-only. */
@@ -1325,6 +1355,9 @@ function loadLive2DPanelLayout() {
         x: typeof parsed.characterOffsetX === 'number' ? parsed.characterOffsetX : 0,
         y: typeof parsed.characterOffsetY === 'number' ? parsed.characterOffsetY : 0,
       }
+      live2dRenderScale.value = clampLive2DRenderScale(
+        typeof parsed.renderScale === 'number' ? parsed.renderScale : LIVE2D_RENDER_SCALE_DEFAULT,
+      )
       clampLive2DPanelPosition(
         typeof parsed.x === 'number' ? parsed.x : fallbackX,
         typeof parsed.y === 'number' ? parsed.y : fallbackY,
@@ -1341,11 +1374,21 @@ function resetLive2DPanelLayout() {
   live2dPanelSize.value = { width: LIVE2D_PANEL_BASE_WIDTH, height: LIVE2D_PANEL_BASE_HEIGHT }
   live2dCharacterScale.value = 1
   live2dCharacterOffset.value = { x: 0, y: 0 }
+  live2dRenderScale.value = LIVE2D_RENDER_SCALE_DEFAULT
   clampLive2DPanelPosition(
     window.innerWidth - LIVE2D_PANEL_BASE_WIDTH - 16,
     window.innerHeight - LIVE2D_PANEL_BASE_HEIGHT - 80,
   )
   saveLive2DPanelLayout()
+}
+
+function applyLive2DRenderScale(rawValue: string | number) {
+  const value = typeof rawValue === 'string' ? Number(rawValue) : rawValue
+  const next = clampLive2DRenderScale(value)
+  if (live2dRenderScale.value === next) return
+  live2dRenderScale.value = next
+  saveLive2DPanelLayout()
+  showToast(`Live2D render quality set to ${next}×`, 'success')
 }
 
 function applyLive2DResolution(value: string) {
@@ -4460,6 +4503,34 @@ async function handleImportData() {
             </div>
 
             <div class="settings-card mb-3">
+              <div class="mb-3">
+                <h3 class="text-sm font-bold text-white">Render quality</h3>
+                <p class="text-xs text-neutral-400">
+                  Supersample the Live2D canvas for a sharper, less pixelated model. Higher values
+                  render at more pixels per CSS pixel (HiDPI / Retina trick) but cost more GPU.
+                </p>
+              </div>
+              <select
+                :value="String(live2dRenderScale)"
+                class="input-field"
+                @change="applyLive2DRenderScale(($event.target as HTMLSelectElement).value)"
+              >
+                <option
+                  v-for="option in live2dRenderScaleOptions"
+                  :key="option.value"
+                  :value="String(option.value)"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+              <p class="text-[11px] text-neutral-500 mt-2">
+                Current: <span class="text-neutral-300">{{ live2dRenderScale }}×</span>
+                · Backing canvas: <span class="text-neutral-300">{{ live2dBackingCanvasLabel }}</span>
+                · Display DPR: <span class="text-neutral-300">{{ live2dDevicePixelRatio.toFixed(2) }}</span>
+              </p>
+            </div>
+
+            <div class="settings-card mb-3">
               <h3 class="text-sm font-bold text-white mb-1">🎭 Import Live2D Model</h3>
               <p class="text-xs text-neutral-400 mb-4">
                 Import a Live2D Cubism 4 model to use as your waifu's avatar. Pick the
@@ -5696,6 +5767,7 @@ async function handleImportData() {
               :model-scale="live2dCharacterScale"
               :offset-x="live2dCharacterOffset.x"
               :offset-y="live2dCharacterOffset.y"
+              :render-scale="live2dRenderScale"
             />
           </div>
           <div

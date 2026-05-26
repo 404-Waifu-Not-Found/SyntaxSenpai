@@ -62,11 +62,19 @@ function makeFixtureZip(
   return zip.toBuffer();
 }
 
+/**
+ * TS 5.7+ made Uint8Array generic; Node's Buffer (always ArrayBuffer-backed at
+ * runtime) is no longer directly assignable to Uint8Array<ArrayBufferLike>.
+ */
+function u8(buf: Buffer): Uint8Array<ArrayBuffer> {
+  return buf as unknown as Uint8Array<ArrayBuffer>;
+}
+
 function writeFixtureZip(
   destPath: string,
   entries: Record<string, string | Buffer | null>,
 ): void {
-  fs.writeFileSync(destPath, makeFixtureZip(entries));
+  fs.writeFileSync(destPath, u8(makeFixtureZip(entries)));
 }
 
 describe("LIVE2D_MODEL_JSON_RE", () => {
@@ -234,7 +242,7 @@ describe("copyDirRecursive", () => {
 
   it("copies a nested tree preserving structure", () => {
     ensureDir(path.join(src, "deep", "deeper"));
-    fs.writeFileSync(path.join(src, "deep", "deeper", "b.bin"), Buffer.from([1, 2, 3, 4]));
+    fs.writeFileSync(path.join(src, "deep", "deeper", "b.bin"), u8(Buffer.from([1, 2, 3, 4])));
     fs.writeFileSync(path.join(src, "deep", "a.txt"), "x");
     copyDirRecursive(src, dest);
     expect(fs.readFileSync(path.join(dest, "deep", "a.txt"), "utf8")).toBe("x");

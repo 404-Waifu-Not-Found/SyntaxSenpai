@@ -1,124 +1,202 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/status-alpha-blueviolet?style=flat-square" alt="Status" />
-  <img src="https://img.shields.io/github/license/404-Waifu-Not-Found/SyntaxSenpai?style=flat-square" alt="License" />
+  <img src="./icon.png" alt="SyntaxSenpai icon" width="140" height="140" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/status-alpha-7c3aed?style=for-the-badge" alt="Status: alpha" />
+  <img src="https://img.shields.io/github/license/404-Waifu-Not-Found/SyntaxSenpai?style=for-the-badge" alt="License" />
   <a href="https://github.com/404-Waifu-Not-Found/SyntaxSenpai/actions/workflows/ci.yml">
-    <img src="https://github.com/404-Waifu-Not-Found/SyntaxSenpai/actions/workflows/ci.yml/badge.svg" alt="CI" />
+    <img src="https://img.shields.io/github/actions/workflow/status/404-Waifu-Not-Found/SyntaxSenpai/ci.yml?branch=main&style=for-the-badge&label=CI" alt="CI status" />
   </a>
 </p>
 
 <h1 align="center">SyntaxSenpai</h1>
 
 <p align="center">
-  <strong>AI-powered waifu companion for developers</strong><br/>
-  Choose a waifu. Chat in character. Let her become your coding agent.
+  <strong>A local-first AI waifu companion that can chat, remember, code, and run agent tools from your desktop.</strong>
+</p>
+
+<p align="center">
+  <a href="#screenshots">Screenshots</a> ·
+  <a href="#why">Why</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#docs">Docs</a>
 </p>
 
 ---
 
-An AI-powered companion app where users pick a personalized "waifu" through a dating-style interface. Each waifu has a unique personality, tone, and communication style. Once matched, the waifu becomes an intelligent assistant that lives on your device (desktop or mobile), capable of executing real tasks — from writing code and managing files to automating workflows.
+## What It Is
 
-Every interaction is delivered in-character, blending emotional engagement with real productivity.
+SyntaxSenpai is an Electron + Vue desktop assistant wrapped in character-driven waifu personalities. Pick a waifu, configure a model provider, and chat with an assistant that keeps her own tone while still doing real work: reading files, editing code, running shell commands, searching the web, managing todos, pairing with mobile, and exporting your data.
 
-> **Current status:** see [STATE.md](./STATE.md) for an accurate snapshot of what's built. Earlier status documents have been moved to [`docs/archive/`](./docs/archive/) for historical reference only.
+The project is local-first: conversations, memories, provider keys, plugins, custom waifus, and runtime backups are controlled from your machine. Cloud calls only go to the AI provider you choose.
+
+> [!NOTE]
+> Current truth lives in [STATE.md](./STATE.md). Older milestone/status notes are archived under [docs/archive](./docs/archive/) and should be treated as historical.
+
+## Screenshots
+
+| Chat with cards | Repository analysis | Theme settings |
+|---|---|---|
+| <img src="./screenshoots/chat-weather-card.png" alt="SyntaxSenpai chat showing a weather card response" width="320" /> | <img src="./screenshoots/repo-analysis-chat.png" alt="SyntaxSenpai chat showing repository analysis output" width="320" /> | <img src="./screenshoots/theme-settings.png" alt="SyntaxSenpai theme settings with color presets" width="320" /> |
+| Weather cards render directly inside the waifu chat. | Agent responses can summarize and inspect a codebase. | Theme controls expose presets and fine-grained colors. |
+
+## Why
+
+Developer agents are usually useful but emotionally flat. Character chatbots are usually expressive but not operational. SyntaxSenpai is the middle ground: a capable coding assistant with persistent memory, tool access, and a personality system that makes repeated use feel less sterile.
 
 ## Features
 
-- **20 AI providers registered, 18 live** — Anthropic, OpenAI, OpenAI Codex, Gemini, Mistral, Cohere, Groq, DeepSeek, Perplexity, Together, xAI (2 endpoints), Hugging Face, GitHub Models, MiniMax (global + CN), Ollama, LM Studio. Azure OpenAI and Fireworks are registered but currently throw "not yet fully implemented" (see [STATE.md](./STATE.md))
-- **Waifu personalities** — distinct characters with unique tones and backstories
-- **Agent modes** — ask / auto / full; plan-and-verify workflow with iteration-budget feedback
-- **Agent tools** — terminal (with destructive-pattern gating), read/write/edit_file, clipboard, git_status / git_diff, web_search, todo_write, Spotify
-- **Affection system** — relationship meter that evolves with conversation
-- **AI memory** — persistent memory across all chats
-- **Theming** — 17 presets including live rainbow hue-cycle and sakura-petals overlay
-- **Chat niceties** — image attachments (paste / drop / paperclip), token + cost counter, per-message regenerate/delete, Markdown export, keyboard shortcuts, tray icon + global shortcut
-- **Desktop & mobile** — Electron desktop app with QR pairing to React Native mobile
-- **Runtime ops** — health probes, Prometheus metrics, Grafana dashboards, container builds, and Kubernetes manifests
-- **Backups** — export and restore chat + memory snapshots from the runtime API
-- **Plugin system** — manifest-based tool plugins for extending agent capabilities
-
-## Architecture
-
-```
-syntax-senpai/
-├── apps/
-│   ├── desktop/          # Electron + Vite desktop application
-│   ├── mobile/           # React Native mobile app (Expo)
-│   └── runtime/          # Node.js runtime service for health, metrics, backups, plugins
-├── packages/
-│   ├── ai-core/          # AI provider abstraction (Anthropic, OpenAI, DeepSeek, etc.)
-│   ├── waifu-core/       # Waifu personalities, system prompts, expressions
-│   ├── agent-tools/      # Tool execution framework for agents
-│   ├── storage/          # Persistent storage layer
-│   ├── ui/               # Shared UI components and styles
-│   ├── ui-transitions/   # Reusable transition components
-│   ├── ui-loading-screens/ # Loading screen components
-│   └── ws-protocol/      # WebSocket protocol definitions
-├── ops/                  # Prometheus & Grafana configuration
-├── plugins/              # External tool plugins directory
-└── docker-compose.yml    # Local dev environment setup
-```
+- **Five built-in waifus**: Aria, Sakura, Rei, Hana, and Luna, each with trait vectors, greetings, prompt templates, voices, tags, and capability metadata.
+- **Custom waifus**: create, list, edit, and delete user-authored waifus through desktop IPC.
+- **18 live AI providers**: Anthropic, OpenAI, OpenAI Codex, Gemini, Mistral, Cohere, Groq, DeepSeek, Perplexity, Together, xAI, xAI Grok, Hugging Face, GitHub Models, MiniMax global/CN, Ollama, and LM Studio.
+- **Agent modes**: `ask`, `auto`, and `full`, with destructive shell patterns still gated by a native confirmation dialog.
+- **Tooling**: terminal, file read/write/edit, clipboard, git status/diff/commit/push, GitHub PR creation, web search, todos, Spotify controls, WeChat send/list, card rendering, skills, and plugin execution.
+- **Memory and affection**: persistent memories, per-waifu affection tiers, milestone prompts, and expression/sentiment handling.
+- **Desktop UX**: themes, settings panels, token/cost counters, image attachments, regenerate/delete actions, Markdown export, tray icon, and global shortcut.
+- **Mobile companion**: Expo app that pairs to desktop by QR/WebSocket.
+- **Runtime ops**: health checks, Prometheus metrics, Grafana dashboards, plugin discovery, backup export/restore, Docker, and Kubernetes manifests.
 
 ## Quickstart
 
 ### Prerequisites
 
-- **Node.js** >= 20
-- **pnpm** >= 8
+- Node.js 20+
+- pnpm 8+
+- macOS, Windows, or Linux for desktop development
+- Optional: Ollama or LM Studio for local keyless models
 
-### Setup
+> [!IMPORTANT]
+> This is a pnpm monorepo. Run install and root scripts from the repository root unless a package README explicitly says otherwise.
+
+### Install
 
 ```bash
-# Clone the repository
 git clone https://github.com/404-Waifu-Not-Found/SyntaxSenpai.git
 cd SyntaxSenpai
-
-# Install dependencies
 pnpm install
+```
 
-# Run the desktop app in dev mode
+### Run The Desktop App
+
+```bash
 pnpm dev:desktop
+```
 
-# Or quick-start (skips full turbo pipeline)
+If the full Electron/Vite dev pipeline is broken on your machine, use the quick desktop entry:
+
+```bash
 pnpm desktop:quick
 ```
 
-API keys are configured in-app through the Settings panel — no `.env` file required for basic usage.
+API keys are configured in the app: **Settings -> AI**. You do not need a root `.env` file for normal desktop chat.
 
-### Scripts
+> [!TIP]
+> Use `ollama` or `lmstudio` if you want to test chat locally without an API key.
 
-| Command | Description |
+### Run Mobile Pairing
+
+```bash
+pnpm dev:mobile
+```
+
+Then open the desktop app, go to **Settings -> Mobile**, and scan the pairing QR from the Expo app.
+
+> [!NOTE]
+> Mobile is a companion client. Keep the desktop app running while pairing and chatting from the phone.
+
+### Run The Runtime Service
+
+```bash
+pnpm dev:runtime
+```
+
+Runtime endpoints:
+
+- `GET /healthz`
+- `GET /readyz`
+- `GET /metrics`
+- `GET /api/v1/plugins`
+- `POST/GET /api/v1/backups/*`
+
+> [!IMPORTANT]
+> Runtime API routes can be protected with `RUNTIME_AUTH_TOKEN`; check [ops/README.md](./ops/README.md) before exposing the service outside local development.
+
+## Common Commands
+
+| Command | Purpose |
 |---|---|
-| `pnpm dev:desktop` | Start the desktop app in dev mode |
-| `pnpm dev:mobile` | Start the mobile app in dev mode |
-| `pnpm dev:runtime` | Start the runtime service locally |
-| `pnpm build` | Build all workspaces |
-| `pnpm test` | Run tests |
-| `pnpm lint` | Run linters |
-| `pnpm typecheck` | TypeScript type checks |
-| `pnpm docker:build` | Build the runtime container image |
-| `pnpm docker:up` | Start runtime + Prometheus + Grafana |
-| `pnpm clean` | Remove all build artifacts and node_modules |
+| `pnpm dev:desktop` | Start the Electron desktop app |
+| `pnpm desktop:quick` | Start the fallback desktop entry |
+| `pnpm dev:mobile` | Start Expo for the mobile companion |
+| `pnpm dev:runtime` | Start the runtime service |
+| `pnpm build` | Build workspaces through Turbo |
+| `pnpm test` | Run Turbo tests |
+| `pnpm test:unit` | Run package unit tests |
+| `pnpm typecheck` | Run root TypeScript checks |
+| `pnpm lint` | Run configured linters |
+| `pnpm docker:build` | Build the runtime container |
+| `pnpm docker:up` | Start runtime + monitoring stack |
 
-## Operations
+## Architecture
 
-The runtime service exposes:
+```text
+syntax-senpai/
+├── apps/
+│   ├── desktop/             # Electron + Vue 3 + UnoCSS primary app
+│   ├── mobile/              # Expo / React Native QR-paired companion
+│   └── runtime/             # Node runtime for health, metrics, backups, plugins
+├── packages/
+│   ├── ai-core/             # Provider abstraction, runtime, retry, trace, planner
+│   ├── waifu-core/          # Personas, prompts, memory, affection, voice, skills
+│   ├── agent-tools/         # Shared plugin/tool registry primitives
+│   ├── storage/             # Chat and memory persistence helpers
+│   ├── ws-protocol/         # Desktop/mobile pairing protocol types
+│   ├── wechat-ilink/        # Tencent OpenClaw iLink client
+│   ├── ui/                  # Shared UI exports
+│   ├── ui-loading-screens/  # Vue loading components
+│   └── ui-transitions/      # Vue transition components
+├── plugins/                 # Runtime-loaded tool plugins, not a pnpm workspace
+├── ops/                     # Prometheus, Grafana, Kubernetes, runtime ops docs
+├── docs/archive/            # Historical planning/status docs
+└── docker-compose.yml       # Local runtime + monitoring stack
+```
 
-- `/healthz` for liveness checks
-- `/readyz` for readiness checks
-- `/metrics` for Prometheus scraping
-- `/api/v1/backups/*` for chat and memory backup management
-- `/api/v1/plugins` for plugin discovery
+## Provider Status
 
-See [ops/README.md](ops/README.md) for Docker, monitoring, backup, plugin, and Kubernetes usage.
+The registry exposes 20 provider IDs. Eighteen are live end-to-end. Two are registered stubs and intentionally hidden/avoided until implemented:
 
-## Contributing
+- `azure-openai`
+- `fireworks`
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, guidelines, and pull request process.
+Replicate and AWS Bedrock were removed and are not in the current registry.
 
-## Security
+See [PROVIDERS.md](./PROVIDERS.md) for the catalog and [PROVIDER_SETUP.md](./PROVIDER_SETUP.md) for setup steps.
 
-See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+> [!WARNING]
+> `azure-openai` and `fireworks` are registered placeholders right now. Selecting them directly will fail until their provider implementations are completed.
+
+## Docs
+
+- [STATE.md](./STATE.md): current project state and known gaps
+- [PROVIDER_SETUP.md](./PROVIDER_SETUP.md): provider key and local model setup
+- [PROVIDERS.md](./PROVIDERS.md): provider catalog and implementation status
+- [CONTRIBUTING.md](./CONTRIBUTING.md): local development and PR workflow
+- [ops/README.md](./ops/README.md): Docker, monitoring, backups, and Kubernetes
+- [SECURITY.md](./SECURITY.md): vulnerability reporting and security notes
+
+## Security Notes
+
+- API keys are stored through the desktop keychain path, not committed files.
+- Destructive terminal patterns are gated by native confirmation even in `full` mode.
+- Strict mode can route shell execution through an allowlist executor with audit logging.
+- Local model providers (`ollama`, `lmstudio`) are available for keyless/offline workflows.
+
+> [!CAUTION]
+> Do not paste real API keys into issues, screenshots, exported Markdown, or committed docs.
 
 ## License
 
-[MIT](LICENSE) — see the LICENSE file for details.
+[MIT](./LICENSE)

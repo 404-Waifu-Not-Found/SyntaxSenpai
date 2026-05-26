@@ -1,175 +1,61 @@
-# SyntaxSenpai Mobile App
+# SyntaxSenpai Mobile
 
-Modern, character-centered AI companion for iOS and Android with Expo and Expo Router.
+Expo / React Native companion app for SyntaxSenpai. The mobile client pairs to the desktop app by QR code and communicates through the shared WebSocket protocol.
 
-## Features
+## Run
 
-- **Character-Centered Design**: Beautiful waifu avatar with animations
-- **Dark-First Theme**: Minimalist dark mode by default
-- **Streaming Chat**: Real-time AI responses with visual streaming
-- **Secure Storage**: API keys stored in OS keychain (iOS Keychain / Android Keystore)
-- **Local History**: All conversations saved locally on device
-- **Multi-Provider**: Anthropic, OpenAI, Groq, Together AI, and more
-
-## Setup
-
-### Prerequisites
-
-- Node.js 18+ (with npm or yarn)
-- Expo Go (for testing) or EAS CLI (for building)
-- iOS device/simulator or Android device/emulator
-
-### Installation
-
-1. Install dependencies:
+From the repository root:
 
 ```bash
-npm install
+pnpm install
+pnpm dev:mobile
 ```
 
-2. Start the development server:
+Then open the Expo app on a device/simulator and scan the QR shown by desktop under **Settings -> Mobile**.
+
+Package-local commands:
 
 ```bash
-npm run dev
+pnpm --filter syntax-senpai-mobile run dev
+pnpm --filter syntax-senpai-mobile run ios
+pnpm --filter syntax-senpai-mobile run android
+pnpm --filter syntax-senpai-mobile run web
+pnpm --filter syntax-senpai-mobile run typecheck
+pnpm --filter syntax-senpai-mobile run lint
 ```
 
-3. Open with Expo Go:
-   - Scan the QR code with Expo Go on your phone
-   - Or press `i` for iOS simulator or `a` for Android emulator
+## Structure
 
-### First Run
-
-1. Select your waifu from the onboarding screen
-2. Choose your AI provider (Anthropic, OpenAI, etc.)
-3. Enter your API key
-4. Start chatting!
-
-## Project Structure
-
-```
+```text
 apps/mobile/
 ├── app/
-│   ├── app.tsx              # Root layout with onboarding check
-│   ├── (onboarding)/        # Onboarding flow
-│   │   ├── _layout.tsx
-│   │   └── index.tsx        # Multi-step setup wizard
-│   └── (main)/              # Main app after onboarding
-│       ├── _layout.tsx
-│       └── chat.tsx         # Chat screen with streaming
+│   ├── _layout.tsx
+│   └── (main)/
+│       ├── chat.tsx
+│       ├── scan.tsx
+│       ├── pair-confirm.tsx
+│       └── settings.tsx
 ├── src/
+│   ├── constants/
 │   └── hooks/
-│       └── useAppState.ts   # App state management
-├── app.json                 # Expo configuration
-├── babel.config.js          # Babel config for nativewind
-├── tailwind.config.ts       # Tailwind CSS config
-└── tsconfig.json            # TypeScript config
+├── assets/
+├── app.json
+└── tailwind.config.ts
 ```
 
-## Scripts
+## Notes
 
-- `npm run dev` - Start dev server
-- `npm run ios` - Build and run on iOS simulator
-- `npm run android` - Build and run on Android emulator
-- `npm run web` - Run web version
-- `npm run build` - Build for EAS
-- `npm run typecheck` - Check TypeScript
-- `npm run lint` - Lint code
-
-## Development
-
-### Adding a New Screen
-
-Create a new file in `app/(main)/`:
-
-```typescript
-import { Stack } from "expo-router";
-
-export default function NewScreen() {
-  return (
-    <>
-      <Stack.Screen options={{ title: "New Screen" }} />
-      {/* Your content */}
-    </>
-  );
-}
-```
-
-### Styling
-
-Uses Tailwind CSS via NativeWind v4. All standard Tailwind classes work:
-
-```typescript
-<View className="flex-1 bg-neutral-950 px-4">
-  <Text className="text-white font-bold">Hello</Text>
-</View>
-```
-
-### Storage
-
-- **AsyncStorage**: App state (selectedWaifu, selectedProvider, onboarding status)
-- **API Key Storage**: Secure OS keychain via `@syntax-senpai/storage`
-- **Chat History**: In-memory (can be extended with SQLite via expo-sqlite)
-
-## Building for Production
-
-### iOS
-
-```bash
-npx eas build --platform ios
-```
-
-### Android
-
-```bash
-npx eas build --platform android
-```
-
-## Testing
-
-Currently using Expo's built-in testing. Expand with React Native Testing Library:
-
-```bash
-npm run test
-```
-
-## Deployment
-
-1. Set up EAS account
-2. Update app version in `app.json`
-3. Run `npx eas build --platform ios --platform android`
-4. Submit to App Store / Play Store
+- Uses Expo Router and NativeWind.
+- Pairs with desktop rather than acting as a fully standalone provider-key manager.
+- Uses `@syntax-senpai/ws-protocol` for shared pairing/message types.
+- iOS local device builds require a valid Apple Developer team and bundle identifier in Xcode.
 
 ## Troubleshooting
 
-### iOS provisioning profile error
+Clear the Expo cache:
 
-If Xcode fails with a message like `No profiles for 'com.syntaxsenpai.app' were found`, local
-device builds are using a bundle identifier or Apple team that does not match your developer
-account. Open `ios/SyntaxSenpai.xcworkspace` in Xcode, enable automatic signing for your team, and
-use a bundle identifier that exists under that team.
-
-If `eas` is not installed globally, run it with `npx eas ...`.
-
-### Port already in use
 ```bash
-npm run dev -- --clear
+pnpm --filter syntax-senpai-mobile run dev -- --clear
 ```
 
-### Module resolution issues
-```bash
-rm -rf node_modules
-npm install
-```
-
-### Clear Expo cache
-```bash
-npm run dev -- -c
-```
-
-## Contributing
-
-Pull requests welcome! Please follow the existing code style and create feature branches.
-
-## License
-
-MIT - See root LICENSE
+If iOS signing fails, open `ios/SyntaxSenpai.xcworkspace`, enable automatic signing for your team, and use a bundle identifier registered to that team.

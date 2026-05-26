@@ -19,6 +19,12 @@ const props = withDefaults(defineProps<{
   trackCursor?: boolean
   /** Motion group name overrides keyed by expression. Falls back to built-in map. */
   motionMap?: Record<string, string>
+  /**
+   * Pixel-density multiplier for the PIXI renderer. 1 = CSS pixels (blurry on
+   * HiDPI screens), 2 = supersample at 2x, etc. Higher values trade GPU cost
+   * for a sharper Live2D model.
+   */
+  renderScale?: number
 }>(), {
   expression: 'neutral',
   width: 300,
@@ -27,7 +33,16 @@ const props = withDefaults(defineProps<{
   offsetX: 0,
   offsetY: 0,
   trackCursor: true,
+  renderScale: 1,
 })
+
+const MIN_RENDER_SCALE = 0.5
+const MAX_RENDER_SCALE = 4
+
+function clampRenderScale(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 1
+  return Math.min(Math.max(value, MIN_RENDER_SCALE), MAX_RENDER_SCALE)
+}
 
 const emit = defineEmits<{
   (e: 'error', message: string): void
@@ -163,6 +178,12 @@ async function initModel() {
       height: props.height,
       backgroundAlpha: 0,
       antialias: true,
+      // Supersample so the model stays crisp on HiDPI screens and at user-
+      // selected quality multipliers. `autoDensity` keeps the canvas's CSS
+      // size equal to width/height while the backing store grows by
+      // `resolution`, which is exactly the standard PIXI sharpening trick.
+      resolution: clampRenderScale(props.renderScale),
+      autoDensity: true,
     })
 
     live2dModel = await Live2DModel.from(modelUrl, { autoInteract: false })
@@ -185,6 +206,10 @@ async function initModel() {
 function layoutModel() {
   if (!live2dModel) return
   if (pixiApp) {
+    const targetResolution = clampRenderScale(props.renderScale)
+    if (pixiApp.renderer.resolution !== targetResolution) {
+      pixiApp.renderer.resolution = targetResolution
+    }
     pixiApp.renderer.resize(props.width, props.height)
   }
 
@@ -293,7 +318,7 @@ async function destroyModel() {
 
 watch(() => props.modelPath, () => { void initModel() })
 watch(() => props.expression, (expr) => { playMotion(expr) })
-watch(() => [props.width, props.height, props.modelScale, props.offsetX, props.offsetY], () => { layoutModel(); scheduleCursorFocus() })
+watch(() => [props.width, props.height, props.modelScale, props.offsetX, props.offsetY, props.renderScale], () => { layoutModel(); scheduleCursorFocus() })
 watch(() => props.trackCursor, () => { scheduleCursorFocus() })
 
 onMounted(() => {
@@ -312,7 +337,10 @@ onBeforeUnmount(() => {
     class="relative overflow-hidden"
     :style="{ width: `${width}px`, height: `${height}px` }"
   >
-    <canvas ref="canvasRef" :width="width" :height="height" />
+    <!-- PIXI manages the canvas dimensions itself via autoDensity. Setting
+         width/height attributes here would conflict with the supersampled
+         backing store, so the canvas just fills its parent. -->
+    <canvas ref="canvasRef" class="block w-full h-full" />
     <div
       v-if="error"
       class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 rounded-lg p-3 text-center"

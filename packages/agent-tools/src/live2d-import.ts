@@ -66,10 +66,14 @@ export function findLive2DModelJson(root: string): string | null {
  * Returns an empty string when the input contains no safe characters.
  */
 export function slugifyModelName(name: string): string {
-  return name
-    .replace(/[^a-z0-9_-]+/gi, "-")
-    .replace(/^-+|-+$/g, "")
-    .toLowerCase();
+  const slug = name.replace(/[^a-z0-9_-]+/gi, "-").toLowerCase();
+  let start = 0;
+  let end = slug.length;
+
+  while (start < end && slug[start] === "-") start += 1;
+  while (end > start && slug[end - 1] === "-") end -= 1;
+
+  return slug.slice(start, end);
 }
 
 /**

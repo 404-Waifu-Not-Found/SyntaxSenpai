@@ -262,12 +262,92 @@ function decodeHtmlEntities(str: string): string {
   })
 }
 
+function tagNameAt(value: string, start: number): { closing: boolean; name: string; nameEnd: number } | null {
+  let i = start + 1
+  while (i < value.length && /\s/.test(value[i])) i += 1
+
+  const closing = value[i] === '/'
+  if (closing) {
+    i += 1
+    while (i < value.length && /\s/.test(value[i])) i += 1
+  }
+
+  const nameStart = i
+  while (i < value.length && /[a-z0-9]/i.test(value[i])) i += 1
+  if (i === nameStart) return null
+
+  return { closing, name: value.slice(nameStart, i).toLowerCase(), nameEnd: i }
+}
+
+function isEndTagBoundary(ch: string | undefined): boolean {
+  return ch === undefined || ch === '>' || ch === '/' || /\s/.test(ch)
+}
+
+function findRawTextBlockEnd(value: string, from: number, tagName: 'script' | 'style'): number {
+  const lower = value.toLowerCase()
+  let searchFrom = from
+
+  while (searchFrom < value.length) {
+    const closeStart = lower.indexOf(`</${tagName}`, searchFrom)
+    if (closeStart === -1) return value.length
+
+    const nameEnd = closeStart + tagName.length + 2
+    if (isEndTagBoundary(value[nameEnd])) {
+      const closeEnd = value.indexOf('>', nameEnd)
+      return closeEnd === -1 ? value.length : closeEnd + 1
+    }
+
+    searchFrom = closeStart + 2
+  }
+
+  return value.length
+}
+
+function textFromHtml(value: string): string {
+  let out = ''
+  let i = 0
+
+  while (i < value.length) {
+    if (value[i] !== '<') {
+      out += value[i]
+      i += 1
+      continue
+    }
+
+    const tag = tagNameAt(value, i)
+    const tagEnd = value.indexOf('>', tag?.nameEnd ?? i + 1)
+    if (!tag || tagEnd === -1) {
+      i += 1
+      continue
+    }
+
+    if (!tag.closing && (tag.name === 'script' || tag.name === 'style')) {
+      out += ' '
+      i = findRawTextBlockEnd(value, tagEnd + 1, tag.name)
+      continue
+    }
+
+    if (tag.closing && /^(?:p|div|h[1-6]|li|tr|section|article)$/.test(tag.name)) {
+      out += '\n'
+    } else if (!tag.closing && tag.name === 'br') {
+      out += '\n'
+    } else if (!tag.closing && tag.name === 'li') {
+      out += '- '
+    } else if (!tag.closing && /^h[1-6]$/.test(tag.name)) {
+      out += '\n## '
+    }
+
+    i = tagEnd + 1
+  }
+
+  return out
+}
+
 function stripHtml(value: string): string {
   // Strip tags first, then decode entities in a single pass to prevent
   // cascaded double-unescaping (e.g. &amp;lt; → &lt; → <).
   return decodeHtmlEntities(
-    value
-      .replace(/<[^>]+>/g, ' ')
+    textFromHtml(value)
       .replace(/\s+/g, ' ')
       .trim()
   )
@@ -431,18 +511,10 @@ export async function webFetch(url: string, format = 'text') {
     } else {
       // Strip scripts/styles, convert block tags to newlines, drop the rest —
       // a readable text/markdown view that keeps paragraph structure.
-      // Note: <\/script\s*> handles edge-cases like </script > (space before >).
       // Entity decoding is done last in a single pass via decodeHtmlEntities to
       // prevent double-unescaping (e.g. &amp;lt; must not become <).
       content = decodeHtmlEntities(
-        body
-          .replace(/<script[\s\S]*?<\/script\s*>/gi, ' ')
-          .replace(/<style[\s\S]*?<\/style\s*>/gi, ' ')
-          .replace(/<\/(?:p|div|h[1-6]|li|tr|section|article)>/gi, '\n')
-          .replace(/<br\s*\/?>/gi, '\n')
-          .replace(/<li[^>]*>/gi, '- ')
-          .replace(/<h[1-6][^>]*>/gi, '\n## ')
-          .replace(/<[^>]+>/g, '')
+        textFromHtml(body)
           .replace(/[ \t]+/g, ' ')
           .replace(/ *\n */g, '\n')
           .replace(/\n{3,}/g, '\n\n')

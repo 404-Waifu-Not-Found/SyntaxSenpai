@@ -243,16 +243,34 @@ export async function openExternal(url: string) {
   }
 }
 
+/**
+ * Decode HTML character references in a single pass to avoid double-unescaping
+ * (e.g. &amp;lt; → &lt;, not → <). Call this once, after all tag removal is done.
+ */
+function decodeHtmlEntities(str: string): string {
+  return str.replace(/&(?:amp|quot|apos|#39|lt|gt|nbsp|#x[\da-fA-F]+|#\d+);/gi, (entity) => {
+    const lower = entity.toLowerCase()
+    if (lower === '&amp;') return '&'
+    if (lower === '&quot;') return '"'
+    if (lower === '&apos;' || lower === '&#39;') return "'"
+    if (lower === '&lt;') return '<'
+    if (lower === '&gt;') return '>'
+    if (lower === '&nbsp;') return ' '
+    if (lower.startsWith('&#x')) return String.fromCharCode(parseInt(entity.slice(3, -1), 16))
+    if (lower.startsWith('&#')) return String.fromCharCode(parseInt(entity.slice(2, -1), 10))
+    return entity
+  })
+}
+
 function stripHtml(value: string): string {
-  return value
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, '\'')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim()
+  // Strip tags first, then decode entities in a single pass to prevent
+  // cascaded double-unescaping (e.g. &amp;lt; → &lt; → <).
+  return decodeHtmlEntities(
+    value
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  )
 }
 
 function decodeDuckDuckGoRedirect(url: string): string {
@@ -413,24 +431,23 @@ export async function webFetch(url: string, format = 'text') {
     } else {
       // Strip scripts/styles, convert block tags to newlines, drop the rest —
       // a readable text/markdown view that keeps paragraph structure.
-      content = body
-        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-        .replace(/<\/(?:p|div|h[1-6]|li|tr|section|article)>/gi, '\n')
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<li[^>]*>/gi, '- ')
-        .replace(/<h[1-6][^>]*>/gi, '\n## ')
-        .replace(/<[^>]+>/g, '')
-        .replace(/&nbsp;/gi, ' ')
-        .replace(/&amp;/gi, '&')
-        .replace(/&quot;/gi, '"')
-        .replace(/&#39;/gi, '\'')
-        .replace(/&lt;/gi, '<')
-        .replace(/&gt;/gi, '>')
-        .replace(/[ \t]+/g, ' ')
-        .replace(/ *\n */g, '\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim()
+      // Note: <\/script\s*> handles edge-cases like </script > (space before >).
+      // Entity decoding is done last in a single pass via decodeHtmlEntities to
+      // prevent double-unescaping (e.g. &amp;lt; must not become <).
+      content = decodeHtmlEntities(
+        body
+          .replace(/<script[\s\S]*?<\/script\s*>/gi, ' ')
+          .replace(/<style[\s\S]*?<\/style\s*>/gi, ' ')
+          .replace(/<\/(?:p|div|h[1-6]|li|tr|section|article)>/gi, '\n')
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/<li[^>]*>/gi, '- ')
+          .replace(/<h[1-6][^>]*>/gi, '\n## ')
+          .replace(/<[^>]+>/g, '')
+          .replace(/[ \t]+/g, ' ')
+          .replace(/ *\n */g, '\n')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim()
+      )
     }
 
     return {

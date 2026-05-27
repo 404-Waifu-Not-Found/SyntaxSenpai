@@ -3061,11 +3061,10 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         const apiRoundTrips: number[] = []
         const pendingCards: RenderCardPayload[] = []
 
-        // Live streaming bubble: one persistent assistant message that the
-        // current iteration writes into. Each new iteration resets it so only
-        // the final iteration's text remains visible (matching the
-        // non-streaming behavior where intermediate text is discarded).
-        const liveAssistantId = `assistant-${Date.now()}`
+        // Live streaming bubbles: each assistant iteration gets its own bubble
+        // so later tool-thinking/output doesn't overwrite earlier text.
+        let liveBubbleSequence = 0
+        let liveAssistantId = `assistant-${Date.now()}-${++liveBubbleSequence}`
         let liveBubbleAdded = false
         let liveText = ''
         let liveReasoning = ''
@@ -3073,6 +3072,35 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         let liveMsgRef = null as Message | null
         let liveFlushScheduled = false
         let liveStreamSettled = false
+        const persistedLiveBubbleIds = new Set<string>()
+        const liveBubbleSaveTasks: Promise<unknown>[] = []
+
+        const queueLiveBubbleSave = (msg: Message) => {
+          if (!convId) return
+          if (persistedLiveBubbleIds.has(msg.id)) return
+          persistedLiveBubbleIds.add(msg.id)
+          liveBubbleSaveTasks.push(
+            invoke('store:addMessage', convId, {
+              id: msg.id,
+              role: msg.role,
+              content: msg.content,
+              timestamp: msg.timestamp,
+              waifuId: msg.waifuId,
+              waifuDisplayName: msg.waifuDisplayName,
+            }).catch((e) => {
+              console.warn('Failed to save assistant message:', e)
+            }),
+          )
+        }
+
+        const beginNextLiveBubble = () => {
+          liveAssistantId = `assistant-${Date.now()}-${++liveBubbleSequence}`
+          liveBubbleAdded = false
+          liveText = ''
+          liveReasoning = ''
+          liveMsgRef = null
+          liveFlushScheduled = false
+        }
 
         const computeLiveContent = () =>
           liveText
@@ -3091,15 +3119,26 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
         const ensureLiveBubble = () => {
           if (liveBubbleAdded) return
-          messages.value.push({
+          const message: Message = {
             id: liveAssistantId,
             role: 'assistant',
             content: '',
             timestamp: now(),
-          })
-          liveMsgRef = messages.value[messages.value.length - 1]
+            waifuId: waifu?.id,
+            waifuDisplayName: waifu?.displayName,
+          }
+          messages.value.push(message)
+          liveMsgRef = message
           recentMessageId.value = liveAssistantId
           liveBubbleAdded = true
+        }
+
+        const finalizeLiveBubble = () => {
+          if (!liveBubbleAdded || !liveMsgRef) return
+          const content = computeLiveContent().trim()
+          if (!content) return
+          liveMsgRef.content = content
+          queueLiveBubbleSave(liveMsgRef)
         }
 
         // Batch reactive writes via rAF — token deltas can arrive faster than
@@ -3123,9 +3162,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           maxIterations,
           abortSignal: streamController.value?.signal,
           onAssistantIterationStart: () => {
-            liveText = ''
-            liveReasoning = ''
-            updateLiveBubble()
+            finalizeLiveBubble()
+            beginNextLiveBubble()
           },
           onAssistantTextDelta: (delta) => {
             ensureLiveBubble()
@@ -3275,26 +3313,21 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           if (liveMsg) {
             liveMsg.content = cleanContent
             recentMessageId.value = liveAssistantId
+            queueLiveBubbleSave(liveMsg)
           } else {
-            messages.value.push({
+            const finalMessage: Message = {
               id: liveAssistantId,
               role: 'assistant',
               content: cleanContent,
               timestamp: now(),
-            })
+              waifuId: waifu?.id,
+              waifuDisplayName: waifu?.displayName,
+            }
+            messages.value.push(finalMessage)
             recentMessageId.value = liveAssistantId
+            queueLiveBubbleSave(finalMessage)
           }
-
-          if (convId) {
-            try {
-              await invoke('store:addMessage', convId, {
-                id: liveAssistantId,
-                role: 'assistant',
-                content: cleanContent,
-                timestamp: now(),
-              })
-            } catch (e) { console.warn('Failed to save assistant message:', e) }
-          }
+          await Promise.allSettled(liveBubbleSaveTasks)
           // Auto-name after first exchange (runs in background, doesn't block UI)
           if (isNewConversation && convId) autoNameConversation(convId, text)
         } else if (liveBubbleAdded) {

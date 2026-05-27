@@ -1388,10 +1388,6 @@ export const useChatStore = defineStore('chat', () => {
         const msg = messages.value.find((m) => m.id === assistantId)
         if (!msg) return
         msg.content = assistantContent
-          ? assistantContent
-          : assistantReasoning
-            ? `*💭 Thinking…*\n\n${assistantReasoning}`
-            : ''
       }
 
       const streamIter = runtime.streamMessage({
@@ -1409,8 +1405,6 @@ export const useChatStore = defineStore('chat', () => {
           updateBubble()
         } else if (chunk.type === 'reasoning_delta' && chunk.delta) {
           assistantReasoning += chunk.delta
-          ensureBubble()
-          updateBubble()
         }
       }
 
@@ -2229,10 +2223,6 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               const m = messages.value.find((x) => x.id === turnLiveAssistantId)
               if (!m) return
               m.content = liveText
-                ? liveText
-                : liveReasoning
-                  ? `*💭 Thinking…*\n\n${liveReasoning}`
-                  : ''
             }
 
             const turnResult = await runAgentTurn({
@@ -2255,9 +2245,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                 updateLiveBubble()
               },
               onAssistantReasoningDelta: (delta) => {
-                ensureLiveBubble()
                 liveReasoning += delta
-                updateLiveBubble()
               },
               handleSideEffect: async (toolCall): Promise<SideEffectResult | null> => {
                 if (toolCall.name === STOP_TOOL_NAME) {
@@ -2854,10 +2842,6 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
         const computeLiveContent = () =>
           liveText
-            ? liveText
-            : liveReasoning
-              ? `*💭 Thinking…*\n\n${liveReasoning}`
-              : ''
 
         const flushLiveBubble = () => {
           liveFlushScheduled = false
@@ -2921,9 +2905,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             updateLiveBubble()
           },
           onAssistantReasoningDelta: (delta) => {
-            ensureLiveBubble()
             liveReasoning += delta
-            updateLiveBubble()
           },
           handleSideEffect: async (tc): Promise<SideEffectResult | null> => {
             // 这些工具会直接修改 store 状态，因此要在这里拦截处理，而不是交给通用工具执行器黑盒处理。
@@ -3106,10 +3088,6 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           const last = messages.value.find((m) => m.id === assistantId)
           if (!last) return
           last.content = assistantContent
-            ? assistantContent
-            : assistantReasoning
-              ? `*💭 Thinking…*\n\n${assistantReasoning}`
-              : ''
         }
 
         const streamIter = runtime.streamMessage({ text, history: aiMessages, signal: streamController.value?.signal })
@@ -3121,8 +3099,6 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             updateBubble()
           } else if (chunk.type === 'reasoning_delta' && chunk.delta) {
             assistantReasoning += chunk.delta
-            ensureBubble()
-            updateBubble()
           }
         }
 

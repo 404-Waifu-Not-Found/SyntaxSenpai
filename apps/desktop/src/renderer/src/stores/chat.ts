@@ -197,8 +197,17 @@ const ENABLE_TIMEOUTS_AND_ITERATION_CAPS_STORAGE_KEY = 'syntax-senpai-enable-tim
 const MAX_TOOL_ITERATIONS_STORAGE_KEY = 'syntax-senpai-max-tool-iterations'
 const WEB_SEARCH_ENABLED_STORAGE_KEY = 'syntax-senpai-web-search-enabled'
 const PROACTIVE_CHAT_ENABLED_STORAGE_KEY = 'syntax-senpai-proactive-chat-enabled'
+const PROACTIVE_CHAT_IDLE_FOLLOW_UP_ENABLED_STORAGE_KEY = 'syntax-senpai-proactive-chat-idle-follow-up-enabled'
+const PROACTIVE_CHAT_ONLINE_GREETING_ENABLED_STORAGE_KEY = 'syntax-senpai-proactive-chat-online-greeting-enabled'
+const PROACTIVE_CHAT_WORK_HOURS_ENABLED_STORAGE_KEY = 'syntax-senpai-proactive-chat-work-hours-enabled'
+const PROACTIVE_CHAT_WORK_HOURS_START_STORAGE_KEY = 'syntax-senpai-proactive-chat-work-hours-start'
+const PROACTIVE_CHAT_WORK_HOURS_END_STORAGE_KEY = 'syntax-senpai-proactive-chat-work-hours-end'
+const PROACTIVE_CHAT_DO_NOT_DISTURB_ENABLED_STORAGE_KEY = 'syntax-senpai-proactive-chat-do-not-disturb-enabled'
+const PROACTIVE_CHAT_DO_NOT_DISTURB_START_STORAGE_KEY = 'syntax-senpai-proactive-chat-do-not-disturb-start'
+const PROACTIVE_CHAT_DO_NOT_DISTURB_END_STORAGE_KEY = 'syntax-senpai-proactive-chat-do-not-disturb-end'
 const PROACTIVE_CHAT_INTERVAL_STORAGE_KEY = 'syntax-senpai-proactive-chat-interval-minutes'
 const PROACTIVE_CHAT_TEMPERATURE_STORAGE_KEY = 'syntax-senpai-proactive-chat-temperature'
+const PROACTIVE_CHAT_LONG_GAP_HOURS_STORAGE_KEY = 'syntax-senpai-proactive-chat-long-gap-hours'
 const PROACTIVE_CHAT_LAST_USER_MESSAGE_AT_STORAGE_KEY = 'syntax-senpai-proactive-last-user-message-at'
 const PROACTIVE_CHAT_LAST_PROACTIVE_MESSAGE_AT_STORAGE_KEY = 'syntax-senpai-proactive-last-proactive-message-at'
 const PROACTIVE_CHAT_LAST_ONLINE_AT_STORAGE_KEY = 'syntax-senpai-proactive-last-online-at'
@@ -207,7 +216,11 @@ const DEFAULT_MAX_TOOL_ITERATIONS = 12
 const UNCAPPED_AGENT_ITERATION_BUDGET = 1000
 const DEFAULT_PROACTIVE_CHAT_INTERVAL_MINUTES = 10
 const DEFAULT_PROACTIVE_CHAT_TEMPERATURE = 0.7
-const PROACTIVE_CHAT_LONG_GAP_MS = 12 * 60 * 60 * 1000
+const DEFAULT_PROACTIVE_CHAT_LONG_GAP_HOURS = 12
+const DEFAULT_PROACTIVE_CHAT_WORK_HOURS_START = '09:00'
+const DEFAULT_PROACTIVE_CHAT_WORK_HOURS_END = '18:00'
+const DEFAULT_PROACTIVE_CHAT_DO_NOT_DISTURB_START = '23:00'
+const DEFAULT_PROACTIVE_CHAT_DO_NOT_DISTURB_END = '08:00'
 const PROACTIVE_CHAT_ONLINE_REENGAGE_MS = 30 * 60 * 1000
 const PROACTIVE_CHAT_ONLINE_DEDUP_MS = 2 * 60 * 1000
 const API_TELEMETRY_HISTORY_LIMIT = 48
@@ -688,6 +701,42 @@ function readStoredBoolean(key: string, fallback = false): boolean {
   }
 }
 
+function readStoredTimeString(key: string, fallback: string): string {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return fallback
+    return /^\d{2}:\d{2}$/.test(raw) ? raw : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function normalizeTimeString(value: string, fallback: string): string {
+  const trimmed = String(value || '').trim()
+  return /^\d{2}:\d{2}$/.test(trimmed) ? trimmed : fallback
+}
+
+function timeStringToMinutes(value: string): number | null {
+  const match = String(value || '').match(/^(\d{2}):(\d{2})$/)
+  if (!match) return null
+  const hours = Number(match[1])
+  const minutes = Number(match[2])
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null
+  return hours * 60 + minutes
+}
+
+function isMinuteInRange(currentMinutes: number, startMinutes: number, endMinutes: number): boolean {
+  if (startMinutes === endMinutes) return true
+  if (startMinutes < endMinutes) return currentMinutes >= startMinutes && currentMinutes < endMinutes
+  return currentMinutes >= startMinutes || currentMinutes < endMinutes
+}
+
+function minutesUntilRangeStart(currentMinutes: number, startMinutes: number): number {
+  const diff = startMinutes - currentMinutes
+  return diff > 0 ? diff : diff + 24 * 60
+}
+
 function loadGroupChatSettings() {
   try {
     const parsed = JSON.parse(localStorage.getItem(GROUP_CHAT_SETTINGS_KEY) || '{}')
@@ -885,6 +934,26 @@ export const useChatStore = defineStore('chat', () => {
   ))
   const webSearchEnabled = ref(readStoredBoolean(WEB_SEARCH_ENABLED_STORAGE_KEY, false))
   const proactiveChatEnabled = ref(readStoredBoolean(PROACTIVE_CHAT_ENABLED_STORAGE_KEY, false))
+  const proactiveChatIdleFollowUpEnabled = ref(readStoredBoolean(PROACTIVE_CHAT_IDLE_FOLLOW_UP_ENABLED_STORAGE_KEY, true))
+  const proactiveChatOnlineGreetingEnabled = ref(readStoredBoolean(PROACTIVE_CHAT_ONLINE_GREETING_ENABLED_STORAGE_KEY, true))
+  const proactiveChatWorkHoursEnabled = ref(readStoredBoolean(PROACTIVE_CHAT_WORK_HOURS_ENABLED_STORAGE_KEY, false))
+  const proactiveChatWorkHoursStart = ref(readStoredTimeString(
+    PROACTIVE_CHAT_WORK_HOURS_START_STORAGE_KEY,
+    DEFAULT_PROACTIVE_CHAT_WORK_HOURS_START,
+  ))
+  const proactiveChatWorkHoursEnd = ref(readStoredTimeString(
+    PROACTIVE_CHAT_WORK_HOURS_END_STORAGE_KEY,
+    DEFAULT_PROACTIVE_CHAT_WORK_HOURS_END,
+  ))
+  const proactiveChatDoNotDisturbEnabled = ref(readStoredBoolean(PROACTIVE_CHAT_DO_NOT_DISTURB_ENABLED_STORAGE_KEY, false))
+  const proactiveChatDoNotDisturbStart = ref(readStoredTimeString(
+    PROACTIVE_CHAT_DO_NOT_DISTURB_START_STORAGE_KEY,
+    DEFAULT_PROACTIVE_CHAT_DO_NOT_DISTURB_START,
+  ))
+  const proactiveChatDoNotDisturbEnd = ref(readStoredTimeString(
+    PROACTIVE_CHAT_DO_NOT_DISTURB_END_STORAGE_KEY,
+    DEFAULT_PROACTIVE_CHAT_DO_NOT_DISTURB_END,
+  ))
   const proactiveChatIntervalMinutes = ref(readStoredNumber(
     PROACTIVE_CHAT_INTERVAL_STORAGE_KEY,
     DEFAULT_PROACTIVE_CHAT_INTERVAL_MINUTES,
@@ -896,6 +965,12 @@ export const useChatStore = defineStore('chat', () => {
     DEFAULT_PROACTIVE_CHAT_TEMPERATURE,
     0,
     1.4,
+  ))
+  const proactiveChatLongGapHours = ref(readStoredNumber(
+    PROACTIVE_CHAT_LONG_GAP_HOURS_STORAGE_KEY,
+    DEFAULT_PROACTIVE_CHAT_LONG_GAP_HOURS,
+    1,
+    72,
   ))
   const subagentMaxIterations = ref(readStoredNumber(
     SUBAGENT_MAX_ITERATIONS_STORAGE_KEY,
@@ -1479,9 +1554,44 @@ export const useChatStore = defineStore('chat', () => {
     onlineProactiveTimer = null
   }
 
-  function shouldScheduleProactiveChat() {
+  function getProactiveScheduleWindow(now = new Date()) {
+    const currentMinutes = now.getHours() * 60 + now.getMinutes()
+    let blockedByWorkHours = false
+    let blockedByDoNotDisturb = false
+    let nextAllowedDelayMs: number | null = null
+
+    if (proactiveChatWorkHoursEnabled.value) {
+      const startMinutes = timeStringToMinutes(proactiveChatWorkHoursStart.value)
+      const endMinutes = timeStringToMinutes(proactiveChatWorkHoursEnd.value)
+      if (startMinutes != null && endMinutes != null && !isMinuteInRange(currentMinutes, startMinutes, endMinutes)) {
+        blockedByWorkHours = true
+        nextAllowedDelayMs = minutesUntilRangeStart(currentMinutes, startMinutes) * 60 * 1000
+      }
+    }
+
+    if (proactiveChatDoNotDisturbEnabled.value) {
+      const startMinutes = timeStringToMinutes(proactiveChatDoNotDisturbStart.value)
+      const endMinutes = timeStringToMinutes(proactiveChatDoNotDisturbEnd.value)
+      if (startMinutes != null && endMinutes != null && isMinuteInRange(currentMinutes, startMinutes, endMinutes)) {
+        blockedByDoNotDisturb = true
+        const dndDelayMs = minutesUntilRangeStart(currentMinutes, endMinutes) * 60 * 1000
+        nextAllowedDelayMs = nextAllowedDelayMs == null ? dndDelayMs : Math.max(nextAllowedDelayMs, dndDelayMs)
+      }
+    }
+
+    return {
+      allowed: !blockedByWorkHours && !blockedByDoNotDisturb,
+      blockedByWorkHours,
+      blockedByDoNotDisturb,
+      nextAllowedDelayMs,
+    }
+  }
+
+  function shouldScheduleProactiveChat(trigger: 'timer' | 'online' = 'timer') {
     if (!isSetup.value) return false
     if (!proactiveChatEnabled.value) return false
+    if (trigger === 'timer' && !proactiveChatIdleFollowUpEnabled.value) return false
+    if (trigger === 'online' && !proactiveChatOnlineGreetingEnabled.value) return false
     if (isLoading.value) return false
     if (isGroupChat.value) return false
     if (!selectedWaifu.value) return false
@@ -1505,7 +1615,8 @@ export const useChatStore = defineStore('chat', () => {
     const lastProactiveMessageAt = readStoredTimestamp(PROACTIVE_CHAT_LAST_PROACTIVE_MESSAGE_AT_STORAGE_KEY)
     const sinceLastUserMessageMs = lastUserMessageAt == null ? null : Math.max(0, now - lastUserMessageAt)
     const sinceLastProactiveMessageMs = lastProactiveMessageAt == null ? null : Math.max(0, now - lastProactiveMessageAt)
-    const isLongGap = sinceLastUserMessageMs != null && sinceLastUserMessageMs >= PROACTIVE_CHAT_LONG_GAP_MS
+    const longGapThresholdMs = proactiveChatLongGapHours.value * 60 * 60 * 1000
+    const isLongGap = sinceLastUserMessageMs != null && sinceLastUserMessageMs >= longGapThresholdMs
     const currentLocalTime = new Date(now).toLocaleString()
     const userGapText = formatElapsedForPrompt(sinceLastUserMessageMs)
     const proactiveGapText = formatElapsedForPrompt(sinceLastProactiveMessageMs)
@@ -1515,7 +1626,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     if (isLongGap) {
-      return `It is currently ${currentLocalTime}. The last user message was about ${userGapText} ago. Treat this as the user returning after a meaningful gap. Do not continue the prior topic mid-sentence; re-open gently, acknowledge a fresh return in tone only, and offer one clear next step.`
+      return `It is currently ${currentLocalTime}. The last user message was about ${userGapText} ago, which is beyond the configured long-gap threshold. Treat this as the user returning after a meaningful pause. Do not continue the prior topic mid-sentence; re-open gently, acknowledge a fresh return in tone only, and offer one clear next step.`
     }
 
     if (trigger === 'online') {
@@ -1528,7 +1639,12 @@ export const useChatStore = defineStore('chat', () => {
   async function sendProactiveMessage(trigger: 'timer' | 'online' = 'timer') {
     clearProactiveChatTimer()
     if (trigger === 'online') clearOnlineProactiveTimer()
-    if (!shouldScheduleProactiveChat()) return
+    if (!shouldScheduleProactiveChat(trigger)) return
+    if (!getProactiveScheduleWindow().allowed) {
+      if (trigger === 'online') scheduleOnlineProactiveChat()
+      else scheduleProactiveChat()
+      return
+    }
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
       scheduleProactiveChat()
       return
@@ -1701,7 +1817,16 @@ export const useChatStore = defineStore('chat', () => {
 
   function scheduleOnlineProactiveChat() {
     clearOnlineProactiveTimer()
-    if (!shouldScheduleProactiveChat()) return
+    if (!shouldScheduleProactiveChat('online')) return
+    const scheduleWindow = getProactiveScheduleWindow()
+    if (!scheduleWindow.allowed) {
+      const delayMs = Math.max(1200, scheduleWindow.nextAllowedDelayMs ?? 1200)
+      onlineProactiveTimer = setTimeout(() => {
+        onlineProactiveTimer = null
+        void sendProactiveMessage('online')
+      }, delayMs)
+      return
+    }
     const now = Date.now()
     const lastOnlineAt = readStoredTimestamp(PROACTIVE_CHAT_LAST_ONLINE_AT_STORAGE_KEY)
     const lastProactiveAt = readStoredTimestamp(PROACTIVE_CHAT_LAST_PROACTIVE_MESSAGE_AT_STORAGE_KEY)
@@ -1722,8 +1847,12 @@ export const useChatStore = defineStore('chat', () => {
 
   function scheduleProactiveChat() {
     clearProactiveChatTimer()
-    if (!shouldScheduleProactiveChat()) return
-    const delayMs = proactiveChatIntervalMinutes.value * 60 * 1000
+    if (!shouldScheduleProactiveChat('timer')) return
+    const baseDelayMs = proactiveChatIntervalMinutes.value * 60 * 1000
+    const scheduleWindow = getProactiveScheduleWindow()
+    const delayMs = scheduleWindow.allowed
+      ? baseDelayMs
+      : Math.max(baseDelayMs, scheduleWindow.nextAllowedDelayMs ?? baseDelayMs)
     proactiveChatTimer = setTimeout(() => {
       proactiveChatTimer = null
       void sendProactiveMessage()
@@ -1738,6 +1867,69 @@ export const useChatStore = defineStore('chat', () => {
     if (enabled) scheduleOnlineProactiveChat()
   }
 
+  function setProactiveChatIdleFollowUpEnabled(value: boolean) {
+    const enabled = !!value
+    proactiveChatIdleFollowUpEnabled.value = enabled
+    localStorage.setItem(PROACTIVE_CHAT_IDLE_FOLLOW_UP_ENABLED_STORAGE_KEY, enabled ? 'true' : 'false')
+    scheduleProactiveChat()
+  }
+
+  function setProactiveChatOnlineGreetingEnabled(value: boolean) {
+    const enabled = !!value
+    proactiveChatOnlineGreetingEnabled.value = enabled
+    localStorage.setItem(PROACTIVE_CHAT_ONLINE_GREETING_ENABLED_STORAGE_KEY, enabled ? 'true' : 'false')
+    if (enabled) scheduleOnlineProactiveChat()
+    else clearOnlineProactiveTimer()
+  }
+
+  function setProactiveChatWorkHoursEnabled(value: boolean) {
+    const enabled = !!value
+    proactiveChatWorkHoursEnabled.value = enabled
+    localStorage.setItem(PROACTIVE_CHAT_WORK_HOURS_ENABLED_STORAGE_KEY, enabled ? 'true' : 'false')
+    scheduleProactiveChat()
+    scheduleOnlineProactiveChat()
+  }
+
+  function setProactiveChatWorkHoursStart(value: string) {
+    const nextValue = normalizeTimeString(value, DEFAULT_PROACTIVE_CHAT_WORK_HOURS_START)
+    proactiveChatWorkHoursStart.value = nextValue
+    localStorage.setItem(PROACTIVE_CHAT_WORK_HOURS_START_STORAGE_KEY, nextValue)
+    scheduleProactiveChat()
+    scheduleOnlineProactiveChat()
+  }
+
+  function setProactiveChatWorkHoursEnd(value: string) {
+    const nextValue = normalizeTimeString(value, DEFAULT_PROACTIVE_CHAT_WORK_HOURS_END)
+    proactiveChatWorkHoursEnd.value = nextValue
+    localStorage.setItem(PROACTIVE_CHAT_WORK_HOURS_END_STORAGE_KEY, nextValue)
+    scheduleProactiveChat()
+    scheduleOnlineProactiveChat()
+  }
+
+  function setProactiveChatDoNotDisturbEnabled(value: boolean) {
+    const enabled = !!value
+    proactiveChatDoNotDisturbEnabled.value = enabled
+    localStorage.setItem(PROACTIVE_CHAT_DO_NOT_DISTURB_ENABLED_STORAGE_KEY, enabled ? 'true' : 'false')
+    scheduleProactiveChat()
+    scheduleOnlineProactiveChat()
+  }
+
+  function setProactiveChatDoNotDisturbStart(value: string) {
+    const nextValue = normalizeTimeString(value, DEFAULT_PROACTIVE_CHAT_DO_NOT_DISTURB_START)
+    proactiveChatDoNotDisturbStart.value = nextValue
+    localStorage.setItem(PROACTIVE_CHAT_DO_NOT_DISTURB_START_STORAGE_KEY, nextValue)
+    scheduleProactiveChat()
+    scheduleOnlineProactiveChat()
+  }
+
+  function setProactiveChatDoNotDisturbEnd(value: string) {
+    const nextValue = normalizeTimeString(value, DEFAULT_PROACTIVE_CHAT_DO_NOT_DISTURB_END)
+    proactiveChatDoNotDisturbEnd.value = nextValue
+    localStorage.setItem(PROACTIVE_CHAT_DO_NOT_DISTURB_END_STORAGE_KEY, nextValue)
+    scheduleProactiveChat()
+    scheduleOnlineProactiveChat()
+  }
+
   function setProactiveChatIntervalMinutes(value: number) {
     const nextValue = Math.max(1, Math.min(60, Math.round(value)))
     proactiveChatIntervalMinutes.value = nextValue
@@ -1750,6 +1942,14 @@ export const useChatStore = defineStore('chat', () => {
     const nextValue = Math.max(0, Math.min(1.4, Math.round(value * 100) / 100))
     proactiveChatTemperature.value = nextValue
     localStorage.setItem(PROACTIVE_CHAT_TEMPERATURE_STORAGE_KEY, String(nextValue))
+    scheduleProactiveChat()
+    scheduleOnlineProactiveChat()
+  }
+
+  function setProactiveChatLongGapHours(value: number) {
+    const nextValue = Math.max(1, Math.min(72, Math.round(value)))
+    proactiveChatLongGapHours.value = nextValue
+    localStorage.setItem(PROACTIVE_CHAT_LONG_GAP_HOURS_STORAGE_KEY, String(nextValue))
     scheduleProactiveChat()
     scheduleOnlineProactiveChat()
   }
@@ -1787,8 +1987,17 @@ export const useChatStore = defineStore('chat', () => {
     [
       selectedWaifuId,
       proactiveChatEnabled,
+      proactiveChatIdleFollowUpEnabled,
+      proactiveChatOnlineGreetingEnabled,
+      proactiveChatWorkHoursEnabled,
+      proactiveChatWorkHoursStart,
+      proactiveChatWorkHoursEnd,
+      proactiveChatDoNotDisturbEnabled,
+      proactiveChatDoNotDisturbStart,
+      proactiveChatDoNotDisturbEnd,
       proactiveChatIntervalMinutes,
       proactiveChatTemperature,
+      proactiveChatLongGapHours,
       isLoading,
       isGroupChat,
       conversationId,
@@ -3629,8 +3838,17 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     apiSpikeThresholdMs,
     webSearchEnabled,
     proactiveChatEnabled,
+    proactiveChatIdleFollowUpEnabled,
+    proactiveChatOnlineGreetingEnabled,
+    proactiveChatWorkHoursEnabled,
+    proactiveChatWorkHoursStart,
+    proactiveChatWorkHoursEnd,
+    proactiveChatDoNotDisturbEnabled,
+    proactiveChatDoNotDisturbStart,
+    proactiveChatDoNotDisturbEnd,
     proactiveChatIntervalMinutes,
     proactiveChatTemperature,
+    proactiveChatLongGapHours,
     subagentMaxIterations,
     subagentConcurrency,
     usageTotals,
@@ -3655,8 +3873,17 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     setSubagentConcurrency,
     setWebSearchEnabled,
     setProactiveChatEnabled,
+    setProactiveChatIdleFollowUpEnabled,
+    setProactiveChatOnlineGreetingEnabled,
+    setProactiveChatWorkHoursEnabled,
+    setProactiveChatWorkHoursStart,
+    setProactiveChatWorkHoursEnd,
+    setProactiveChatDoNotDisturbEnabled,
+    setProactiveChatDoNotDisturbStart,
+    setProactiveChatDoNotDisturbEnd,
     setProactiveChatIntervalMinutes,
     setProactiveChatTemperature,
+    setProactiveChatLongGapHours,
     deleteMessage,
     regenerateFromMessage,
     addAttachment,

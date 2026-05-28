@@ -2544,8 +2544,17 @@ async function handleExportData() {
         webSearchEnabled: store.webSearchEnabled,
         overlayWindowEnabled: overlayWindow.value.enabled,
         proactiveChatEnabled: store.proactiveChatEnabled,
+        proactiveChatIdleFollowUpEnabled: store.proactiveChatIdleFollowUpEnabled,
+        proactiveChatOnlineGreetingEnabled: store.proactiveChatOnlineGreetingEnabled,
+        proactiveChatWorkHoursEnabled: store.proactiveChatWorkHoursEnabled,
+        proactiveChatWorkHoursStart: store.proactiveChatWorkHoursStart,
+        proactiveChatWorkHoursEnd: store.proactiveChatWorkHoursEnd,
+        proactiveChatDoNotDisturbEnabled: store.proactiveChatDoNotDisturbEnabled,
+        proactiveChatDoNotDisturbStart: store.proactiveChatDoNotDisturbStart,
+        proactiveChatDoNotDisturbEnd: store.proactiveChatDoNotDisturbEnd,
         proactiveChatIntervalMinutes: store.proactiveChatIntervalMinutes,
         proactiveChatTemperature: store.proactiveChatTemperature,
+        proactiveChatLongGapHours: store.proactiveChatLongGapHours,
         affection: readLocalStorageJson('syntax-senpai-affection'),
         apiTelemetryHistory: readLocalStorageJson(API_TELEMETRY_HISTORY_STORAGE_KEY),
         enableTimeoutsAndIterationCaps: store.enableTimeoutsAndIterationCaps,
@@ -2662,11 +2671,38 @@ async function handleImportData() {
     if (typeof payload?.settings?.proactiveChatEnabled === 'boolean') {
       store.setProactiveChatEnabled(payload.settings.proactiveChatEnabled)
     }
+    if (typeof payload?.settings?.proactiveChatIdleFollowUpEnabled === 'boolean') {
+      store.setProactiveChatIdleFollowUpEnabled(payload.settings.proactiveChatIdleFollowUpEnabled)
+    }
+    if (typeof payload?.settings?.proactiveChatOnlineGreetingEnabled === 'boolean') {
+      store.setProactiveChatOnlineGreetingEnabled(payload.settings.proactiveChatOnlineGreetingEnabled)
+    }
+    if (typeof payload?.settings?.proactiveChatWorkHoursEnabled === 'boolean') {
+      store.setProactiveChatWorkHoursEnabled(payload.settings.proactiveChatWorkHoursEnabled)
+    }
+    if (typeof payload?.settings?.proactiveChatWorkHoursStart === 'string') {
+      store.setProactiveChatWorkHoursStart(payload.settings.proactiveChatWorkHoursStart)
+    }
+    if (typeof payload?.settings?.proactiveChatWorkHoursEnd === 'string') {
+      store.setProactiveChatWorkHoursEnd(payload.settings.proactiveChatWorkHoursEnd)
+    }
+    if (typeof payload?.settings?.proactiveChatDoNotDisturbEnabled === 'boolean') {
+      store.setProactiveChatDoNotDisturbEnabled(payload.settings.proactiveChatDoNotDisturbEnabled)
+    }
+    if (typeof payload?.settings?.proactiveChatDoNotDisturbStart === 'string') {
+      store.setProactiveChatDoNotDisturbStart(payload.settings.proactiveChatDoNotDisturbStart)
+    }
+    if (typeof payload?.settings?.proactiveChatDoNotDisturbEnd === 'string') {
+      store.setProactiveChatDoNotDisturbEnd(payload.settings.proactiveChatDoNotDisturbEnd)
+    }
     if (typeof payload?.settings?.proactiveChatIntervalMinutes === 'number') {
       store.setProactiveChatIntervalMinutes(payload.settings.proactiveChatIntervalMinutes)
     }
     if (typeof payload?.settings?.proactiveChatTemperature === 'number') {
       store.setProactiveChatTemperature(payload.settings.proactiveChatTemperature)
+    }
+    if (typeof payload?.settings?.proactiveChatLongGapHours === 'number') {
+      store.setProactiveChatLongGapHours(payload.settings.proactiveChatLongGapHours)
     }
     if (typeof payload?.settings?.enableTimeoutsAndIterationCaps === 'boolean') {
       store.setEnableTimeoutsAndIterationCaps(payload.settings.enableTimeoutsAndIterationCaps)
@@ -3144,6 +3180,146 @@ async function handleImportData() {
               </div>
 
               <div class="mt-4">
+                <div class="flex items-center justify-between gap-4 rounded-2xl border border-neutral-800/70 bg-neutral-950/35 px-4 py-3">
+                  <div>
+                    <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                      {{ t('settings.proactiveChatIdleFollowUp') }}
+                    </div>
+                    <p class="mt-1 text-[11px] text-neutral-500">
+                      {{ t('settings.proactiveChatIdleFollowUpHint') }}
+                    </p>
+                  </div>
+                  <button
+                    class="relative h-6 w-11 shrink-0 rounded-full transition-all duration-300 cursor-pointer"
+                    :disabled="!store.proactiveChatEnabled"
+                    :style="{ background: store.proactiveChatEnabled && store.proactiveChatIdleFollowUpEnabled ? 'linear-gradient(90deg,#f59e0b,#ef4444)' : '#404040', opacity: store.proactiveChatEnabled ? 1 : 0.5 }"
+                    :aria-label="`${store.proactiveChatIdleFollowUpEnabled ? 'Disable' : 'Enable'} idle proactive follow-up`"
+                    @click="store.setProactiveChatIdleFollowUpEnabled(!store.proactiveChatIdleFollowUpEnabled)"
+                  >
+                    <span
+                      class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                      :style="{ transform: store.proactiveChatIdleFollowUpEnabled ? 'translateX(20px)' : 'translateX(0)' }"
+                    />
+                  </button>
+                </div>
+
+                <div class="mt-3 flex items-center justify-between gap-4 rounded-2xl border border-neutral-800/70 bg-neutral-950/35 px-4 py-3">
+                  <div>
+                    <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                      {{ t('settings.proactiveChatOnlineGreeting') }}
+                    </div>
+                    <p class="mt-1 text-[11px] text-neutral-500">
+                      {{ t('settings.proactiveChatOnlineGreetingHint') }}
+                    </p>
+                  </div>
+                  <button
+                    class="relative h-6 w-11 shrink-0 rounded-full transition-all duration-300 cursor-pointer"
+                    :disabled="!store.proactiveChatEnabled"
+                    :style="{ background: store.proactiveChatEnabled && store.proactiveChatOnlineGreetingEnabled ? 'linear-gradient(90deg,#f59e0b,#ef4444)' : '#404040', opacity: store.proactiveChatEnabled ? 1 : 0.5 }"
+                    :aria-label="`${store.proactiveChatOnlineGreetingEnabled ? 'Disable' : 'Enable'} online proactive greeting`"
+                    @click="store.setProactiveChatOnlineGreetingEnabled(!store.proactiveChatOnlineGreetingEnabled)"
+                  >
+                    <span
+                      class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                      :style="{ transform: store.proactiveChatOnlineGreetingEnabled ? 'translateX(20px)' : 'translateX(0)' }"
+                    />
+                  </button>
+                </div>
+
+                <div class="mt-3 rounded-2xl border border-neutral-800/70 bg-neutral-950/35 px-4 py-3">
+                  <div class="flex items-center justify-between gap-4">
+                    <div>
+                      <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                        {{ t('settings.proactiveChatWorkHours') }}
+                      </div>
+                      <p class="mt-1 text-[11px] text-neutral-500">
+                        {{ t('settings.proactiveChatWorkHoursHint', { start: store.proactiveChatWorkHoursStart, end: store.proactiveChatWorkHoursEnd }) }}
+                      </p>
+                    </div>
+                    <button
+                      class="relative h-6 w-11 shrink-0 rounded-full transition-all duration-300 cursor-pointer"
+                      :disabled="!store.proactiveChatEnabled"
+                      :style="{ background: store.proactiveChatEnabled && store.proactiveChatWorkHoursEnabled ? 'linear-gradient(90deg,#f59e0b,#ef4444)' : '#404040', opacity: store.proactiveChatEnabled ? 1 : 0.5 }"
+                      :aria-label="`${store.proactiveChatWorkHoursEnabled ? 'Disable' : 'Enable'} proactive work hours`"
+                      @click="store.setProactiveChatWorkHoursEnabled(!store.proactiveChatWorkHoursEnabled)"
+                    >
+                      <span
+                        class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                        :style="{ transform: store.proactiveChatWorkHoursEnabled ? 'translateX(20px)' : 'translateX(0)' }"
+                      />
+                    </button>
+                  </div>
+                  <div class="mt-3 grid gap-3 md:grid-cols-2">
+                    <label class="block">
+                      <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-500">{{ t('settings.proactiveChatStartTime') }}</div>
+                      <input
+                        class="mt-1 w-full rounded-xl border border-neutral-800 bg-neutral-950/80 px-3 py-2 text-sm text-neutral-200"
+                        type="time"
+                        :disabled="!store.proactiveChatEnabled || !store.proactiveChatWorkHoursEnabled"
+                        :value="store.proactiveChatWorkHoursStart"
+                        @input="store.setProactiveChatWorkHoursStart(($event.target as HTMLInputElement).value)"
+                      >
+                    </label>
+                    <label class="block">
+                      <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-500">{{ t('settings.proactiveChatEndTime') }}</div>
+                      <input
+                        class="mt-1 w-full rounded-xl border border-neutral-800 bg-neutral-950/80 px-3 py-2 text-sm text-neutral-200"
+                        type="time"
+                        :disabled="!store.proactiveChatEnabled || !store.proactiveChatWorkHoursEnabled"
+                        :value="store.proactiveChatWorkHoursEnd"
+                        @input="store.setProactiveChatWorkHoursEnd(($event.target as HTMLInputElement).value)"
+                      >
+                    </label>
+                  </div>
+                </div>
+
+                <div class="mt-3 rounded-2xl border border-neutral-800/70 bg-neutral-950/35 px-4 py-3">
+                  <div class="flex items-center justify-between gap-4">
+                    <div>
+                      <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                        {{ t('settings.proactiveChatDoNotDisturb') }}
+                      </div>
+                      <p class="mt-1 text-[11px] text-neutral-500">
+                        {{ t('settings.proactiveChatDoNotDisturbHint', { start: store.proactiveChatDoNotDisturbStart, end: store.proactiveChatDoNotDisturbEnd }) }}
+                      </p>
+                    </div>
+                    <button
+                      class="relative h-6 w-11 shrink-0 rounded-full transition-all duration-300 cursor-pointer"
+                      :disabled="!store.proactiveChatEnabled"
+                      :style="{ background: store.proactiveChatEnabled && store.proactiveChatDoNotDisturbEnabled ? 'linear-gradient(90deg,#f59e0b,#ef4444)' : '#404040', opacity: store.proactiveChatEnabled ? 1 : 0.5 }"
+                      :aria-label="`${store.proactiveChatDoNotDisturbEnabled ? 'Disable' : 'Enable'} do not disturb hours`"
+                      @click="store.setProactiveChatDoNotDisturbEnabled(!store.proactiveChatDoNotDisturbEnabled)"
+                    >
+                      <span
+                        class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                        :style="{ transform: store.proactiveChatDoNotDisturbEnabled ? 'translateX(20px)' : 'translateX(0)' }"
+                      />
+                    </button>
+                  </div>
+                  <div class="mt-3 grid gap-3 md:grid-cols-2">
+                    <label class="block">
+                      <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-500">{{ t('settings.proactiveChatStartTime') }}</div>
+                      <input
+                        class="mt-1 w-full rounded-xl border border-neutral-800 bg-neutral-950/80 px-3 py-2 text-sm text-neutral-200"
+                        type="time"
+                        :disabled="!store.proactiveChatEnabled || !store.proactiveChatDoNotDisturbEnabled"
+                        :value="store.proactiveChatDoNotDisturbStart"
+                        @input="store.setProactiveChatDoNotDisturbStart(($event.target as HTMLInputElement).value)"
+                      >
+                    </label>
+                    <label class="block">
+                      <div class="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-500">{{ t('settings.proactiveChatEndTime') }}</div>
+                      <input
+                        class="mt-1 w-full rounded-xl border border-neutral-800 bg-neutral-950/80 px-3 py-2 text-sm text-neutral-200"
+                        type="time"
+                        :disabled="!store.proactiveChatEnabled || !store.proactiveChatDoNotDisturbEnabled"
+                        :value="store.proactiveChatDoNotDisturbEnd"
+                        @input="store.setProactiveChatDoNotDisturbEnd(($event.target as HTMLInputElement).value)"
+                      >
+                    </label>
+                  </div>
+                </div>
+
                 <div class="flex items-center justify-between gap-3">
                   <div>
                     <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">
@@ -3163,13 +3339,39 @@ async function handleImportData() {
                   min="1"
                   max="60"
                   step="1"
-                  :disabled="!store.proactiveChatEnabled"
+                  :disabled="!store.proactiveChatEnabled || !store.proactiveChatIdleFollowUpEnabled"
                   :value="store.proactiveChatIntervalMinutes"
                   @input="store.setProactiveChatIntervalMinutes(Number(($event.target as HTMLInputElement).value))"
                 >
                 <p class="mt-2 text-[11px] text-neutral-500">
                   {{ t('settings.proactiveChatGroupChatNote') }}
                 </p>
+              </div>
+
+              <div class="mt-4 border-t border-neutral-800/70 pt-4">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-500">
+                      {{ t('settings.proactiveChatLongGap') }}
+                    </div>
+                    <p class="mt-1 text-[11px] text-neutral-500">
+                      {{ t('settings.proactiveChatLongGapHint', { hours: store.proactiveChatLongGapHours }) }}
+                    </p>
+                  </div>
+                  <div class="rounded-full border border-neutral-700/60 bg-neutral-900/60 px-3 py-1 text-sm font-semibold text-neutral-200">
+                    {{ store.proactiveChatLongGapHours }} h
+                  </div>
+                </div>
+                <input
+                  class="mt-3 w-full accent-sky-500"
+                  type="range"
+                  min="1"
+                  max="72"
+                  step="1"
+                  :disabled="!store.proactiveChatEnabled"
+                  :value="store.proactiveChatLongGapHours"
+                  @input="store.setProactiveChatLongGapHours(Number(($event.target as HTMLInputElement).value))"
+                >
               </div>
 
               <div class="mt-4 border-t border-neutral-800/70 pt-4">

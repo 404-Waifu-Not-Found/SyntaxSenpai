@@ -12,6 +12,7 @@ import { loadPluginTools } from './agent-tools'
 import ChatBubble from './components/ChatBubble.vue'
 import SubagentPanel from './components/SubagentPanel.vue'
 import AppAvatar from './components/AppAvatar.vue'
+import Live2DAvatar from './components/Live2DAvatar.vue'
 import TypingDots from './components/TypingDots.vue'
 import MessageSkeleton from './components/MessageSkeleton.vue'
 import QrPairModal from './components/QrPairModal.vue'
@@ -127,7 +128,7 @@ const rainbowToggleBg = computed(() => {
   const c3 = hslToHex((h + 120) % 360, s, l)
   return `linear-gradient(to right, ${c1}, ${c2}, ${c3})`
 })
-type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'plugins' | 'skills' | 'waifus' | 'mobile' | 'wechat'
+type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'plugins' | 'skills' | 'waifus' | 'live2d' | 'mobile' | 'wechat'
 const settingsTab = ref<SettingsTabId>('general')
 const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = [
   { id: 'general', label: 'General', icon: '⚙️' },
@@ -139,6 +140,7 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = 
   { id: 'plugins', label: 'Plugins', icon: '🧩' },
   { id: 'skills', label: 'Skills', icon: '📘' },
   { id: 'waifus', label: 'Waifus', icon: '💗' },
+  { id: 'live2d', label: 'Live2D', icon: '🎭' },
   { id: 'mobile', label: 'Mobile', icon: '📱' },
   { id: 'wechat', label: 'WeChat', icon: '💬' },
 ]
@@ -418,6 +420,10 @@ const newWaifuAvatarHappy = ref('')
 const newWaifuAvatarExcited = ref('')
 const newWaifuAvatarThinking = ref('')
 const newWaifuAvatarIdle = ref('')
+// Live2D
+const newWaifuLive2DModelPath = ref('')
+const newWaifuLive2DModelName = ref('')
+const newWaifuLive2DImporting = ref(false)
 const newWaifuCreating = ref(false)
 const newWaifuError = ref('')
 const aiEnhancing = ref<'grammar' | 'personality' | null>(null)
@@ -444,6 +450,8 @@ function resetWaifuForm() {
   newWaifuAvatarExcited.value = ''
   newWaifuAvatarThinking.value = ''
   newWaifuAvatarIdle.value = ''
+  newWaifuLive2DModelPath.value = ''
+  newWaifuLive2DModelName.value = ''
   newWaifuError.value = ''
   aiEnhanceError.value = ''
   aiEnhancing.value = null
@@ -495,6 +503,24 @@ async function pickCustomWaifuAvatar(target: 'neutral' | 'happy' | 'excited' | '
     else newWaifuAvatarIdle.value = selectedUri
   } catch (err: any) {
     showToast(err?.message || String(err), 'error')
+  }
+}
+
+async function importLive2DModel() {
+  newWaifuLive2DImporting.value = true
+  try {
+    const result = await invoke('waifus:importLive2DModel')
+    if (result?.success) {
+      newWaifuLive2DModelPath.value = result.modelJsonPath
+      newWaifuLive2DModelName.value = result.displayName
+      showToast(`Live2D model "${result.displayName}" imported!`, 'success')
+    } else if (!result?.canceled) {
+      showToast(result?.error || 'Could not import model', 'error')
+    }
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  } finally {
+    newWaifuLive2DImporting.value = false
   }
 }
 
@@ -629,6 +655,12 @@ async function createCustomWaifu() {
           sad: buildAvatarAsset(neutralAvatarUri, '/assets/waifus/default/sad.png'),
         },
         idleAnimation: idleAvatarUri,
+        ...(newWaifuLive2DModelPath.value ? {
+          live2dModel: {
+            modelJsonPath: newWaifuLive2DModelPath.value,
+            displayName: newWaifuLive2DModelName.value,
+          },
+        } : {}),
       },
       capabilities: {
         fileSystem: false,
@@ -743,9 +775,30 @@ interface StrictModeState {
 const strictMode = ref<StrictModeState>({ enabled: false, auditLog: '' })
 const overlayWindow = ref<{ enabled: boolean }>({ enabled: false })
 const fullscreenWindow = ref<{ enabled: boolean }>({ enabled: false })
+const currentWindowBounds = ref<{ width: number; height: number } | null>(null)
 const showCompactHeaderMenu = ref(false)
 const showCompactStatusDetails = ref(false)
 const compactHeaderMenuRef = ref<HTMLElement | null>(null)
+const windowResolutionOptions = [
+  { value: '800x600', label: '800 × 600' },
+  { value: '1024x768', label: '1024 × 768' },
+  { value: '1200x800', label: '1200 × 800' },
+  { value: '1280x720', label: '1280 × 720' },
+  { value: '1366x768', label: '1366 × 768' },
+  { value: '1440x900', label: '1440 × 900' },
+  { value: '1600x900', label: '1600 × 900' },
+  { value: '1920x1080', label: '1920 × 1080' },
+]
+const selectedWindowResolution = computed(() => {
+  const bounds = currentWindowBounds.value
+  if (!bounds) return ''
+  const exact = `${bounds.width}x${bounds.height}`
+  return windowResolutionOptions.some((option) => option.value === exact) ? exact : 'custom'
+})
+const currentWindowResolutionLabel = computed(() => {
+  const bounds = currentWindowBounds.value
+  return bounds ? `${bounds.width} × ${bounds.height}` : 'Current window size'
+})
 
 async function refreshStrictMode() {
   try {
@@ -764,6 +817,12 @@ async function refreshStrictMode() {
 function applyWindowPresentationState(result: any) {
   overlayWindow.value.enabled = !!result?.overlayEnabled
   fullscreenWindow.value.enabled = !!result?.fullscreenEnabled
+  if (result?.bounds && typeof result.bounds.width === 'number' && typeof result.bounds.height === 'number') {
+    currentWindowBounds.value = {
+      width: Math.round(result.bounds.width),
+      height: Math.round(result.bounds.height),
+    }
+  }
   if (overlayWindow.value.enabled) sidebarOpen.value = false
   if (!overlayWindow.value.enabled) {
     showCompactHeaderMenu.value = false
@@ -812,6 +871,19 @@ async function toggleFullscreenWindowMode() {
     showToast(next ? t('toast.fullscreenEnabled') : t('toast.fullscreenDisabled'), 'success')
   } else {
     showToast(result?.error || t('toast.fullscreenFailed'), 'error')
+  }
+}
+
+async function applyWindowResolution(value: string) {
+  if (!value || value === 'custom') return
+  const [width, height] = value.split('x').map((part) => Number(part))
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return
+  const result = await invoke('window:setResolution', { width, height })
+  if (result?.success) {
+    applyWindowPresentationState(result)
+    showToast(`Window resolution set to ${Math.round(width)} × ${Math.round(height)}`, 'success')
+  } else {
+    showToast(result?.error || 'Failed to update window resolution', 'error')
   }
 }
 
@@ -1140,6 +1212,464 @@ function applyPreset(preset: typeof colorPresets[0]) {
 
 const sidebarOpen = ref(true)
 const showSettings = ref(false)
+const showLive2DPanel = ref(false)
+
+const currentWaifuLive2D = computed(() => (store.selectedWaifu?.avatar as any)?.live2dModel ?? null)
+
+// ── Floating Live2D panel placement ─────────────────────────────────────────
+const LIVE2D_PANEL_STORAGE_KEY = 'syntax-senpai-live2d-panel'
+const LIVE2D_PANEL_BASE_WIDTH = 280
+const LIVE2D_PANEL_BASE_HEIGHT = 380
+const LIVE2D_PANEL_MIN_WIDTH = 180
+const LIVE2D_PANEL_MIN_HEIGHT = 240
+const LIVE2D_PANEL_MAX_WIDTH = 760
+const LIVE2D_PANEL_MAX_HEIGHT = 920
+const LIVE2D_CHARACTER_MIN_SCALE = 0.35
+const LIVE2D_CHARACTER_MAX_SCALE = 2.8
+const LIVE2D_PANEL_MARGIN = 12
+const LIVE2D_RENDER_SCALE_MIN = 1
+const LIVE2D_RENDER_SCALE_MAX = 4
+const LIVE2D_RENDER_SCALE_STEP = 0.5
+const LIVE2D_RENDER_SCALE_DEFAULT = Math.min(
+  LIVE2D_RENDER_SCALE_MAX,
+  Math.max(
+    LIVE2D_RENDER_SCALE_MIN,
+    Math.round((typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1) / LIVE2D_RENDER_SCALE_STEP) * LIVE2D_RENDER_SCALE_STEP,
+  ),
+)
+
+const live2dPanelPosition = ref({ x: 0, y: 0 })
+const live2dPanelSize = ref({ width: LIVE2D_PANEL_BASE_WIDTH, height: LIVE2D_PANEL_BASE_HEIGHT })
+const live2dCharacterScale = ref(1)
+const live2dCharacterOffset = ref({ x: 0, y: 0 })
+const live2dRenderScale = ref(LIVE2D_RENDER_SCALE_DEFAULT)
+const live2dPanelDragging = ref(false)
+const live2dPanelResizing = ref(false)
+const live2dCharacterDragging = ref(false)
+let live2dPanelPointerStart = {
+  pointerId: 0,
+  clientX: 0,
+  clientY: 0,
+  x: 0,
+  y: 0,
+  width: LIVE2D_PANEL_BASE_WIDTH,
+  height: LIVE2D_PANEL_BASE_HEIGHT,
+  characterX: 0,
+  characterY: 0,
+  resizeEdge: '' as Live2DResizeEdge,
+}
+
+type Live2DResizeEdge = '' | 'n' | 'e' | 's' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+
+const live2dResolutionOptions = [
+  { value: '180x240', label: '180 × 240' },
+  { value: '240x320', label: '240 × 320' },
+  { value: '280x380', label: '280 × 380' },
+  { value: '360x480', label: '360 × 480' },
+  { value: '420x620', label: '420 × 620' },
+  { value: '540x720', label: '540 × 720' },
+  { value: '720x920', label: '720 × 920' },
+]
+
+const live2dRenderScaleOptions = [
+  { value: 1,   label: '1× — Standard (lightest GPU)' },
+  { value: 1.5, label: '1.5× — Slightly sharper' },
+  { value: 2,   label: '2× — Sharp (Recommended for HiDPI)' },
+  { value: 2.5, label: '2.5× — Very sharp' },
+  { value: 3,   label: '3× — Ultra sharp (heavy GPU)' },
+  { value: 4,   label: '4× — Maximum (very heavy GPU)' },
+]
+
+function clampLive2DRenderScale(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return LIVE2D_RENDER_SCALE_DEFAULT
+  return Math.min(Math.max(value, LIVE2D_RENDER_SCALE_MIN), LIVE2D_RENDER_SCALE_MAX)
+}
+const live2dPanelWidth = computed(() => Math.round(live2dPanelSize.value.width))
+const live2dPanelHeight = computed(() => Math.round(live2dPanelSize.value.height))
+const selectedLive2DResolution = computed(() => {
+  const exact = `${live2dPanelWidth.value}x${live2dPanelHeight.value}`
+  return live2dResolutionOptions.some((option) => option.value === exact) ? exact : 'custom'
+})
+const currentLive2DResolutionLabel = computed(() => `${live2dPanelWidth.value} × ${live2dPanelHeight.value}`)
+const live2dCharacterScalePercent = computed(() => Math.round(live2dCharacterScale.value * 100))
+const live2dDevicePixelRatio = computed(() => (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1))
+const live2dBackingCanvasLabel = computed(
+  () => `${Math.round(live2dPanelWidth.value * live2dRenderScale.value)} × ${Math.round(live2dPanelHeight.value * live2dRenderScale.value)}`,
+)
+const live2dPanelStyle = computed(() => ({
+  width: `${live2dPanelWidth.value}px`,
+  height: `${live2dPanelHeight.value}px`,
+  left: `${live2dPanelPosition.value.x}px`,
+  top: `${live2dPanelPosition.value.y}px`,
+}))
+
+function clampLive2DPanelPosition(x = live2dPanelPosition.value.x, y = live2dPanelPosition.value.y) {
+  const maxX = Math.max(LIVE2D_PANEL_MARGIN, window.innerWidth - live2dPanelWidth.value - LIVE2D_PANEL_MARGIN)
+  const maxY = Math.max(LIVE2D_PANEL_MARGIN, window.innerHeight - live2dPanelHeight.value - LIVE2D_PANEL_MARGIN)
+  live2dPanelPosition.value = {
+    x: Math.min(Math.max(x, LIVE2D_PANEL_MARGIN), maxX),
+    y: Math.min(Math.max(y, LIVE2D_PANEL_MARGIN), maxY),
+  }
+}
+
+function saveLive2DPanelLayout() {
+  try {
+    localStorage.setItem(LIVE2D_PANEL_STORAGE_KEY, JSON.stringify({
+      x: live2dPanelPosition.value.x,
+      y: live2dPanelPosition.value.y,
+      width: live2dPanelSize.value.width,
+      height: live2dPanelSize.value.height,
+      characterScale: live2dCharacterScale.value,
+      characterOffsetX: live2dCharacterOffset.value.x,
+      characterOffsetY: live2dCharacterOffset.value.y,
+      renderScale: live2dRenderScale.value,
+    }))
+  } catch {
+    /* localStorage may be unavailable; placement can remain session-only. */
+  }
+}
+
+function loadLive2DPanelLayout() {
+  const fallbackX = window.innerWidth - LIVE2D_PANEL_BASE_WIDTH - 16
+  const fallbackY = window.innerHeight - LIVE2D_PANEL_BASE_HEIGHT - 80
+  try {
+    const raw = localStorage.getItem(LIVE2D_PANEL_STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      const legacyScale = typeof parsed.scale === 'number' ? parsed.scale : 1
+      live2dPanelSize.value = {
+        width: Math.min(Math.max(
+          typeof parsed.width === 'number' ? parsed.width : LIVE2D_PANEL_BASE_WIDTH * legacyScale,
+          LIVE2D_PANEL_MIN_WIDTH,
+        ), LIVE2D_PANEL_MAX_WIDTH),
+        height: Math.min(Math.max(
+          typeof parsed.height === 'number' ? parsed.height : LIVE2D_PANEL_BASE_HEIGHT * legacyScale,
+          LIVE2D_PANEL_MIN_HEIGHT,
+        ), LIVE2D_PANEL_MAX_HEIGHT),
+      }
+      live2dCharacterScale.value = Math.min(Math.max(
+        typeof parsed.characterScale === 'number' ? parsed.characterScale : 1,
+        LIVE2D_CHARACTER_MIN_SCALE,
+      ), LIVE2D_CHARACTER_MAX_SCALE)
+      live2dCharacterOffset.value = {
+        x: typeof parsed.characterOffsetX === 'number' ? parsed.characterOffsetX : 0,
+        y: typeof parsed.characterOffsetY === 'number' ? parsed.characterOffsetY : 0,
+      }
+      live2dRenderScale.value = clampLive2DRenderScale(
+        typeof parsed.renderScale === 'number' ? parsed.renderScale : LIVE2D_RENDER_SCALE_DEFAULT,
+      )
+      clampLive2DPanelPosition(
+        typeof parsed.x === 'number' ? parsed.x : fallbackX,
+        typeof parsed.y === 'number' ? parsed.y : fallbackY,
+      )
+      return
+    }
+  } catch {
+    /* Fall through to default placement. */
+  }
+  clampLive2DPanelPosition(fallbackX, fallbackY)
+}
+
+function resetLive2DPanelLayout() {
+  live2dPanelSize.value = { width: LIVE2D_PANEL_BASE_WIDTH, height: LIVE2D_PANEL_BASE_HEIGHT }
+  live2dCharacterScale.value = 1
+  live2dCharacterOffset.value = { x: 0, y: 0 }
+  live2dRenderScale.value = LIVE2D_RENDER_SCALE_DEFAULT
+  clampLive2DPanelPosition(
+    window.innerWidth - LIVE2D_PANEL_BASE_WIDTH - 16,
+    window.innerHeight - LIVE2D_PANEL_BASE_HEIGHT - 80,
+  )
+  saveLive2DPanelLayout()
+}
+
+function applyLive2DRenderScale(rawValue: string | number) {
+  const value = typeof rawValue === 'string' ? Number(rawValue) : rawValue
+  const next = clampLive2DRenderScale(value)
+  if (live2dRenderScale.value === next) return
+  live2dRenderScale.value = next
+  saveLive2DPanelLayout()
+  showToast(`Live2D render quality set to ${next}×`, 'success')
+}
+
+function applyLive2DResolution(value: string) {
+  if (!value || value === 'custom') return
+  const [rawWidth, rawHeight] = value.split('x').map((part) => Number(part))
+  if (!Number.isFinite(rawWidth) || !Number.isFinite(rawHeight)) return
+  live2dPanelSize.value = {
+    width: Math.min(Math.max(rawWidth, LIVE2D_PANEL_MIN_WIDTH), LIVE2D_PANEL_MAX_WIDTH),
+    height: Math.min(Math.max(rawHeight, LIVE2D_PANEL_MIN_HEIGHT), LIVE2D_PANEL_MAX_HEIGHT),
+  }
+  clampLive2DPanelPosition()
+  saveLive2DPanelLayout()
+  showToast(`Live2D resolution set to ${live2dPanelWidth.value} × ${live2dPanelHeight.value}`, 'success')
+}
+
+function beginLive2DPanelDrag(event: PointerEvent) {
+  if (event.button !== 0) return
+  const target = event.target as HTMLElement | null
+  if (target?.closest('[data-live2d-panel-control]')) return
+  live2dPanelDragging.value = true
+  live2dPanelPointerStart = {
+    pointerId: event.pointerId,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    x: live2dPanelPosition.value.x,
+    y: live2dPanelPosition.value.y,
+    width: live2dPanelSize.value.width,
+    height: live2dPanelSize.value.height,
+    characterX: live2dCharacterOffset.value.x,
+    characterY: live2dCharacterOffset.value.y,
+    resizeEdge: '',
+  }
+  ;(event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
+  event.preventDefault()
+}
+
+function beginLive2DPanelResize(event: PointerEvent, resizeEdge: Live2DResizeEdge) {
+  if (event.button !== 0) return
+  live2dPanelResizing.value = true
+  live2dPanelPointerStart = {
+    pointerId: event.pointerId,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    x: live2dPanelPosition.value.x,
+    y: live2dPanelPosition.value.y,
+    width: live2dPanelSize.value.width,
+    height: live2dPanelSize.value.height,
+    characterX: live2dCharacterOffset.value.x,
+    characterY: live2dCharacterOffset.value.y,
+    resizeEdge,
+  }
+  ;(event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function beginLive2DCharacterDrag(event: PointerEvent) {
+  if (event.button !== 0) return
+  live2dCharacterDragging.value = true
+  live2dPanelPointerStart = {
+    pointerId: event.pointerId,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    x: live2dPanelPosition.value.x,
+    y: live2dPanelPosition.value.y,
+    width: live2dPanelSize.value.width,
+    height: live2dPanelSize.value.height,
+    characterX: live2dCharacterOffset.value.x,
+    characterY: live2dCharacterOffset.value.y,
+    resizeEdge: '',
+  }
+  ;(event.currentTarget as HTMLElement | null)?.setPointerCapture?.(event.pointerId)
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function resizeLive2DPanel(event: PointerEvent) {
+  const dx = event.clientX - live2dPanelPointerStart.clientX
+  const dy = event.clientY - live2dPanelPointerStart.clientY
+  const edge = live2dPanelPointerStart.resizeEdge
+  let nextX = live2dPanelPointerStart.x
+  let nextY = live2dPanelPointerStart.y
+  let nextWidth = live2dPanelPointerStart.width
+  let nextHeight = live2dPanelPointerStart.height
+
+  if (edge.includes('e')) nextWidth = live2dPanelPointerStart.width + dx
+  if (edge.includes('s')) nextHeight = live2dPanelPointerStart.height + dy
+  if (edge.includes('w')) {
+    nextWidth = live2dPanelPointerStart.width - dx
+    nextX = live2dPanelPointerStart.x + dx
+  }
+  if (edge.includes('n')) {
+    nextHeight = live2dPanelPointerStart.height - dy
+    nextY = live2dPanelPointerStart.y + dy
+  }
+
+  const clampedWidth = Math.min(Math.max(nextWidth, LIVE2D_PANEL_MIN_WIDTH), Math.min(LIVE2D_PANEL_MAX_WIDTH, window.innerWidth - LIVE2D_PANEL_MARGIN * 2))
+  const clampedHeight = Math.min(Math.max(nextHeight, LIVE2D_PANEL_MIN_HEIGHT), Math.min(LIVE2D_PANEL_MAX_HEIGHT, window.innerHeight - LIVE2D_PANEL_MARGIN * 2))
+  if (edge.includes('w')) nextX += nextWidth - clampedWidth
+  if (edge.includes('n')) nextY += nextHeight - clampedHeight
+  live2dPanelSize.value = { width: clampedWidth, height: clampedHeight }
+  clampLive2DPanelPosition(nextX, nextY)
+}
+
+function updateLive2DPanelPointer(event: PointerEvent) {
+  if (!live2dPanelDragging.value && !live2dPanelResizing.value && !live2dCharacterDragging.value) return
+  if (event.pointerId !== live2dPanelPointerStart.pointerId) return
+  if (live2dPanelDragging.value) {
+    clampLive2DPanelPosition(
+      live2dPanelPointerStart.x + event.clientX - live2dPanelPointerStart.clientX,
+      live2dPanelPointerStart.y + event.clientY - live2dPanelPointerStart.clientY,
+    )
+    return
+  }
+  if (live2dPanelResizing.value) {
+    resizeLive2DPanel(event)
+    return
+  }
+  if (live2dCharacterDragging.value) {
+    live2dCharacterOffset.value = {
+      x: live2dPanelPointerStart.characterX + event.clientX - live2dPanelPointerStart.clientX,
+      y: live2dPanelPointerStart.characterY + event.clientY - live2dPanelPointerStart.clientY,
+    }
+  }
+}
+
+function endLive2DPanelPointer(event: PointerEvent) {
+  if (event.pointerId !== live2dPanelPointerStart.pointerId) return
+  if (!live2dPanelDragging.value && !live2dPanelResizing.value && !live2dCharacterDragging.value) return
+  live2dPanelDragging.value = false
+  live2dPanelResizing.value = false
+  live2dCharacterDragging.value = false
+  saveLive2DPanelLayout()
+}
+
+function handleLive2DPanelViewportResize() {
+  clampLive2DPanelPosition()
+}
+
+function handleLive2DCharacterWheel(event: WheelEvent) {
+  event.preventDefault()
+  const direction = event.deltaY < 0 ? 1 : -1
+  const step = event.altKey ? 0.03 : 0.08
+  live2dCharacterScale.value = Math.min(
+    Math.max(live2dCharacterScale.value + direction * step, LIVE2D_CHARACTER_MIN_SCALE),
+    LIVE2D_CHARACTER_MAX_SCALE,
+  )
+  saveLive2DPanelLayout()
+}
+
+// ── Live2D import tab state ─────────────────────────────────────────────────
+const live2dImporting = ref(false)
+const live2dImportedPath = ref('')
+const live2dImportedName = ref('')
+
+// ── Cubism Core SDK state ───────────────────────────────────────────────────
+type CubismCoreStatus = {
+  installed: boolean
+  path: string
+  size: number | null
+  installedAt: string | null
+}
+const cubismCoreStatus = ref<CubismCoreStatus | null>(null)
+const cubismCoreInstalling = ref(false)
+const cubismCoreError = ref('')
+
+function formatBytes(bytes: number | null | undefined): string {
+  if (!bytes && bytes !== 0) return ''
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${bytes} bytes`
+}
+
+async function refreshCubismCoreStatus() {
+  try {
+    const result = await invoke('waifus:getCubismCoreStatus')
+    if (result?.success) {
+      cubismCoreStatus.value = {
+        installed: !!result.installed,
+        path: String(result.path || ''),
+        size: typeof result.size === 'number' ? result.size : null,
+        installedAt: result.installedAt ?? null,
+      }
+    }
+  } catch {
+    /* non-fatal; tab will just show unknown */
+  }
+}
+
+async function installCubismCore(force = false) {
+  cubismCoreInstalling.value = true
+  cubismCoreError.value = ''
+  try {
+    const result = await invoke('waifus:installCubismCore', { force })
+    if (result?.success) {
+      const verb = result.fromCache ? 'already installed' : 'installed'
+      showToast(`Cubism Core SDK ${verb} (${formatBytes(result.size)})`, 'success')
+      await refreshCubismCoreStatus()
+    } else {
+      cubismCoreError.value = result?.error || 'Failed to install Cubism Core SDK'
+      showToast(cubismCoreError.value, 'error')
+    }
+  } catch (err: any) {
+    cubismCoreError.value = err?.message || String(err)
+    showToast(cubismCoreError.value, 'error')
+  } finally {
+    cubismCoreInstalling.value = false
+  }
+}
+
+async function importLive2DModelForCurrentWaifu() {
+  live2dImporting.value = true
+  try {
+    const result = await invoke('waifus:importLive2DModel')
+    if (result?.success) {
+      live2dImportedPath.value = result.modelJsonPath
+      live2dImportedName.value = result.displayName
+      showToast(`Live2D model "${result.displayName}" imported!`, 'success')
+    } else if (!result?.canceled) {
+      showToast(result?.error || 'Could not import model', 'error')
+    }
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  } finally {
+    live2dImporting.value = false
+  }
+}
+
+async function assignLive2DToCurrentWaifu() {
+  if (!live2dImportedPath.value || !store.selectedWaifu) return
+  try {
+    const result = await invoke('waifus:update', {
+      id: store.selectedWaifu.id,
+      avatar: {
+        ...(store.selectedWaifu.avatar ?? {}),
+        live2dModel: {
+          modelJsonPath: live2dImportedPath.value,
+          displayName: live2dImportedName.value,
+        },
+      },
+    })
+    if (!result?.success) {
+      showToast(result?.error || 'Failed to assign Live2D model', 'error')
+      return
+    }
+    await store.refreshCustomWaifus()
+    showToast(`Live2D model assigned to ${store.selectedWaifu.name}!`, 'success')
+    live2dImportedPath.value = ''
+    live2dImportedName.value = ''
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  }
+}
+
+async function removeLive2DFromCurrentWaifu() {
+  if (!store.selectedWaifu) return
+  try {
+    const result = await invoke('waifus:update', {
+      id: store.selectedWaifu.id,
+      avatar: {
+        ...(store.selectedWaifu.avatar ?? {}),
+        live2dModel: null,
+      },
+    })
+    if (!result?.success) {
+      showToast(result?.error || 'Failed to remove Live2D model', 'error')
+      return
+    }
+    await store.refreshCustomWaifus()
+    showToast('Live2D model removed.', 'success')
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  }
+}
+const latestSentimentExpression = computed(() => {
+  for (let i = store.messages.length - 1; i >= 0; i--) {
+    const m = (store.messages as any[])[i]
+    if (m.role === 'assistant' && m.sentiment?.expression) return m.sentiment.expression
+  }
+  return 'neutral'
+})
 
 // Lazy-refresh plugin and custom-waifu lists when their tabs become visible,
 // so Settings stays fast to open and data is fresh when the user gets there.
@@ -1595,6 +2125,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
 }
 
 onMounted(() => {
+  loadLive2DPanelLayout()
   ;(async () => {
     store.loadSetup()
     await store.hydrateProviderConfig()
@@ -1609,6 +2140,9 @@ onMounted(() => {
     // Load waifu-authored skills so the first system prompt already
     // lists what's available.
     store.refreshAvailableSkills()
+    // Refresh Cubism Core install status so the Live2D tab can show it
+    // immediately without a round-trip when first opened.
+    refreshCubismCoreStatus()
     if (store.isSetup) {
       store.loadConversations()
       store.loadMemories()
@@ -1665,6 +2199,10 @@ onMounted(() => {
   window.addEventListener('app:tool-proposed', onAppToolProposed as EventListener)
   window.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('pointerdown', onGlobalPointerDown)
+  window.addEventListener('pointermove', updateLive2DPanelPointer)
+  window.addEventListener('pointerup', endLive2DPanelPointer)
+  window.addEventListener('pointercancel', endLive2DPanelPointer)
+  window.addEventListener('resize', handleLive2DPanelViewportResize)
 
   startupSplashTimer = window.setTimeout(() => {
     showStartupSplash.value = false
@@ -1686,6 +2224,10 @@ onUnmounted(() => {
   window.removeEventListener('app:tool-proposed', onAppToolProposed as EventListener)
   window.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('pointerdown', onGlobalPointerDown)
+  window.removeEventListener('pointermove', updateLive2DPanelPointer)
+  window.removeEventListener('pointerup', endLive2DPanelPointer)
+  window.removeEventListener('pointercancel', endLive2DPanelPointer)
+  window.removeEventListener('resize', handleLive2DPanelViewportResize)
   if (startupSplashTimer !== null) {
     window.clearTimeout(startupSplashTimer)
   }
@@ -2006,6 +2548,7 @@ async function handleExportData() {
         proactiveChatTemperature: store.proactiveChatTemperature,
         affection: readLocalStorageJson('syntax-senpai-affection'),
         apiTelemetryHistory: readLocalStorageJson(API_TELEMETRY_HISTORY_STORAGE_KEY),
+        enableTimeoutsAndIterationCaps: store.enableTimeoutsAndIterationCaps,
         maxToolIterations: store.maxToolIterations,
         apiSpikeThresholdMs: store.apiSpikeThresholdMs,
       },
@@ -2124,6 +2667,9 @@ async function handleImportData() {
     }
     if (typeof payload?.settings?.proactiveChatTemperature === 'number') {
       store.setProactiveChatTemperature(payload.settings.proactiveChatTemperature)
+    }
+    if (typeof payload?.settings?.enableTimeoutsAndIterationCaps === 'boolean') {
+      store.setEnableTimeoutsAndIterationCaps(payload.settings.enableTimeoutsAndIterationCaps)
     }
     if (typeof payload?.settings?.maxToolIterations === 'number') {
       store.setMaxToolIterations(payload.settings.maxToolIterations)
@@ -2426,7 +2972,7 @@ async function handleImportData() {
                   v-for="tab in settingsTabs"
                   :key="tab.id"
                   :class="['settings-nav-btn', settingsTab === tab.id && 'settings-nav-btn-active']"
-                  @click="tab.id === 'mobile' ? (settingsTab = 'mobile', checkMobilePairingStatus()) : (settingsTab = tab.id)"
+                  @click="settingsTab = tab.id; if (tab.id === 'mobile') checkMobilePairingStatus(); if (tab.id === 'live2d') refreshCubismCoreStatus()"
                 >
                   <span class="text-base leading-none shrink-0">{{ tab.icon }}</span>
                   <span class="truncate">{{ tab.label }}</span>
@@ -2547,6 +3093,32 @@ async function handleImportData() {
               </div>
               <p class="mt-4 text-[11px] text-neutral-500">
                 {{ t('settings.overlayWindowHint') }}
+              </p>
+            </div>
+
+            <div class="settings-card mt-4">
+              <div class="mb-3">
+                <div class="text-sm font-semibold text-neutral-200">Window resolution</div>
+                <p class="mt-1 text-xs text-neutral-400">
+                  Pick a saved app window size. Selecting a resolution centers the window and stores it for the current display mode.
+                </p>
+              </div>
+              <select
+                :value="selectedWindowResolution"
+                class="input-field"
+                @change="applyWindowResolution(($event.target as HTMLSelectElement).value)"
+              >
+                <option value="custom">{{ currentWindowResolutionLabel }}</option>
+                <option
+                  v-for="option in windowResolutionOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+              <p v-if="fullscreenWindow.enabled" class="mt-2 text-[11px] text-amber-300">
+                Choosing a resolution exits fullscreen and applies the selected window size.
               </p>
             </div>
 
@@ -2843,40 +3415,74 @@ async function handleImportData() {
                 </div>
               </div>
 
+              <div class="mb-4 rounded-xl border border-neutral-800/60 bg-neutral-900/55 p-3">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <div class="font-semibold text-neutral-200">Enable timeouts and iterations cap</div>
+                    <div class="mt-1 text-xs text-neutral-500">
+                      Off by default. When enabled, retries on timeout/network failures, response-time alerts, and tool/subagent iteration caps are enforced.
+                    </div>
+                  </div>
+                  <button
+                    class="relative h-6 w-11 shrink-0 cursor-pointer rounded-full transition-all duration-300"
+                    :style="{ background: store.enableTimeoutsAndIterationCaps ? 'linear-gradient(90deg,#22c55e,#06b6d4)' : '#404040' }"
+                    :aria-label="`${store.enableTimeoutsAndIterationCaps ? 'Disable' : 'Enable'} timeouts and iterations cap`"
+                    @click="store.setEnableTimeoutsAndIterationCaps(!store.enableTimeoutsAndIterationCaps)"
+                  >
+                    <span
+                      class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                      :style="{ transform: store.enableTimeoutsAndIterationCaps ? 'translateX(20px)' : 'translateX(0)' }"
+                    />
+                  </button>
+                </div>
+              </div>
+
               <div class="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                 <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
                   <div class="font-semibold text-neutral-200">{{ t('settings.maxIterations') }}</div>
-                  <div class="mt-1 text-xs text-neutral-500">{{ t('settings.maxIterationsDescription') }}</div>
+                  <div class="mt-1 text-xs text-neutral-500">
+                    {{ t('settings.maxIterationsDescription') }}
+                    <span v-if="!store.enableTimeoutsAndIterationCaps" class="text-amber-300"> Disabled until caps are enabled.</span>
+                  </div>
                   <input
                     class="input-field mt-3"
                     type="number"
                     min="1"
                     max="24"
+                    :disabled="!store.enableTimeoutsAndIterationCaps"
                     :value="store.maxToolIterations"
                     @change="store.setMaxToolIterations(Number(($event.target as HTMLInputElement).value))"
                   >
                 </label>
                 <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
                   <div class="font-semibold text-neutral-200">{{ t('settings.responseThreshold') }}</div>
-                  <div class="mt-1 text-xs text-neutral-500">{{ t('settings.responseThresholdDescription') }}</div>
+                  <div class="mt-1 text-xs text-neutral-500">
+                    {{ t('settings.responseThresholdDescription') }}
+                    <span v-if="!store.enableTimeoutsAndIterationCaps" class="text-amber-300"> Disabled until caps are enabled.</span>
+                  </div>
                   <input
                     class="input-field mt-3"
                     type="number"
                     min="250"
                     max="60000"
                     step="250"
+                    :disabled="!store.enableTimeoutsAndIterationCaps"
                     :value="store.apiSpikeThresholdMs"
                     @change="store.setApiSpikeThresholdMs(Number(($event.target as HTMLInputElement).value))"
                   >
                 </label>
                 <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
                   <div class="font-semibold text-neutral-200">Subagent iteration cap</div>
-                  <div class="mt-1 text-xs text-neutral-500">Max iterations each dispatched subagent gets before it must stop. Lower = cheaper, higher = more thorough. Default 6.</div>
+                  <div class="mt-1 text-xs text-neutral-500">
+                    Max iterations each dispatched subagent gets before it must stop. Lower = cheaper, higher = more thorough. Default 6.
+                    <span v-if="!store.enableTimeoutsAndIterationCaps" class="text-amber-300"> Disabled until caps are enabled.</span>
+                  </div>
                   <input
                     class="input-field mt-3"
                     type="number"
                     min="3"
                     max="12"
+                    :disabled="!store.enableTimeoutsAndIterationCaps"
                     :value="store.subagentMaxIterations"
                     @change="store.setSubagentMaxIterations(Number(($event.target as HTMLInputElement).value))"
                   >
@@ -3699,6 +4305,35 @@ async function handleImportData() {
                     </div>
                   </div>
 
+                  <!-- Live2D model -->
+                  <div class="rounded-lg bg-neutral-800/40 border border-neutral-700/40 p-3">
+                    <p class="text-xs font-semibold text-neutral-300 mb-1">Live2D model <span class="text-[10px] text-neutral-500 font-normal">(optional — overrides static images)</span></p>
+                    <p class="text-[10px] text-neutral-500 mb-2 leading-snug">
+                      Import a Cubism 2 (<code class="bg-neutral-700/60 px-0.5 rounded">.model.json</code>) or Cubism 4
+                      (<code class="bg-neutral-700/60 px-0.5 rounded">.model3.json</code>) model — pick the JSON file
+                      directly, or import a <code class="bg-neutral-700/60 px-0.5 rounded">.zip</code> of the model
+                      folder. For Cubism 4, include <code class="bg-neutral-700/60 px-0.5 rounded">live2dcubismcore.min.js</code>
+                      next to the model JSON.
+                    </p>
+                    <div v-if="newWaifuLive2DModelPath" class="flex items-center gap-2 mb-2 rounded bg-neutral-700/40 px-2 py-1.5">
+                      <span class="text-[11px] text-green-400 font-semibold truncate flex-1">{{ newWaifuLive2DModelName || newWaifuLive2DModelPath }}</span>
+                      <button
+                        type="button"
+                        class="text-[10px] text-red-400 hover:text-red-300 shrink-0"
+                        title="Remove Live2D model"
+                        @click="newWaifuLive2DModelPath = ''; newWaifuLive2DModelName = ''"
+                      >Remove</button>
+                    </div>
+                    <button
+                      type="button"
+                      :disabled="newWaifuLive2DImporting"
+                      class="btn-secondary text-xs"
+                      @click="importLive2DModel()"
+                    >
+                      {{ newWaifuLive2DImporting ? 'Importing…' : 'Import model (.model3.json or .zip)…' }}
+                    </button>
+                  </div>
+
                   <!-- Personality sliders -->
                   <div class="rounded-lg bg-neutral-800/40 border border-neutral-700/40 p-3">
                     <p class="text-xs font-semibold text-neutral-300 mb-2">Personality traits</p>
@@ -3831,6 +4466,191 @@ async function handleImportData() {
                   </button>
                 </li>
               </ul>
+            </div>
+          </div>
+
+          <!-- Live2D Import Tab -->
+          <div v-if="settingsTab === 'live2d'">
+            <div class="settings-card mb-3">
+              <div class="mb-3">
+                <h3 class="text-sm font-bold text-white">Live2D resolution</h3>
+                <p class="text-xs text-neutral-400">
+                  Choose the floating avatar window size. This changes the Live2D canvas resolution; character scale and position stay separate.
+                </p>
+              </div>
+              <select
+                :value="selectedLive2DResolution"
+                class="input-field"
+                @change="applyLive2DResolution(($event.target as HTMLSelectElement).value)"
+              >
+                <option value="custom">Custom: {{ currentLive2DResolutionLabel }}</option>
+                <option
+                  v-for="option in live2dResolutionOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+              <div class="mt-3 flex gap-2">
+                <button class="btn-secondary flex-1 text-xs" @click="resetLive2DPanelLayout">
+                  Reset Live2D layout
+                </button>
+                <button class="btn-secondary flex-1 text-xs" @click="showLive2DPanel = true">
+                  Show avatar panel
+                </button>
+              </div>
+            </div>
+
+            <div class="settings-card mb-3">
+              <div class="mb-3">
+                <h3 class="text-sm font-bold text-white">Render quality</h3>
+                <p class="text-xs text-neutral-400">
+                  Supersample the Live2D canvas for a sharper, less pixelated model. Higher values
+                  render at more pixels per CSS pixel (HiDPI / Retina trick) but cost more GPU.
+                </p>
+              </div>
+              <select
+                :value="String(live2dRenderScale)"
+                class="input-field"
+                @change="applyLive2DRenderScale(($event.target as HTMLSelectElement).value)"
+              >
+                <option
+                  v-for="option in live2dRenderScaleOptions"
+                  :key="option.value"
+                  :value="String(option.value)"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+              <p class="text-[11px] text-neutral-500 mt-2">
+                Current: <span class="text-neutral-300">{{ live2dRenderScale }}×</span>
+                · Backing canvas: <span class="text-neutral-300">{{ live2dBackingCanvasLabel }}</span>
+                · Display DPR: <span class="text-neutral-300">{{ live2dDevicePixelRatio.toFixed(2) }}</span>
+              </p>
+            </div>
+
+            <div class="settings-card mb-3">
+              <h3 class="text-sm font-bold text-white mb-1">🎭 Import Live2D Model</h3>
+              <p class="text-xs text-neutral-400 mb-4">
+                Import a Live2D Cubism 4 model to use as your waifu's avatar. Pick the
+                <code class="bg-neutral-700/60 px-0.5 rounded">.model3.json</code> directly,
+                or import a <code class="bg-neutral-700/60 px-0.5 rounded">.zip</code> of the model folder
+                — the importer will find the <code class="bg-neutral-700/60 px-0.5 rounded">.model3.json</code> inside.
+                Don't forget <code class="bg-neutral-700/60 px-0.5 rounded">live2dcubismcore.min.js</code>.
+              </p>
+
+              <!-- Current waifu info -->
+              <div class="flex items-center gap-2 mb-4 rounded bg-neutral-700/40 px-3 py-2">
+                <span class="text-lg">{{ currentWaifuLive2D ? '🎭' : '💗' }}</span>
+                <div class="flex-1 min-w-0">
+                  <p class="text-xs font-semibold text-white truncate">{{ store.selectedWaifu?.name ?? 'No waifu selected' }}</p>
+                  <p class="text-[10px] text-neutral-400 truncate">
+                    {{ currentWaifuLive2D ? `Live2D: ${currentWaifuLive2D.displayName || currentWaifuLive2D.modelJsonPath}` : 'No Live2D model assigned' }}
+                  </p>
+                </div>
+                <button
+                  v-if="currentWaifuLive2D"
+                  class="btn-secondary text-xs px-2 py-1 text-rose-400 hover:text-rose-300"
+                  title="Remove Live2D model from this waifu"
+                  @click="removeLive2DFromCurrentWaifu()"
+                >
+                  Remove
+                </button>
+              </div>
+
+              <!-- Import area -->
+              <div class="flex flex-col gap-3">
+                <div v-if="live2dImportedPath" class="flex items-center gap-2 rounded bg-emerald-900/30 border border-emerald-700/40 px-3 py-2">
+                  <span class="text-emerald-400 text-sm">✓</span>
+                  <span class="text-[11px] text-emerald-300 font-semibold truncate flex-1">{{ live2dImportedName || live2dImportedPath }}</span>
+                  <button
+                    class="text-neutral-500 hover:text-neutral-300 text-xs"
+                    @click="live2dImportedPath = ''; live2dImportedName = ''"
+                  >✕</button>
+                </div>
+
+                <button
+                  class="btn-secondary w-full"
+                  :disabled="live2dImporting"
+                  @click="importLive2DModelForCurrentWaifu()"
+                >
+                  {{ live2dImporting ? 'Importing…' : live2dImportedPath ? 'Import different model…' : 'Import model (.model3.json or .zip)…' }}
+                </button>
+
+                <button
+                  v-if="live2dImportedPath && store.selectedWaifu"
+                  class="btn-primary w-full"
+                  @click="assignLive2DToCurrentWaifu()"
+                >
+                  Assign to {{ store.selectedWaifu.name }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Cubism Core SDK card -->
+            <div class="settings-card mb-3">
+              <div class="flex items-center justify-between gap-2 mb-1">
+                <h4 class="text-sm font-bold text-white">Cubism Core SDK</h4>
+                <span
+                  class="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+                  :class="cubismCoreStatus?.installed
+                    ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/40'
+                    : 'bg-amber-900/40 text-amber-300 border border-amber-700/40'"
+                >
+                  {{ cubismCoreStatus?.installed ? 'Installed' : 'Not installed' }}
+                </span>
+              </div>
+              <p class="text-[11px] text-neutral-400 mb-3 leading-snug">
+                Cubism Core is the runtime that animates Live2D Cubism 4 models. The app downloads it
+                from Live2D's official CDN
+                (<code class="bg-neutral-700/60 px-0.5 rounded">cubism.live2d.com</code>)
+                the first time you import a model. You can also install or refresh it manually here.
+              </p>
+              <div v-if="cubismCoreStatus?.installed" class="text-[10px] text-neutral-500 mb-3 font-mono break-all">
+                {{ cubismCoreStatus.path }}
+                <span v-if="cubismCoreStatus.size" class="ml-1 text-neutral-400">({{ formatBytes(cubismCoreStatus.size) }})</span>
+              </div>
+              <div v-if="cubismCoreError" class="mb-2 rounded bg-rose-900/30 border border-rose-700/40 px-2 py-1.5 text-[11px] text-rose-300 leading-snug">
+                {{ cubismCoreError }}
+              </div>
+              <div class="flex gap-2">
+                <button
+                  class="btn-primary flex-1"
+                  :disabled="cubismCoreInstalling"
+                  @click="installCubismCore(false)"
+                >
+                  {{ cubismCoreInstalling
+                    ? 'Installing…'
+                    : cubismCoreStatus?.installed ? 'Verify install' : 'Install Cubism Core SDK' }}
+                </button>
+                <button
+                  v-if="cubismCoreStatus?.installed"
+                  class="btn-secondary"
+                  :disabled="cubismCoreInstalling"
+                  title="Re-download from the Live2D CDN"
+                  @click="installCubismCore(true)"
+                >
+                  Re-install
+                </button>
+              </div>
+            </div>
+
+            <!-- Tips card -->
+            <div class="settings-card">
+              <h4 class="text-xs font-bold text-neutral-300 mb-2">Tips</h4>
+              <ul class="text-[11px] text-neutral-400 space-y-1 list-disc list-inside">
+                <li>Supported format: Live2D Cubism 4 (<code class="bg-neutral-700/60 px-0.5 rounded">.model3.json</code>)</li>
+                <li>You can import either the <code class="bg-neutral-700/60 px-0.5 rounded">.model3.json</code> file directly or a <code class="bg-neutral-700/60 px-0.5 rounded">.zip</code> archive of the model folder.</li>
+                <li>The model contents are copied into the app's data directory.</li>
+                <li>The Cubism Core SDK is auto-installed when you import the first model — no extra setup needed.</li>
+                <li>After assigning, toggle the avatar panel with the 🎭 button in the toolbar.</li>
+                <li>To switch waifus, go to <strong class="text-neutral-300">Settings → General</strong> first, then come back here.</li>
+              </ul>
+            </div>
+
+            <div class="flex gap-2 mt-3">
+              <button class="btn-primary flex-1" @click="showSettings = false">Done</button>
             </div>
           </div>
 
@@ -4459,6 +5279,16 @@ async function handleImportData() {
           </button>
           <template v-if="!compactChatLayout">
           <button
+            v-if="currentWaifuLive2D"
+            class="btn-ghost p-2"
+            :style="ghostButtonStyle"
+            :title="showLive2DPanel ? 'Hide avatar' : 'Show Live2D avatar'"
+            :aria-label="showLive2DPanel ? 'Hide avatar' : 'Show Live2D avatar'"
+            @click="showLive2DPanel = !showLive2DPanel"
+          >
+            🪆
+          </button>
+          <button
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             :title="t('sidebar.agent')"
@@ -4659,6 +5489,35 @@ async function handleImportData() {
                 :recent="msg.id === store.recentMessageId"
                 :show-copy="msg.role === 'assistant'"
               />
+              <div
+                v-if="msg.pendingApproval"
+                :class="[
+                  'mt-2 flex gap-2 rounded-xl border border-amber-400/25 bg-amber-400/10 p-2',
+                  compactChatLayout ? 'max-w-[260px]' : 'max-w-md',
+                ]"
+              >
+                <template v-if="msg.pendingApproval.status === 'pending'">
+                  <button
+                    class="btn-primary flex-1 text-xs"
+                    @click="store.approveToolApproval(msg.pendingApproval.id)"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    class="btn-secondary flex-1 text-xs text-rose-300"
+                    @click="store.denyToolApproval(msg.pendingApproval.id)"
+                  >
+                    Deny
+                  </button>
+                </template>
+                <div
+                  v-else
+                  class="w-full text-center text-xs font-semibold"
+                  :class="msg.pendingApproval.status === 'approved' ? 'text-emerald-300' : 'text-rose-300'"
+                >
+                  {{ msg.pendingApproval.status === 'approved' ? 'Approved' : 'Denied' }}
+                </div>
+              </div>
               <SubagentPanel
                 v-if="msg.subagents && msg.subagents.length > 0"
                 :subagents="msg.subagents"
@@ -4857,6 +5716,90 @@ async function handleImportData() {
         </p>
       </div>
     </div>
+
+    <!-- Floating Live2D avatar panel -->
+    <Teleport to="body">
+      <Transition
+        enter-active-class="transition-all duration-300 ease-out"
+        enter-from-class="opacity-0 scale-90 translate-y-4"
+        leave-active-class="transition-all duration-200 ease-in"
+        leave-to-class="opacity-0 scale-90 translate-y-4"
+      >
+        <div
+          v-if="showLive2DPanel && currentWaifuLive2D"
+          class="live2d-panel fixed z-[60] rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-black/30 backdrop-blur-sm select-none touch-none"
+          :class="[
+            live2dPanelDragging || live2dCharacterDragging ? 'cursor-grabbing' : '',
+            live2dPanelResizing ? 'ring-2 ring-cyan-300/50' : '',
+          ]"
+          :style="live2dPanelStyle"
+        >
+          <!-- Header bar -->
+          <div
+            class="absolute top-0 inset-x-0 z-10 flex cursor-grab items-center justify-between gap-2 px-3 py-1.5 bg-gradient-to-b from-black/70 to-transparent active:cursor-grabbing"
+            @pointerdown="beginLive2DPanelDrag"
+          >
+            <span class="text-xs font-semibold text-white/80 truncate">{{ store.selectedWaifu?.displayName }}</span>
+            <div class="flex items-center gap-1" data-live2d-panel-control>
+              <button
+                class="text-[11px] leading-none px-1.5 py-1 rounded text-white/60 hover:text-white/90 hover:bg-white/10"
+                title="Reset avatar position and scale"
+                @click.stop="resetLive2DPanelLayout"
+              >Reset</button>
+              <button
+                class="text-white/60 hover:text-white/90 text-lg leading-none px-1"
+                title="Close"
+                @click.stop="showLive2DPanel = false"
+              >×</button>
+            </div>
+          </div>
+          <div
+            class="absolute inset-0 cursor-grab active:cursor-grabbing"
+            @pointerdown="beginLive2DCharacterDrag"
+            @wheel="handleLive2DCharacterWheel"
+          >
+            <Live2DAvatar
+              :model-path="currentWaifuLive2D.modelJsonPath"
+              :expression="latestSentimentExpression"
+              :motion-map="currentWaifuLive2D.expressionMotions"
+              :width="live2dPanelWidth"
+              :height="live2dPanelHeight"
+              :model-scale="live2dCharacterScale"
+              :offset-x="live2dCharacterOffset.x"
+              :offset-y="live2dCharacterOffset.y"
+              :render-scale="live2dRenderScale"
+            />
+          </div>
+          <div
+            class="live2d-scale-control absolute left-3 right-8 bottom-3 z-10 flex items-center gap-2 rounded-lg border border-white/10 bg-black/55 px-2.5 py-2 backdrop-blur-sm cursor-default"
+            data-live2d-panel-control
+            @pointerdown.stop
+          >
+            <span class="text-[10px] font-semibold text-white/70 w-9">Scale</span>
+            <input
+              v-model.number="live2dCharacterScale"
+              type="range"
+              :min="LIVE2D_CHARACTER_MIN_SCALE"
+              :max="LIVE2D_CHARACTER_MAX_SCALE"
+              step="0.05"
+              class="w-full accent-primary-500"
+              title="Scale character"
+              @input="saveLive2DPanelLayout"
+              @change="saveLive2DPanelLayout"
+            />
+            <span class="text-[10px] tabular-nums text-white/60 w-9 text-right">{{ live2dCharacterScalePercent }}%</span>
+          </div>
+          <div class="absolute inset-x-2 top-0 z-20 h-2 cursor-ns-resize" data-live2d-panel-control @pointerdown="beginLive2DPanelResize($event, 'n')" />
+          <div class="absolute inset-x-2 bottom-0 z-20 h-2 cursor-ns-resize" data-live2d-panel-control @pointerdown="beginLive2DPanelResize($event, 's')" />
+          <div class="absolute inset-y-2 left-0 z-20 w-2 cursor-ew-resize" data-live2d-panel-control @pointerdown="beginLive2DPanelResize($event, 'w')" />
+          <div class="absolute inset-y-2 right-0 z-20 w-2 cursor-ew-resize" data-live2d-panel-control @pointerdown="beginLive2DPanelResize($event, 'e')" />
+          <div class="absolute left-0 top-0 z-20 h-4 w-4 cursor-nwse-resize" data-live2d-panel-control @pointerdown="beginLive2DPanelResize($event, 'nw')" />
+          <div class="absolute right-0 top-0 z-20 h-4 w-4 cursor-nesw-resize" data-live2d-panel-control @pointerdown="beginLive2DPanelResize($event, 'ne')" />
+          <div class="absolute bottom-0 left-0 z-20 h-4 w-4 cursor-nesw-resize" data-live2d-panel-control @pointerdown="beginLive2DPanelResize($event, 'sw')" />
+          <div class="absolute bottom-0 right-0 z-20 h-4 w-4 cursor-nwse-resize" data-live2d-panel-control @pointerdown="beginLive2DPanelResize($event, 'se')" />
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -4893,6 +5836,20 @@ async function handleImportData() {
   transform: translateY(0);
   outline: 2px solid #60a5fa;
   outline-offset: 2px;
+}
+
+.live2d-scale-control {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.live2d-panel:hover .live2d-scale-control,
+.live2d-panel:focus-within .live2d-scale-control {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
 }
 
 @keyframes startup-float {

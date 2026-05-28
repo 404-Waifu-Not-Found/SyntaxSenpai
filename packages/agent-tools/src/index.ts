@@ -8,3 +8,4 @@ export * from "./types";
 export * from "./registry";
 export * from "./plugins";
 export * from "./builtin";
+export * from "./live2d-import";

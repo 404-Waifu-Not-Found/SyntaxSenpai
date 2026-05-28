@@ -116,6 +116,8 @@ export interface StreamChunk {
   delta?: string;
   toolCall?: Partial<ToolCall>;
   error?: string;
+  /** Final token usage — populated on the terminal "done" chunk when the provider reports it. */
+  usage?: TokenUsage;
 }
 
 export interface TokenUsage {

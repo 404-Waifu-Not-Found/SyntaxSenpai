@@ -18,15 +18,41 @@ if (typeof electronModule === 'string') {
   process.exit(0)
 }
 
-const { app, BrowserWindow, ipcMain, clipboard, globalShortcut, Tray, Menu, nativeImage, screen } = electronModule
+const { app, BrowserWindow, ipcMain, clipboard, globalShortcut, Tray, Menu, nativeImage, screen, protocol: earlyProtocol } = electronModule
 const { join } = require('path')
 const fs = require('fs')
+
+// Register `userdata://` as a standard, fetch-capable, secure scheme BEFORE
+// app is ready. Without this, the scheme is treated as opaque — relative URL
+// resolution against `userdata://...model3.json` fails, which is what makes
+// pixi-live2d-display throw a "Network error" when it tries to fetch the
+// .moc3 / textures / motions referenced by the model JSON.
+try {
+  earlyProtocol.registerSchemesAsPrivileged([
+    {
+      scheme: 'userdata',
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true,
+        stream: true,
+        bypassCSP: true,
+      },
+    },
+  ])
+} catch (err) {
+  // If this fails, the app still boots — Live2D rendering just won't work.
+  console.warn('[desktop] failed to register userdata:// scheme:', err)
+}
 import { registerChatIpc } from './ipc/chat'
 import { registerAgentIpc } from './ipc/agent'
 import { registerKeystoreIpc } from './ipc/keystore'
 import { registerProviderIpc } from './ipc/provider'
 import { registerTerminalIpc } from './ipc/terminal'
 import { registerFilesystemIpc } from './ipc/filesystem'
+import { registerSearchIpc } from './ipc/search'
+import { registerLspIpc } from './ipc/lsp'
 import { registerSpotifyIpc } from './ipc/spotify'
 import { registerExportIpc } from './ipc/export'
 import { registerWsIpc } from './ipc/ws'
@@ -448,11 +474,20 @@ ipcMain.handle('clipboard:write', (_e: any, text: string) => {
 
 ipcMain.handle('window:getViewState', () => {
   try {
+    const bounds = mainWindow && !mainWindow.isDestroyed()
+      ? mainWindow.getBounds()
+      : getActiveBoundsForMode(windowState.mode)
     return {
       success: true,
       mode: mainWindow?.isFullScreen() ? 'fullscreen' : windowState.mode,
       overlayEnabled: windowState.mode === 'overlay',
       fullscreenEnabled: !!mainWindow?.isFullScreen() || windowState.mode === 'fullscreen',
+      bounds: {
+        width: bounds.width,
+        height: bounds.height,
+        x: bounds.x,
+        y: bounds.y,
+      },
     }
   } catch (err: any) {
     return { success: false, error: err?.message || String(err) }
@@ -485,6 +520,57 @@ ipcMain.handle('window:setDisplayMode', (_e: any, mode: WindowMode) => {
   }
 })
 
+ipcMain.handle('window:setResolution', (_e: any, size: { width?: number; height?: number }) => {
+  try {
+    if (!mainWindow) createWindow()
+    if (!mainWindow || mainWindow.isDestroyed()) throw new Error('Window is not available')
+
+    const mode: WindowMode = windowState.mode === 'overlay' ? 'overlay' : 'normal'
+    if (mainWindow.isFullScreen()) {
+      mainWindow.setFullScreen(false)
+      windowState.mode = 'normal'
+    }
+
+    const minWidth = mode === 'overlay' ? OVERLAY_WINDOW_MIN_WIDTH : NORMAL_WINDOW_MIN_WIDTH
+    const minHeight = mode === 'overlay' ? OVERLAY_WINDOW_MIN_HEIGHT : NORMAL_WINDOW_MIN_HEIGHT
+    const display = screen.getDisplayMatching(mainWindow.getBounds())
+    const workArea = display?.workArea ?? display?.bounds ?? {
+      x: 0,
+      y: 0,
+      width: NORMAL_WINDOW_DEFAULT_BOUNDS.width,
+      height: NORMAL_WINDOW_DEFAULT_BOUNDS.height,
+    }
+    const width = clampToRange(Math.round(Number(size?.width) || NORMAL_WINDOW_DEFAULT_BOUNDS.width), minWidth, workArea.width)
+    const height = clampToRange(Math.round(Number(size?.height) || NORMAL_WINDOW_DEFAULT_BOUNDS.height), minHeight, workArea.height)
+    const bounds = {
+      width,
+      height,
+      x: Math.round(workArea.x + (workArea.width - width) / 2),
+      y: Math.round(workArea.y + (workArea.height - height) / 2),
+    }
+
+    mainWindow.setBounds(bounds)
+    if (mode === 'overlay') {
+      windowState.overlayBounds = bounds
+    } else {
+      windowState.mode = 'normal'
+      windowState.normalBounds = bounds
+    }
+    saveWindowState()
+    mainWindow.show()
+    mainWindow.focus()
+    return {
+      success: true,
+      mode: windowState.mode,
+      overlayEnabled: windowState.mode === 'overlay',
+      fullscreenEnabled: false,
+      bounds,
+    }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
 ipcMain.handle('window:setOverlayMode', (_e: any, enabled: boolean) => {
   try {
     if (!mainWindow) createWindow()
@@ -497,6 +583,19 @@ ipcMain.handle('window:setOverlayMode', (_e: any, enabled: boolean) => {
 
 app.whenReady().then(() => {
   windowState = loadWindowState()
+
+  // Register a custom protocol so the renderer can load Live2D model files
+  // from userData via fetch() regardless of whether the window was loaded
+  // from the Vite dev server (http://) or a file:// origin (production).
+  // Maps userdata://<relative-path> to <userData>/<relative-path>.
+  const { protocol, net } = electronModule
+  const { pathToFileURL: ptfu } = require('node:url')
+  protocol.handle('userdata', (request: any) => {
+    const relPath = decodeURIComponent(request.url.replace(/^userdata:\/\//, ''))
+    const absPath = join(app.getPath('userData'), relPath)
+    return net.fetch(ptfu(absPath).toString())
+  })
+
   createWindow()
 
   // Ensure chat DB path is set to userData
@@ -514,6 +613,8 @@ app.whenReady().then(() => {
   registerProviderIpc()
   registerTerminalIpc()
   registerFilesystemIpc()
+  registerSearchIpc()
+  registerLspIpc()
   registerSpotifyIpc()
   registerExportIpc()
   registerWsIpc()

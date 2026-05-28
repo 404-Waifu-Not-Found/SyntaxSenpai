@@ -1,11 +1,12 @@
 # Contributing to SyntaxSenpai
 
-Thanks for your interest in contributing! This guide will help you get set up and make your first contribution.
+This guide covers local setup, test commands, and PR expectations.
 
 ## Prerequisites
 
 - **Node.js** >= 20
 - **pnpm** >= 8
+- Optional: Ollama or LM Studio for local keyless model testing
 
 ## Local setup
 
@@ -21,7 +22,7 @@ pnpm install
 pnpm dev:desktop
 ```
 
-API keys are configured in-app through the Settings panel.
+API keys are configured in-app through **Settings -> AI** and stored through the desktop keychain path.
 
 ## Build the iOS app
 
@@ -81,7 +82,8 @@ If `eas` is not installed globally, use `npx eas ...` instead of `eas ...`.
 This is a **pnpm monorepo** managed with [Turborepo](https://turbo.build/repo). Key directories:
 
 - `apps/desktop/` — Electron + Vue 3 desktop app
-- `apps/mobile/` — Mobile app target
+- `apps/mobile/` — Expo / React Native companion app
+- `apps/runtime/` — Node runtime service for health, metrics, backups, and plugins
 - `packages/` — Shared libraries (AI core, waifu definitions, storage, UI, etc.)
 
 ## Useful scripts
@@ -90,14 +92,16 @@ This is a **pnpm monorepo** managed with [Turborepo](https://turbo.build/repo). 
 |---|---|
 | `pnpm dev:desktop` | Start the desktop app in dev mode |
 | `pnpm dev:mobile` | Start the mobile app in dev mode |
+| `pnpm dev:runtime` | Start the runtime service |
 | `pnpm build` | Build all workspaces |
 | `pnpm test` | Run all tests |
+| `pnpm test:unit` | Run package unit tests |
 | `pnpm lint` | Run linters |
 | `pnpm typecheck` | TypeScript type checks |
 
 ## Guidelines
 
-- **Do NOT commit API keys or secrets.** Use the in-app settings or `.env.local` (gitignored).
+- **Do not commit API keys or secrets.** Use the in-app settings or local, gitignored environment files for scripts.
 - Write clear, descriptive commit messages.
 - Keep PRs focused — one feature or fix per PR.
 - Add tests for new functionality when possible.
@@ -108,7 +112,7 @@ This is a **pnpm monorepo** managed with [Turborepo](https://turbo.build/repo). 
 1. Fork the repo and create a branch from `main`.
 2. Make your changes and ensure `pnpm test` and `pnpm typecheck` pass.
 3. Open a PR with a clear title and description.
-4. Include screenshots for UI changes.
+4. Include screenshots for UI changes. Store durable README/product captures under `docs/assets/screenshots/`.
 5. A maintainer will review and provide feedback.
 
 ## Reporting bugs
@@ -118,5 +122,3 @@ Please use [GitHub Issues](https://github.com/404-Waifu-Not-Found/SyntaxSenpai/i
 ## Code of Conduct
 
 This project follows our [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you agree to uphold it.
-
-Thanks for contributing!

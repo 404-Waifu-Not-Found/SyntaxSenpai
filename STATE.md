@@ -96,7 +96,7 @@ Iteration budget feedback is appended to every tool result (`annotateToolResult`
 
 ## Settings UI
 
-Left sidebar with 7 tabs:
+Left sidebar with 12 tabs:
 
 - **General** — language, waifu, group chat
 - **AI** — provider, API key, Refresh models button
@@ -104,6 +104,10 @@ Left sidebar with 7 tabs:
 - **Metrics** — max tool iterations, response-time spike threshold, live telemetry (latest / avg / p95 / alert count, bar chart, per-sample list) with auto-selected time units
 - **Theme** — 17 presets including Rainbow (live hue cycle via `mix-blend-mode: color` overlay) and Sakura Dark + falling petals overlay
 - **Interface** — UI density (cozy / compact), corner-radius scale, backdrop-blur slider, sakura-petals toggle
+- **Plugins** — installed plugins and pending AI-authored tool proposals
+- **Skills** — user-authored `SKILL.md` entries surfaced to the prompt
+- **Waifus** — built-in/custom waifu management
+- **Live2D** — Cubism/Live2D status and avatar rendering controls
 - **Mobile** — QR pairing + connection status
 - **WeChat** — QR pairing for Tencent OpenClaw iLink; status, unpair, last error. Credentials in keytar (`syntax-senpai-wechat`).
 

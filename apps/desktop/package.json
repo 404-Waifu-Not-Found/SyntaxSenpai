@@ -13,6 +13,7 @@
     "start": "electron dist/main/index.js",
     "build": "electron-vite build",
     "typecheck": "vue-tsc --noEmit",
+    "test:unit": "vitest run --environment node",
     "lint": "eslint . --ext .ts,.vue",
     "postinstall": "electron-builder install-app-deps"
   },
@@ -31,9 +32,11 @@
     "electron-squirrel-startup": "^1.0.1",
     "html-to-image": "^1.11.13",
     "keytar": "^7.9.0",
+    "pixi.js": "^6.5.10",
+    "pixi-live2d-display": "^0.4.0",
     "pinia": "^3.0.2",
     "vue": "^3.5.13",
-    "ws": "^8.17.0",
+    "ws": "^8.21.0",
     "qrcode": "^1.5.3"
   },
   "devDependencies": {
@@ -42,17 +45,16 @@
     "@types/qrcode": "^1.5.5",
     "@unocss/reset": "^66.6.7",
     "@vitejs/plugin-vue": "^6.0.5",
-    "electron": "^31.0.0",
-    "electron-builder": "^24.6.4",
-    "electron-vite": "^2.0.0",
+    "electron": "^39.8.5",
+    "electron-builder": "^26.8.1",
+    "electron-vite": "^5.0.0",
     "eslint": "^9.0.0",
     "typescript": "^5.7.2",
     "unocss": "^66.6.7",
-    "vite": "^6.0.0",
-    "vue-tsc": "^3.2.6",
-    "electron-rebuild": "^3.2.0"
+    "vite": "^7.3.3",
+    "vue-tsc": "^3.2.6"
   },
-    "build": {
+  "build": {
     "productName": "SyntaxSenpai",
     "appId": "ai.syntaxsenpai",
     "icon": "build/icon.ico",
@@ -64,6 +66,12 @@
       "dist/renderer/**/*",
       "dist/preload/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/",
+        "to": "."
+      }
     ],
     "mac": {
       "target": ["dmg", "zip"],

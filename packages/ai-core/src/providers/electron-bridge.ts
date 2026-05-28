@@ -71,6 +71,8 @@ export async function* bridgeChatStream(
   let ended = false;
   let endError: Error | null = null;
   let resolveWaiter: (() => void) | null = null;
+  let pendingDone = false;
+  let finalUsage: StreamChunk["usage"] | undefined;
 
   // OpenAI-compatible streams emit tool_calls in fragments keyed by `index`:
   // only the first fragment has `id`/`function.name`, and `function.arguments`
@@ -132,7 +134,19 @@ export async function* bridgeChatStream(
           };
           finish_reason?: string;
         }>;
+        usage?: {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+          total_tokens?: number;
+        };
       };
+      if (parsed.usage && typeof parsed.usage.total_tokens === "number") {
+        finalUsage = {
+          promptTokens: parsed.usage.prompt_tokens || 0,
+          completionTokens: parsed.usage.completion_tokens || 0,
+          totalTokens: parsed.usage.total_tokens || 0,
+        };
+      }
       const delta = parsed.choices?.[0]?.delta;
       // DeepSeek reasoner streams chain-of-thought as reasoning_content,
       // separate from content — surface it so callers can show it live.
@@ -162,7 +176,9 @@ export async function* bridgeChatStream(
       }
       if (parsed.choices?.[0]?.finish_reason) {
         flushToolCallBuffers();
-        queue.push({ type: "done" });
+        // Defer the terminal "done" until the stream ends so we can attach
+        // the usage chunk OpenAI emits AFTER finish_reason.
+        pendingDone = true;
       }
     } catch {
       /* skip malformed chunk */
@@ -179,7 +195,13 @@ export async function* bridgeChatStream(
     }
     // Some providers close the stream without emitting a finish_reason chunk —
     // flush any buffered tool calls so they aren't silently dropped.
-    if (!payload?.error) flushToolCallBuffers();
+    if (!payload?.error) {
+      flushToolCallBuffers();
+      if (pendingDone || finalUsage) {
+        queue.push({ type: "done", usage: finalUsage });
+        pendingDone = false;
+      }
+    }
     ended = true;
     wake();
   };

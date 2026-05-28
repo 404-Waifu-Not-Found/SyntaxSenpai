@@ -228,9 +228,9 @@ const messages: Record<Locale, Record<string, string>> = {
     'agent.title': 'Agent Access',
     'agent.description': 'Choose how the agent can act on your machine.',
     'agent.askTitle': 'Ask before running',
-    'agent.askDesc': 'Confirm every command before it executes',
-    'agent.autoTitle': 'Edit automatically',
-    'agent.autoDesc': 'Auto-run common commands (read, write, build) — confirm others',
+    'agent.askDesc': 'Show Approve/Deny buttons before file, shell, network, git, or plugin actions run',
+    'agent.autoTitle': 'Auto Mode',
+    'agent.autoDesc': 'The agent proposes actions, then a separate AI approval pass allows or denies each one',
     'agent.fullTitle': 'Full access',
     'agent.fullDesc': 'Run any command without confirmation — use with caution',
 

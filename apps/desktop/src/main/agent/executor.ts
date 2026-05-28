@@ -243,16 +243,114 @@ export async function openExternal(url: string) {
   }
 }
 
+/**
+ * Decode HTML character references in a single pass to avoid double-unescaping
+ * (e.g. &amp;lt; → &lt;, not → <). Call this once, after all tag removal is done.
+ */
+function decodeHtmlEntities(str: string): string {
+  return str.replace(/&(?:amp|quot|apos|#39|lt|gt|nbsp|#x[\da-fA-F]+|#\d+);/gi, (entity) => {
+    const lower = entity.toLowerCase()
+    if (lower === '&amp;') return '&'
+    if (lower === '&quot;') return '"'
+    if (lower === '&apos;' || lower === '&#39;') return "'"
+    if (lower === '&lt;') return '<'
+    if (lower === '&gt;') return '>'
+    if (lower === '&nbsp;') return ' '
+    if (lower.startsWith('&#x')) return String.fromCharCode(parseInt(entity.slice(3, -1), 16))
+    if (lower.startsWith('&#')) return String.fromCharCode(parseInt(entity.slice(2, -1), 10))
+    return entity
+  })
+}
+
+function tagNameAt(value: string, start: number): { closing: boolean; name: string; nameEnd: number } | null {
+  let i = start + 1
+  while (i < value.length && /\s/.test(value[i])) i += 1
+
+  const closing = value[i] === '/'
+  if (closing) {
+    i += 1
+    while (i < value.length && /\s/.test(value[i])) i += 1
+  }
+
+  const nameStart = i
+  while (i < value.length && /[a-z0-9]/i.test(value[i])) i += 1
+  if (i === nameStart) return null
+
+  return { closing, name: value.slice(nameStart, i).toLowerCase(), nameEnd: i }
+}
+
+function isEndTagBoundary(ch: string | undefined): boolean {
+  return ch === undefined || ch === '>' || ch === '/' || /\s/.test(ch)
+}
+
+function findRawTextBlockEnd(value: string, from: number, tagName: 'script' | 'style'): number {
+  const lower = value.toLowerCase()
+  let searchFrom = from
+
+  while (searchFrom < value.length) {
+    const closeStart = lower.indexOf(`</${tagName}`, searchFrom)
+    if (closeStart === -1) return value.length
+
+    const nameEnd = closeStart + tagName.length + 2
+    if (isEndTagBoundary(value[nameEnd])) {
+      const closeEnd = value.indexOf('>', nameEnd)
+      return closeEnd === -1 ? value.length : closeEnd + 1
+    }
+
+    searchFrom = closeStart + 2
+  }
+
+  return value.length
+}
+
+function textFromHtml(value: string): string {
+  let out = ''
+  let i = 0
+
+  while (i < value.length) {
+    if (value[i] !== '<') {
+      out += value[i]
+      i += 1
+      continue
+    }
+
+    const tag = tagNameAt(value, i)
+    const tagEnd = value.indexOf('>', tag?.nameEnd ?? i + 1)
+    if (!tag || tagEnd === -1) {
+      i += 1
+      continue
+    }
+
+    if (!tag.closing && (tag.name === 'script' || tag.name === 'style')) {
+      out += ' '
+      i = findRawTextBlockEnd(value, tagEnd + 1, tag.name)
+      continue
+    }
+
+    if (tag.closing && /^(?:p|div|h[1-6]|li|tr|section|article)$/.test(tag.name)) {
+      out += '\n'
+    } else if (!tag.closing && tag.name === 'br') {
+      out += '\n'
+    } else if (!tag.closing && tag.name === 'li') {
+      out += '- '
+    } else if (!tag.closing && /^h[1-6]$/.test(tag.name)) {
+      out += '\n## '
+    }
+
+    i = tagEnd + 1
+  }
+
+  return out
+}
+
 function stripHtml(value: string): string {
-  return value
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, '\'')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim()
+  // Strip tags first, then decode entities in a single pass to prevent
+  // cascaded double-unescaping (e.g. &amp;lt; → &lt; → <).
+  return decodeHtmlEntities(
+    textFromHtml(value)
+      .replace(/\s+/g, ' ')
+      .trim()
+  )
 }
 
 function decodeDuckDuckGoRedirect(url: string): string {
@@ -363,6 +461,80 @@ export async function webSearch(query: string, limit = 5) {
   }
 }
 
-module.exports = { runCommand, readFile, writeFile, listDirectory, openExternal, webSearch, getAllowlist, saveAllowlist, addAllowed, removeAllowed }
+/**
+ * Fetch a single URL and return its body as text/markdown or raw HTML.
+ * Unlike webSearch (DuckDuckGo result links), this retrieves the actual page
+ * the model/user named. http(s) only; 15s timeout; 2 MB body cap.
+ */
+export async function webFetch(url: string, format = 'text') {
+  try {
+    const target = String(url || '').trim()
+    if (!target) return { success: false, error: 'url is required' }
+    let parsed: URL
+    try {
+      parsed = new URL(target)
+    } catch {
+      return { success: false, error: `invalid URL: ${target}` }
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { success: false, error: 'only http(s) URLs are allowed' }
+    }
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15000)
+    let response: Response
+    try {
+      response = await fetch(parsed.toString(), {
+        headers: { 'user-agent': 'SyntaxSenpai/0.0.1 (+https://github.com/unoxyrich/SyntaxSenpai)' },
+        signal: controller.signal,
+        redirect: 'follow',
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status} ${response.statusText}` }
+    }
+
+    const contentType = response.headers.get('content-type') || ''
+    const MAX_BYTES = 2 * 1024 * 1024
+    const raw = await response.text()
+    const body = raw.length > MAX_BYTES ? raw.slice(0, MAX_BYTES) : raw
+    const truncated = raw.length > MAX_BYTES
+
+    const wantsHtml = format === 'html'
+    const isHtml = /text\/html|application\/xhtml/i.test(contentType) || /^\s*<(?:!doctype|html)/i.test(body)
+    let content: string
+    if (wantsHtml || !isHtml) {
+      content = body
+    } else {
+      // Strip scripts/styles, convert block tags to newlines, drop the rest —
+      // a readable text/markdown view that keeps paragraph structure.
+      // Entity decoding is done last in a single pass via decodeHtmlEntities to
+      // prevent double-unescaping (e.g. &amp;lt; must not become <).
+      content = decodeHtmlEntities(
+        textFromHtml(body)
+          .replace(/[ \t]+/g, ' ')
+          .replace(/ *\n */g, '\n')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim()
+      )
+    }
+
+    return {
+      success: true,
+      url: parsed.toString(),
+      contentType,
+      truncated,
+      content,
+    }
+  } catch (err: any) {
+    const aborted = err?.name === 'AbortError'
+    return { success: false, error: aborted ? 'request timed out after 15s' : (err?.message || String(err)) }
+  }
+}
+
+module.exports = { runCommand, readFile, writeFile, listDirectory, openExternal, webSearch, webFetch, getAllowlist, saveAllowlist, addAllowed, removeAllowed }
 
 export {}

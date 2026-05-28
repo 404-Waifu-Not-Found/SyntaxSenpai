@@ -15,7 +15,7 @@ SyntaxSenpai is currently in **alpha**. Security fixes are applied to the latest
 
 Instead, please report them privately:
 
-1. **Email:** Send details to **syntaxsenpai@proton.me** with the subject line `[SECURITY] <short description>`.
+1. **Email:** Send details to **unoxyrich@qq.com** with the subject line `[SECURITY] <short description>`.
 2. **GitHub Security Advisories:** You can also use [GitHub's private vulnerability reporting](https://github.com/404-Waifu-Not-Found/SyntaxSenpai/security/advisories/new).
 
 ### What to include

@@ -259,6 +259,8 @@ const messages: Record<Locale, Record<string, string>> = {
 
     // Toast
     'toast.memorySaved': 'Memory saved',
+    'toast.memorySavedWithDetails': 'Memory saved: {items}',
+    'toast.memoryDeletedWithDetails': 'Forgot memory: {items}',
     'toast.memoriesCleared': 'All memories cleared',
     'toast.exportSaved': 'Export saved',
     'toast.exportFailed': 'Export failed',
@@ -519,6 +521,8 @@ const messages: Record<Locale, Record<string, string>> = {
 
     // Toast
     'toast.memorySaved': '记忆已保存',
+    'toast.memorySavedWithDetails': '记忆已保存：{items}',
+    'toast.memoryDeletedWithDetails': '已忘记：{items}',
     'toast.memoriesCleared': '所有记忆已清除',
     'toast.exportSaved': '导出已保存',
     'toast.exportFailed': '导出失败',
@@ -780,6 +784,8 @@ const messages: Record<Locale, Record<string, string>> = {
 
     // Toast
     'toast.memorySaved': 'Mémoire enregistrée',
+    'toast.memorySavedWithDetails': 'Mémoire enregistrée : {items}',
+    'toast.memoryDeletedWithDetails': 'Mémoire oubliée : {items}',
     'toast.memoriesCleared': 'Toutes les mémoires effacées',
     'toast.exportSaved': 'Export enregistré',
     'toast.exportFailed': 'Échec de l\'export',
@@ -1041,6 +1047,8 @@ const messages: Record<Locale, Record<string, string>> = {
 
     // Toast
     'toast.memorySaved': 'Память сохранена',
+    'toast.memorySavedWithDetails': 'Память сохранена: {items}',
+    'toast.memoryDeletedWithDetails': 'Забыто: {items}',
     'toast.memoriesCleared': 'Все воспоминания очищены',
     'toast.exportSaved': 'Экспорт сохранён',
     'toast.exportFailed': 'Ошибка экспорта',
@@ -1302,6 +1310,8 @@ const messages: Record<Locale, Record<string, string>> = {
 
     // Toast
     'toast.memorySaved': '記憶を保存しました',
+    'toast.memorySavedWithDetails': '記憶を保存しました: {items}',
+    'toast.memoryDeletedWithDetails': '記憶を忘れました: {items}',
     'toast.memoriesCleared': 'すべての記憶をクリアしました',
     'toast.exportSaved': 'エクスポートを保存しました',
     'toast.exportFailed': 'エクスポートに失敗しました',

@@ -3699,6 +3699,9 @@ Do not mention these timings unless the user asks about speed, latency, slowness
 
   function extractMemoryFromAIResponse(responseText: string): string {
     // 模型可通过隐藏 memory tag 写长期记忆；这里负责解析标签并把它们从最终展示文本里剥掉。
+    const addedMemories: Array<{ key: string; value: string; category: string }> = []
+    const deletedMemoryKeys: string[] = []
+
     // Parse <memory category="..." key="...">value</memory> tags
     const memoryTagRegex = /<memory\s+category="([^"]+)"\s+key="([^"]+)">([^<]+)<\/memory>/gi
     let match: RegExpExecArray | null
@@ -3708,6 +3711,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       const value = match[3].trim()
       if (key && value) {
         setMemory(key, value, category)
+        addedMemories.push({ key, value, category })
       }
     }
 
@@ -3720,14 +3724,28 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         const existing = userMemories.value.find((m) =>
           m.key.toLowerCase() === key.toLowerCase() || m.key.toLowerCase().includes(key.toLowerCase()),
         )
-        if (existing) deleteMemory(existing.key)
+        if (existing) {
+          deleteMemory(existing.key)
+          deletedMemoryKeys.push(existing.key)
+        }
       }
+    }
+
+    if (addedMemories.length || deletedMemoryKeys.length) {
+      window.dispatchEvent(new CustomEvent('app:memory-updated', {
+        detail: {
+          added: addedMemories,
+          deleted: deletedMemoryKeys,
+        },
+      }))
     }
 
     // Strip all memory tags from the displayed content
     return responseText
       .replace(/<memory\s+category="[^"]*"\s+key="[^"]*">[^<]*<\/memory>/gi, '')
-      .replace(/<memory-delete\s+key="[^"]*"\s*\/>/gi, '')
+      .replace(/<memory-delete\s+key="[^"]*"\s*\/?>/gi, '')
+      .replace(/<set_?affection\b[^>]*>([\s\S]*?)<\/set_?affection>/gi, '')
+      .replace(/<set_?affection\b[^>]*\/?>/gi, '')
       .replace(/\n{3,}/g, '\n\n')
       .trimEnd()
   }

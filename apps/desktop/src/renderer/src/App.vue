@@ -2087,6 +2087,29 @@ function onAppMilestone(e: Event) {
   const detail = (e as CustomEvent).detail
   if (typeof detail === 'string' && detail) showToast(detail, 'success')
 }
+function onAppMemoryUpdated(e: Event) {
+  const detail = (e as CustomEvent).detail as {
+    added?: Array<{ key: string; value: string }>
+    deleted?: string[]
+  } | undefined
+  const added = Array.isArray(detail?.added) ? detail.added : []
+  const deleted = Array.isArray(detail?.deleted) ? detail.deleted : []
+  const previews: string[] = []
+
+  if (added.length > 0) {
+    const addedPreview = added.slice(0, 2).map((entry) => `${entry.key}: ${entry.value}`).join(' · ')
+    const suffix = added.length > 2 ? ` +${added.length - 2}` : ''
+    previews.push(t('toast.memorySavedWithDetails', { items: `${addedPreview}${suffix}` }))
+  }
+
+  if (deleted.length > 0) {
+    const deletedPreview = deleted.slice(0, 3).join(' · ')
+    const suffix = deleted.length > 3 ? ` +${deleted.length - 3}` : ''
+    previews.push(t('toast.memoryDeletedWithDetails', { items: `${deletedPreview}${suffix}` }))
+  }
+
+  if (previews.length > 0) showToast(previews.join(' / '), 'success')
+}
 function onAppSkillCreated(e: Event) {
   const detail: any = (e as CustomEvent).detail
   // Refresh store + Settings-tab views so the new skill is immediately
@@ -2195,6 +2218,7 @@ onMounted(() => {
   window.addEventListener('app:error', onAppError as EventListener)
   window.addEventListener('app:retry', onAppRetry as EventListener)
   window.addEventListener('app:milestone', onAppMilestone as EventListener)
+  window.addEventListener('app:memory-updated', onAppMemoryUpdated as EventListener)
   window.addEventListener('app:skill-created', onAppSkillCreated as EventListener)
   window.addEventListener('app:tool-proposed', onAppToolProposed as EventListener)
   window.addEventListener('keydown', onGlobalKeydown)
@@ -2220,6 +2244,7 @@ onUnmounted(() => {
   window.removeEventListener('app:error', onAppError as EventListener)
   window.removeEventListener('app:retry', onAppRetry as EventListener)
   window.removeEventListener('app:milestone', onAppMilestone as EventListener)
+  window.removeEventListener('app:memory-updated', onAppMemoryUpdated as EventListener)
   window.removeEventListener('app:skill-created', onAppSkillCreated as EventListener)
   window.removeEventListener('app:tool-proposed', onAppToolProposed as EventListener)
   window.removeEventListener('keydown', onGlobalKeydown)

@@ -240,6 +240,7 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   'xai-grok': 'grok-2-latest',
   huggingface: 'meta-llama/Llama-3.3-70B-Instruct',
   'github-models': 'openai/gpt-4o-mini',
+  ollama: 'llama-3.1-8b',
 }
 
 const AFFECTION_STORAGE_KEY = 'syntax-senpai-affection'

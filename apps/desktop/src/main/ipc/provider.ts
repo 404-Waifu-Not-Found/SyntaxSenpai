@@ -116,7 +116,13 @@ const FALLBACK_MODELS: Record<string, Array<{ id: string; displayName: string }>
     { id: 'meta/Llama-3.3-70B-Instruct', displayName: 'Llama 3.3 70B' },
   ],
   lmstudio: [{ id: 'local-model', displayName: 'Detected Local Model' }],
-  ollama: [{ id: 'ollama-local', displayName: 'Ollama (Local)' }],
+  ollama: [
+    { id: 'llama-3.1-8b', displayName: 'Llama 3.1 8B' },
+    { id: 'llama-3.1-8b-instant', displayName: 'Llama 3.1 8B Instant' },
+    { id: 'llama2', displayName: 'Llama 2' },
+    { id: 'mistral', displayName: 'Mistral' },
+    { id: 'neural-chat', displayName: 'Neural Chat' },
+  ],
 }
 
 let registered = false

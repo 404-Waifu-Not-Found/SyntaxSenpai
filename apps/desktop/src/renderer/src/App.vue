@@ -965,7 +965,13 @@ const providerMetadata = [
   {
     id: 'ollama',
     displayName: 'Ollama (Local)',
-    models: [{ id: 'ollama-local', displayName: 'Detected Ollama Model' }],
+    models: [
+      { id: 'llama-3.1-8b', displayName: 'Llama 3.1 8B' },
+      { id: 'llama-3.1-8b-instant', displayName: 'Llama 3.1 8B Instant' },
+      { id: 'llama2', displayName: 'Llama 2' },
+      { id: 'mistral', displayName: 'Mistral' },
+      { id: 'neural-chat', displayName: 'Neural Chat' },
+    ],
   },
   {
     id: 'openai-codex',

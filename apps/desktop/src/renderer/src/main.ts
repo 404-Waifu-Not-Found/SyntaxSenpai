@@ -6,6 +6,10 @@ import '@unocss/reset/tailwind.css'
 import 'uno.css'
 import '@syntax-senpai/ui/main.css'
 
+if (typeof (globalThis as any).process === 'undefined') {
+  ;(globalThis as any).process = { env: {} }
+}
+
 // Surface unexpected failures instead of swallowing them. App.vue listens on
 // the 'app:error' custom event and shows a toast.
 window.addEventListener('error', (event) => {

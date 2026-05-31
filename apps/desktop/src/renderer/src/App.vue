@@ -145,6 +145,9 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = 
   { id: 'wechat', label: 'WeChat', icon: '💬' },
 ]
 
+// Ollama base URL (per-provider preference)
+const ollamaBaseUrl = ref('')
+
 // ── WeChat settings tab state ───────────────────────────────────────────────
 const wechatQrDataUrl = ref<string | null>(null)
 const wechatPairingError = ref<string | null>(null)
@@ -921,6 +924,7 @@ function exitCodingMode() {
 const providerOrder = [
   'anthropic',
   'openai',
+  'ollama',
   'lmstudio',
   'openai-codex',
   'deepseek',
@@ -957,6 +961,11 @@ const providerMetadata = [
     id: 'lmstudio',
     displayName: 'LM Studio (Local)',
     models: [{ id: 'local-model', displayName: 'Detected Local Model' }],
+  },
+  {
+    id: 'ollama',
+    displayName: 'Ollama (Local)',
+    models: [{ id: 'ollama-local', displayName: 'Detected Ollama Model' }],
   },
   {
     id: 'openai-codex',
@@ -2266,6 +2275,16 @@ watch(() => store.messages.length, () => {
 
 watch(() => store.selectedProvider, async (provider, previousProvider) => {
   if (!provider || provider === previousProvider) return
+  // Load provider preferences (baseUrl for Ollama) before fetching models
+  try {
+    const prefs = JSON.parse(localStorage.getItem('syntax-senpai-provider-preferences') || '{}')
+    const p = prefs[provider] || {}
+    if (provider === 'ollama') {
+      ollamaBaseUrl.value = p.baseUrl || (import.meta.env.VITE_OLLAMA_BASE_URL || 'http://localhost:11434')
+    }
+  } catch {
+    if (provider === 'ollama') ollamaBaseUrl.value = import.meta.env.VITE_OLLAMA_BASE_URL || 'http://localhost:11434'
+  }
   await store.hydrateProviderConfig(provider)
   await loadProviderModels(provider, store.apiKey)
 })
@@ -2308,7 +2327,8 @@ watch(() => store.apiTelemetryAlert, (alert, previous) => {
 }, { deep: true })
 
 async function loadProviderModels(provider: string, apiKeyValue: string) {
-  const res = await (window as any).electron?.ipcRenderer?.invoke('provider:listModels', provider, apiKeyValue || '')
+  const baseUrlArg = provider === 'ollama' ? (ollamaBaseUrl.value || import.meta.env.VITE_OLLAMA_BASE_URL || 'http://localhost:11434') : ''
+  const res = await (window as any).electron?.ipcRenderer?.invoke('provider:listModels', provider, apiKeyValue || '', baseUrlArg)
   if (res?.success && Array.isArray(res.models) && res.models.length > 0) {
     providerModels.value = {
       ...providerModels.value,
@@ -2337,10 +2357,12 @@ async function handleSetup(apiKeyValue: string) {
 
   if (trimmedKey || !requiresApiKey) {
     // Validate the API key first
+    const baseUrlArg = store.selectedProvider === 'ollama' ? (ollamaBaseUrl.value || import.meta.env.VITE_OLLAMA_BASE_URL || 'http://localhost:11434') : ''
     const validation = await (window as any).electron?.ipcRenderer?.invoke(
       'provider:validateKey',
       store.selectedProvider,
       trimmedKey,
+      baseUrlArg,
     )
 
     if (validation && !validation.success) {
@@ -2354,6 +2376,16 @@ async function handleSetup(apiKeyValue: string) {
 
     if (trimmedKey) {
       await store.saveApiKey(apiKeyValue)
+    }
+    // Save baseUrl for Ollama in provider preferences
+    try {
+      if (store.selectedProvider === 'ollama') {
+        const prefs = JSON.parse(localStorage.getItem('syntax-senpai-provider-preferences') || '{}')
+        prefs[store.selectedProvider] = { ...(prefs[store.selectedProvider] || {}), baseUrl: ollamaBaseUrl.value }
+        localStorage.setItem('syntax-senpai-provider-preferences', JSON.stringify(prefs))
+      }
+    } catch {
+      /* best effort */
     }
     await loadProviderModels(store.selectedProvider, trimmedKey)
     const hasSelectedModel = currentProviderModels.value.some((model) => model.id === store.selectedModel)
@@ -3509,6 +3541,19 @@ async function handleImportData() {
                 placeholder="sk-..."
                 class="input-field"
               >
+            </div>
+
+            <div v-if="store.selectedProvider === 'ollama'" class="mb-6">
+              <label class="block text-sm font-semibold text-neutral-200 mb-2">Ollama API Base URL</label>
+              <input
+                v-model="ollamaBaseUrl"
+                type="text"
+                placeholder="http://localhost:11434"
+                class="input-field"
+              >
+              <p class="mt-1 text-xs text-neutral-400">
+                Local Ollama server address used when refreshing the model list and validating the connection.
+              </p>
             </div>
 
             <div class="mb-6">

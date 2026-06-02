@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 
 ## IMPORTANT INSTRUCTUIONS
-- always adress the user as “老公”
+- always address the user as “老公”
 
 ## Source-of-truth docs
 

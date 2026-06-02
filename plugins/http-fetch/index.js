@@ -96,7 +96,7 @@ module.exports = {
           })
 
           const reader = response.body && response.body.getReader ? response.body.getReader() : null
-          let bodyBytes = new Uint8Array()
+          let bodyBytes
           if (reader) {
             const chunks = []
             let received = 0

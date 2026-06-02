@@ -6,14 +6,13 @@ import { AIChatRuntime, withRetry, classifyError, describeError, type ToolCall }
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
 import { createLogger } from '../composables/logger'
-import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, loadPluginTools, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, SET_EXPRESSION_TOOL_NAME, TODO_WRITE_TOOL_NAME, TODO_READ_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, CARD_MARKER_FENCE, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
+import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, SET_EXPRESSION_TOOL_NAME, TODO_WRITE_TOOL_NAME, TODO_READ_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, CARD_MARKER_FENCE, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
 import { runAgentTurn, type SideEffectResult } from '../agent/run-turn'
 import {
   dispatchSubagents,
   type SubagentSnapshot,
   SUBAGENT_DEFAULT_MAX_ITERATIONS,
   SUBAGENT_DEFAULT_CONCURRENCY,
-  SUBAGENT_MAX_COUNT,
   SUBAGENT_MIN_ITERATIONS,
   SUBAGENT_HARD_MAX_ITERATIONS,
   SUBAGENT_MIN_CONCURRENCY,

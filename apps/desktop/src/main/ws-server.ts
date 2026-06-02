@@ -40,7 +40,7 @@ interface DesktopRuntimeConfig {
   baseUrl?: string
 }
 
-const KEYLESS_PROVIDERS = new Set(['lmstudio'])
+const KEYLESS_PROVIDERS = new Set(['lmstudio', 'ollama'])
 
 function providerRequiresApiKey(provider: string): boolean {
   return !KEYLESS_PROVIDERS.has(provider)

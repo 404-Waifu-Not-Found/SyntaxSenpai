@@ -2361,10 +2361,14 @@ watch(
 watch(
   () => [store.selectedProvider, store.selectedModel, store.apiKey],
   async ([provider, model, apiKey]) => {
+    // Include baseUrl for Ollama/LMStudio from stored preferences
+    const prefs = JSON.parse(localStorage.getItem('syntax-senpai-provider-preferences') || '{}')
+    const baseUrl = prefs[provider]?.baseUrl || undefined
     await invoke('ws:updateRuntimeConfig', {
       provider,
       model,
       apiKey,
+      ...(baseUrl && { baseUrl }),
     })
   },
   { immediate: true },

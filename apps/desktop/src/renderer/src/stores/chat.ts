@@ -247,12 +247,12 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   'xai-grok': 'grok-2-latest',
   huggingface: 'meta-llama/Llama-3.3-70B-Instruct',
   'github-models': 'openai/gpt-4o-mini',
-  ollama: 'llama-3.1-8b',
+  ollama: 'llama3.1:8b',
 }
 
 const AFFECTION_STORAGE_KEY = 'syntax-senpai-affection'
 const GROUP_CHAT_SETTINGS_KEY = 'syntax-senpai-group-chat'
-const KEYLESS_PROVIDERS = new Set(['lmstudio'])
+const KEYLESS_PROVIDERS = new Set(['lmstudio', 'ollama'])
 
 type ProviderPreferences = Record<string, { model?: string; baseUrl?: string }>
 

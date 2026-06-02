@@ -17,6 +17,7 @@ export type AgentMode = 'ask' | 'auto' | 'full'
 
 export const STOP_TOOL_NAME = 'stop_response'
 export const SET_AFFECTION_TOOL_NAME = 'set_affection'
+export const SET_EXPRESSION_TOOL_NAME = 'set_expression'
 export const TODO_WRITE_TOOL_NAME = 'todo_write'
 export const TODO_READ_TOOL_NAME = 'todoread'
 export const RENAME_CHAT_TOOL_NAME = 'rename_chat'
@@ -522,6 +523,22 @@ export const agentTools: ToolDefinition[] = [
         },
       },
       required: ['value'],
+    },
+  },
+  {
+    name: SET_EXPRESSION_TOOL_NAME,
+    description:
+      'Set the Live2D model facial expression during conversation. Call this when you want to visually express an emotion to enhance your reply. The expression changes the model\'s face in real time. Available expressions: "neutral", "happy", "excited", "thinking", "confused", "embarrassed", "determined", "sad". Use this tastefully — once or twice per conversation turn at most. Do not explain that you are changing your expression; just set it alongside your reply.',
+    parameters: {
+      type: 'object',
+      properties: {
+        expression: {
+          type: 'string',
+          enum: ['neutral', 'happy', 'excited', 'thinking', 'confused', 'embarrassed', 'determined', 'sad'],
+          description: 'The expression to show: neutral (default/resting), happy (warm smile), excited (wide-eyed joy), thinking (pondering), confused (puzzled), embarrassed (shy/blushing), determined (serious/focused), or sad (downcast/concerned).',
+        },
+      },
+      required: ['expression'],
     },
   },
   {
@@ -1226,6 +1243,8 @@ export function describeToolCall(toolCall: ToolCall): string {
       return 'todoread()'
     case RENAME_CHAT_TOOL_NAME:
       return `rename_chat(${String((args as any).title ?? '').slice(0, 60)})`
+    case SET_EXPRESSION_TOOL_NAME:
+      return `set_expression(${String((args as any).expression ?? 'neutral').slice(0, 30)})`
     case 'spotify_now_playing':
       return 'spotify_now_playing()'
     case 'spotify_control':

@@ -70,6 +70,105 @@ const DEFAULT_MOTION_MAP: Record<string, string> = {
   sad:         'FlickHead',
 }
 
+// Expression name → Cubism named-expression ID map.
+// Many Live2D models ship predefined expressions like "Happy", "Sad", etc.
+// We try these IDs first before falling back to raw parameter blending.
+const EXPRESSION_NAME_MAP: Record<string, string[]> = {
+  happy:       ['Happy', 'Smile', 'Joy', 'fun'],
+  excited:     ['Excited', 'Surprised', 'Energetic', 'fun'],
+  thinking:    ['Thinking', 'Ponder', 'Worry', 'angry'],
+  confused:    ['Confused', 'Puzzle', 'Question', 'angry'],
+  embarrassed: ['Embarrassed', 'Shy', 'Blush', 'sad'],
+  determined:  ['Determined', 'Serious', 'Confident', 'angry', 'fun'],
+  sad:         ['Sad', 'Cry', 'Sorrow', 'sad'],
+  neutral:     ['Neutral', 'Default', 'Idle', 'base'],
+}
+
+type ParamDef = { id: string[]; value: number }
+
+// Per-expression Cubism parameter overrides for models that have no named
+// expressions (or when named expressions aren't found). Each parameter is
+// an array of candidate IDs (Cubism 2 vs 4 conventions) and a target value.
+const EXPRESSION_PARAMS: Record<string, ParamDef[]> = {
+  happy: [
+    { id: ['ParamMouthForm', 'PARAM_MOUTH_FORM'], value: 0.85 },
+    { id: ['ParamMouthOpenY', 'PARAM_MOUTH_OPEN_Y'], value: 0.1 },
+    { id: ['ParamBrowLY', 'PARAM_BROW_L_Y'], value: -0.3 },
+    { id: ['ParamBrowRY', 'PARAM_BROW_R_Y'], value: -0.3 },
+    { id: ['ParamEyeLOpen', 'PARAM_EYE_L_OPEN'], value: 0.4 },
+    { id: ['ParamEyeROpen', 'PARAM_EYE_R_OPEN'], value: 0.4 },
+    { id: ['ParamCheek', 'PARAM_CHEEK'], value: 0.3 },
+  ],
+  excited: [
+    { id: ['ParamMouthForm', 'PARAM_MOUTH_FORM'], value: 1.0 },
+    { id: ['ParamMouthOpenY', 'PARAM_MOUTH_OPEN_Y'], value: 0.5 },
+    { id: ['ParamEyeLOpen', 'PARAM_EYE_L_OPEN'], value: 0.9 },
+    { id: ['ParamEyeROpen', 'PARAM_EYE_R_OPEN'], value: 0.9 },
+    { id: ['ParamBrowLY', 'PARAM_BROW_L_Y'], value: -0.5 },
+    { id: ['ParamBrowRY', 'PARAM_BROW_R_Y'], value: -0.5 },
+    { id: ['ParamCheek', 'PARAM_CHEEK'], value: 0.4 },
+  ],
+  thinking: [
+    { id: ['ParamMouthForm', 'PARAM_MOUTH_FORM'], value: -0.2 },
+    { id: ['ParamMouthOpenY', 'PARAM_MOUTH_OPEN_Y'], value: 0.05 },
+    { id: ['ParamEyeLOpen', 'PARAM_EYE_L_OPEN'], value: 0.5 },
+    { id: ['ParamEyeROpen', 'PARAM_EYE_R_OPEN'], value: 0.5 },
+    { id: ['ParamBrowLY', 'PARAM_BROW_L_Y'], value: 0.3 },
+    { id: ['ParamBrowRY', 'PARAM_BROW_R_Y'], value: 0.3 },
+    { id: ['ParamBrowLAngle', 'PARAM_BROW_L_ANGLE'], value: 0.2 },
+    { id: ['ParamBrowRAngle', 'PARAM_BROW_R_ANGLE'], value: -0.2 },
+  ],
+  confused: [
+    { id: ['ParamMouthForm', 'PARAM_MOUTH_FORM'], value: -0.3 },
+    { id: ['ParamMouthOpenY', 'PARAM_MOUTH_OPEN_Y'], value: 0.2 },
+    { id: ['ParamEyeLOpen', 'PARAM_EYE_L_OPEN'], value: 0.5 },
+    { id: ['ParamEyeROpen', 'PARAM_EYE_R_OPEN'], value: 0.8 },
+    { id: ['ParamBrowLY', 'PARAM_BROW_L_Y'], value: 0.4 },
+    { id: ['ParamBrowRY', 'PARAM_BROW_R_Y'], value: 0.4 },
+    { id: ['ParamAngleX', 'PARAM_ANGLE_X'], value: 5 },
+  ],
+  embarrassed: [
+    { id: ['ParamMouthForm', 'PARAM_MOUTH_FORM'], value: 0.4 },
+    { id: ['ParamMouthOpenY', 'PARAM_MOUTH_OPEN_Y'], value: 0.0 },
+    { id: ['ParamEyeLOpen', 'PARAM_EYE_L_OPEN'], value: 0.7 },
+    { id: ['ParamEyeROpen', 'PARAM_EYE_R_OPEN'], value: 0.7 },
+    { id: ['ParamBrowLY', 'PARAM_BROW_L_Y'], value: 0.1 },
+    { id: ['ParamBrowRY', 'PARAM_BROW_R_Y'], value: 0.1 },
+    { id: ['ParamCheek', 'PARAM_CHEEK'], value: 0.65 },
+  ],
+  determined: [
+    { id: ['ParamMouthForm', 'PARAM_MOUTH_FORM'], value: 0.5 },
+    { id: ['ParamMouthOpenY', 'PARAM_MOUTH_OPEN_Y'], value: 0.0 },
+    { id: ['ParamEyeLOpen', 'PARAM_EYE_L_OPEN'], value: 0.6 },
+    { id: ['ParamEyeROpen', 'PARAM_EYE_R_OPEN'], value: 0.6 },
+    { id: ['ParamBrowLY', 'PARAM_BROW_L_Y'], value: 0.4 },
+    { id: ['ParamBrowRY', 'PARAM_BROW_R_Y'], value: 0.4 },
+    { id: ['ParamBrowLAngle', 'PARAM_BROW_L_ANGLE'], value: -0.3 },
+    { id: ['ParamBrowRAngle', 'PARAM_BROW_R_ANGLE'], value: 0.3 },
+  ],
+  sad: [
+    { id: ['ParamMouthForm', 'PARAM_MOUTH_FORM'], value: -0.8 },
+    { id: ['ParamMouthOpenY', 'PARAM_MOUTH_OPEN_Y'], value: 0.05 },
+    { id: ['ParamEyeLOpen', 'PARAM_EYE_L_OPEN'], value: 0.3 },
+    { id: ['ParamEyeROpen', 'PARAM_EYE_R_OPEN'], value: 0.3 },
+    { id: ['ParamBrowLY', 'PARAM_BROW_L_Y'], value: 0.15 },
+    { id: ['ParamBrowRY', 'PARAM_BROW_R_Y'], value: 0.15 },
+    { id: ['ParamBrowLAngle', 'PARAM_BROW_L_ANGLE'], value: 0.3 },
+    { id: ['ParamBrowRAngle', 'PARAM_BROW_R_ANGLE'], value: -0.3 },
+  ],
+  neutral: [
+    { id: ['ParamMouthForm', 'PARAM_MOUTH_FORM'], value: 0.0 },
+    { id: ['ParamMouthOpenY', 'PARAM_MOUTH_OPEN_Y'], value: 0.0 },
+    { id: ['ParamEyeLOpen', 'PARAM_EYE_L_OPEN'], value: 0.7 },
+    { id: ['ParamEyeROpen', 'PARAM_EYE_R_OPEN'], value: 0.7 },
+    { id: ['ParamBrowLY', 'PARAM_BROW_L_Y'], value: 0.0 },
+    { id: ['ParamBrowRY', 'PARAM_BROW_R_Y'], value: 0.0 },
+    { id: ['ParamBrowLAngle', 'PARAM_BROW_L_ANGLE'], value: 0.0 },
+    { id: ['ParamBrowRAngle', 'PARAM_BROW_R_ANGLE'], value: 0.0 },
+    { id: ['ParamCheek', 'PARAM_CHEEK'], value: 0.0 },
+  ],
+}
+
 function resolveMotion(expression: string): string {
   const overrides = props.motionMap ?? {}
   return overrides[expression] ?? DEFAULT_MOTION_MAP[expression] ?? 'Idle'
@@ -194,7 +293,8 @@ async function initModel() {
 
     pixiApp.stage.addChild(live2dModel)
 
-    // Play the appropriate motion for the initial expression
+    // Set the initial expression (named expression + parameter blend + motion)
+    void setExpression(props.expression)
     playMotion(props.expression)
     emit('ready')
   } catch (err: any) {
@@ -222,6 +322,48 @@ function layoutModel() {
   live2dModel.scale.set(scale)
   live2dModel.x = (props.width - modelWidth * scale) / 2 + props.offsetX
   live2dModel.y = props.offsetY
+}
+
+async function setExpression(expression: string) {
+  if (!live2dModel) return
+
+  const exprMgr = live2dModel.internalModel?.motionManager?.expressionManager
+
+  let namedExpressionSet = false
+
+  if (exprMgr?.definitions?.length) {
+    const candidates = EXPRESSION_NAME_MAP[expression]
+    if (candidates) {
+      for (const name of candidates) {
+        const index = exprMgr.getExpressionIndex(name)
+        if (index >= 0 && index < exprMgr.definitions.length) {
+          try {
+            await live2dModel.expression(name)
+            namedExpressionSet = true
+            break
+          } catch {
+            /* try next candidate */
+          }
+        }
+      }
+    }
+    if (!namedExpressionSet) {
+      try {
+        await live2dModel.expression()
+      } catch {
+        /* random expression failed; fall back to parameter blending */
+      }
+    }
+  }
+
+  if (!namedExpressionSet) {
+    const params = EXPRESSION_PARAMS[expression]
+    if (params) {
+      for (const p of params) {
+        setCoreParameter(p.id, p.value)
+      }
+    }
+  }
 }
 
 function playMotion(expression: string) {
@@ -317,7 +459,7 @@ async function destroyModel() {
 }
 
 watch(() => props.modelPath, () => { void initModel() })
-watch(() => props.expression, (expr) => { playMotion(expr) })
+watch(() => props.expression, (expr) => { void setExpression(expr); playMotion(expr) })
 watch(() => [props.width, props.height, props.modelScale, props.offsetX, props.offsetY, props.renderScale], () => { layoutModel(); scheduleCursorFocus() })
 watch(() => props.trackCursor, () => { scheduleCursorFocus() })
 

@@ -2279,21 +2279,25 @@ watch(() => store.messages.length, () => {
   })
 })
 
-watch(() => store.selectedProvider, async (provider, previousProvider) => {
-  if (!provider || provider === previousProvider) return
-  // Load provider preferences (baseUrl for Ollama) before fetching models
-  try {
-    const prefs = JSON.parse(localStorage.getItem('syntax-senpai-provider-preferences') || '{}')
-    const p = prefs[provider] || {}
-    if (provider === 'ollama') {
-      ollamaBaseUrl.value = p.baseUrl || (import.meta.env.VITE_OLLAMA_BASE_URL || 'http://localhost:11434')
+watch(
+  () => store.selectedProvider,
+  async (provider, previousProvider) => {
+    if (!provider || provider === previousProvider) return
+    // Load provider preferences (baseUrl for Ollama) before fetching models
+    try {
+      const prefs = JSON.parse(localStorage.getItem('syntax-senpai-provider-preferences') || '{}')
+      const p = prefs[provider] || {}
+      if (provider === 'ollama') {
+        ollamaBaseUrl.value = p.baseUrl || (import.meta.env.VITE_OLLAMA_BASE_URL || 'http://localhost:11434')
+      }
+    } catch {
+      if (provider === 'ollama') ollamaBaseUrl.value = import.meta.env.VITE_OLLAMA_BASE_URL || 'http://localhost:11434'
     }
-  } catch {
-    if (provider === 'ollama') ollamaBaseUrl.value = import.meta.env.VITE_OLLAMA_BASE_URL || 'http://localhost:11434'
-  }
-  await store.hydrateProviderConfig(provider)
-  await loadProviderModels(provider, store.apiKey)
-})
+    await store.hydrateProviderConfig(provider)
+    await loadProviderModels(provider, store.apiKey)
+  },
+  { immediate: true },
+)
 
 watch(
   () => [store.selectedProvider, store.selectedModel, store.apiKey],

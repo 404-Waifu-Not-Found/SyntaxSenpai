@@ -116,6 +116,7 @@ const FALLBACK_MODELS: Record<string, Array<{ id: string; displayName: string }>
     { id: 'meta/Llama-3.3-70B-Instruct', displayName: 'Llama 3.3 70B' },
   ],
   lmstudio: [{ id: 'local-model', displayName: 'Detected Local Model' }],
+  ollama: [{ id: 'ollama-local', displayName: 'Ollama (Local)' }],
 }
 
 let registered = false
@@ -166,6 +167,64 @@ async function fetchLMStudioModels() {
   return models.length > 0 ? models : null
 }
 
+async function fetchOllamaTags(baseUrl: string) {
+  const url = `${baseUrl.replace(/\/+$/, '')}/api/tags`
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`Ollama tags request failed: ${response.status} ${response.statusText}`)
+  }
+  const data = await response.json()
+  // data may be an array of strings or array of objects
+  if (Array.isArray(data)) {
+    const models = data
+      .map((item: any) => {
+        if (typeof item === 'string') return { id: item, displayName: item }
+        if (item?.name) return { id: item.name, displayName: item.name }
+        if (item?.tag) return { id: item.tag, displayName: item.tag }
+        return null
+      })
+      .filter(Boolean)
+    return models.length > 0 ? models : null
+  }
+  return null
+}
+
+async function validateOllamaConnection(baseUrl: string) {
+  try {
+    const tags = await fetchOllamaTags(baseUrl)
+    if (tags) return { success: true, message: 'Ollama is reachable' }
+    // If tags returned empty, still consider reachable
+    return { success: true, message: 'Ollama is reachable (no tags found)' }
+  } catch (err: any) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+// Probe the Ollama /api/chat endpoint as a fallback. Some Ollama
+// installations may not expose /api/tags but will accept chat requests.
+// We send a minimal ping body and treat 4xx (except 401/403) as auth-ok
+// (endpoint reachable but rejected the tiny probe body).
+async function probeOllamaChat(baseUrl: string) {
+  const url = `${baseUrl.replace(/\/+$/, '')}/api/chat`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 }),
+  })
+
+  const text = await response.text().catch(() => '')
+  if (response.ok) return { success: true, message: 'Ollama /api/chat responded OK' }
+
+  // Treat most 4xx responses (except 401/403) as evidence the endpoint
+  // is reachable but rejected the probe payload — consider this a
+  // successful reach with a warning message.
+  if (response.status >= 400 && response.status < 500 && response.status !== 401 && response.status !== 403) {
+    return { success: true, message: `Ollama /api/chat reachable (status ${response.status})` }
+  }
+
+  throw new Error(`Ollama chat probe failed: ${response.status} ${response.statusText} ${text ? `- ${text}` : ''}`)
+}
+
 async function validateLMStudioConnection() {
   const response = await fetch('http://127.0.0.1:1234/v1/models')
   if (response.ok) {
@@ -182,7 +241,7 @@ export function registerProviderIpc() {
   if (registered) return
   registered = true
 
-  ipcMain.handle('provider:validateKey', async (_event: any, provider: string, apiKey: string) => {
+  ipcMain.handle('provider:validateKey', async (_event: any, provider: string, apiKey: string, baseUrl?: string) => {
     const trimmedKey = String(apiKey || '').trim()
 
     if (provider === 'lmstudio') {
@@ -193,6 +252,15 @@ export function registerProviderIpc() {
           success: false,
           error: err instanceof Error ? err.message : String(err),
         }
+      }
+    }
+
+    if (provider === 'ollama') {
+      const url = baseUrl || process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
+      try {
+        return await validateOllamaConnection(url)
+      } catch (err: any) {
+        return { success: false, error: err instanceof Error ? err.message : String(err) }
       }
     }
 
@@ -240,7 +308,7 @@ export function registerProviderIpc() {
     }
   })
 
-  ipcMain.handle('provider:listModels', async (event: any, provider: string, apiKey: string) => {
+  ipcMain.handle('provider:listModels', async (event: any, provider: string, apiKey: string, baseUrl?: string) => {
     try {
       const trimmedKey = String(apiKey || '').trim()
 
@@ -257,6 +325,38 @@ export function registerProviderIpc() {
           }
         }
         return { success: true, models: FALLBACK_MODELS[provider] || [], source: 'fallback' }
+      }
+
+      if (provider === 'ollama') {
+        const url = baseUrl || process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
+        try {
+          const models = await fetchOllamaTags(url)
+          if (models) return { success: true, models, source: 'remote' }
+        } catch (_error: any) {
+          try {
+            const probe = await probeOllamaChat(url)
+            return {
+              success: true,
+              models: FALLBACK_MODELS[provider] || [],
+              source: 'fallback',
+              warning: probe.message,
+            }
+          } catch (probeError: any) {
+            return {
+              success: true,
+              models: FALLBACK_MODELS[provider] || [],
+              source: 'fallback',
+              warning: probeError instanceof Error ? probeError.message : String(probeError),
+            }
+          }
+        }
+        const fallbackProbe = await probeOllamaChat(url)
+        return {
+          success: true,
+          models: FALLBACK_MODELS[provider] || [],
+          source: 'fallback',
+          warning: fallbackProbe.message,
+        }
       }
 
       if (!trimmedKey && !KEYLESS_PROVIDERS.has(provider)) {

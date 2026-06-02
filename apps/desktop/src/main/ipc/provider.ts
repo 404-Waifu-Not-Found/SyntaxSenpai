@@ -180,19 +180,19 @@ async function fetchOllamaTags(baseUrl: string) {
     throw new Error(`Ollama tags request failed: ${response.status} ${response.statusText}`)
   }
   const data = await response.json()
-  // data may be an array of strings or array of objects
-  if (Array.isArray(data)) {
-    const models = data
-      .map((item: any) => {
-        if (typeof item === 'string') return { id: item, displayName: item }
-        if (item?.name) return { id: item.name, displayName: item.name }
-        if (item?.tag) return { id: item.tag, displayName: item.tag }
-        return null
-      })
-      .filter(Boolean)
-    return models.length > 0 ? models : null
-  }
-  return null
+  // Ollama returns { models: [...] } or just [...]
+  const modelsList = Array.isArray(data) ? data : (data?.models || [])
+  if (!Array.isArray(modelsList)) return null
+  
+  const models = modelsList
+    .map((item: any) => {
+      if (typeof item === 'string') return { id: item, displayName: item }
+      if (item?.name) return { id: item.name, displayName: item.name }
+      if (item?.tag) return { id: item.tag, displayName: item.tag }
+      return null
+    })
+    .filter(Boolean)
+  return models.length > 0 ? models : null
 }
 
 async function validateOllamaConnection(baseUrl: string) {

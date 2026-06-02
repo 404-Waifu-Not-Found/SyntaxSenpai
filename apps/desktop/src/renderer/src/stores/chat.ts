@@ -247,8 +247,43 @@ const AFFECTION_STORAGE_KEY = 'syntax-senpai-affection'
 const GROUP_CHAT_SETTINGS_KEY = 'syntax-senpai-group-chat'
 const KEYLESS_PROVIDERS = new Set(['lmstudio'])
 
+type ProviderPreferences = Record<string, { model?: string; baseUrl?: string }>
+
 function providerRequiresApiKey(provider: string): boolean {
   return !KEYLESS_PROVIDERS.has(provider)
+}
+
+function readProviderPreferences(): ProviderPreferences {
+  try {
+    return JSON.parse(localStorage.getItem(PROVIDER_PREFERENCES_KEY) || '{}') as ProviderPreferences
+  } catch {
+    return {}
+  }
+}
+
+function saveProviderPreferences(provider: string, updates: { model?: string; baseUrl?: string }) {
+  const current = readProviderPreferences()
+  current[provider] = {
+    ...(current[provider] || {}),
+    ...updates,
+  }
+  localStorage.setItem(PROVIDER_PREFERENCES_KEY, JSON.stringify(current))
+}
+
+function getProviderConfig(provider: string, apiKey?: string) {
+  const prefs = readProviderPreferences()[provider] || {}
+  const config = providerRequiresApiKey(provider)
+    ? ({ type: provider as any, apiKey: apiKey || '' } as any)
+    : ({ type: provider as any } as any)
+
+  if (provider === 'ollama' && prefs.baseUrl) {
+    config.baseUrl = prefs.baseUrl
+  }
+  if (provider === 'lmstudio' && prefs.baseUrl) {
+    config.baseUrl = prefs.baseUrl
+  }
+
+  return config
 }
 
 function loadAffection(waifuId: string): number {
@@ -1668,7 +1703,8 @@ export const useChatStore = defineStore('chat', () => {
       if (isNewConversation) await loadConversations()
 
       const key = await keyManager.getKey(selectedProvider.value)
-      if (providerRequiresApiKey(selectedProvider.value) && (!key || key === '')) {
+      const providerConfig = getProviderConfig(selectedProvider.value, key)
+      if (providerRequiresApiKey(selectedProvider.value) && (!providerConfig.apiKey || providerConfig.apiKey === '')) {
         return
       }
 
@@ -1693,9 +1729,7 @@ export const useChatStore = defineStore('chat', () => {
         : buildCodingSessionPromptBlock(firstUserMessage)
 
       const runtime = new AIChatRuntime({
-        provider: providerRequiresApiKey(selectedProvider.value)
-          ? ({ type: selectedProvider.value as any, apiKey: key } as any)
-          : ({ type: selectedProvider.value as any } as any),
+        provider: getProviderConfig(selectedProvider.value, key),
         model,
         systemPrompt,
         cachedSystemPrompt,
@@ -2015,28 +2049,12 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
-  function readProviderPreferences(): Record<string, { model?: string }> {
-    try {
-      return JSON.parse(localStorage.getItem(PROVIDER_PREFERENCES_KEY) || '{}')
-    } catch {
-      return {}
-    }
-  }
-
-  function saveProviderPreferences(provider: string, updates: { model?: string }) {
-    const current = readProviderPreferences()
-    current[provider] = {
-      ...(current[provider] || {}),
-      ...updates,
-    }
-    localStorage.setItem(PROVIDER_PREFERENCES_KEY, JSON.stringify(current))
-  }
-
   async function hydrateProviderConfig(provider = selectedProvider.value) {
     selectedProvider.value = provider
     apiKey.value = (await keyManager.getKey(provider)) || ''
+    const prefs = readProviderPreferences()[provider] || {}
     selectedModel.value =
-      readProviderPreferences()[provider]?.model ||
+      prefs.model ||
       DEFAULT_MODEL_BY_PROVIDER[provider] ||
       'gpt-4o'
   }
@@ -2321,13 +2339,12 @@ export const useChatStore = defineStore('chat', () => {
   async function autoNameConversation(id: string, firstUserMessage: string) {
     try {
       const key = await keyManager.getKey(selectedProvider.value)
+      const providerConfig = getProviderConfig(selectedProvider.value, key)
       const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
       const waifu = selectedWaifu.value
-      if (providerRequiresApiKey(selectedProvider.value) && !key) return
+      if (providerRequiresApiKey(selectedProvider.value) && (!providerConfig.apiKey || providerConfig.apiKey === '')) return
       const runtime = new AIChatRuntime({
-        provider: providerRequiresApiKey(selectedProvider.value)
-          ? ({ type: selectedProvider.value as any, apiKey: key } as any)
-          : ({ type: selectedProvider.value as any } as any),
+        provider: getProviderConfig(selectedProvider.value, key),
         model,
         systemPrompt: `You are ${waifu?.displayName || 'an assistant'} naming a chat for your own sidebar. Read the user's first message and reply with ONE short title (2–8 words) that captures what the conversation is really about. You can have personality — a little wink, an emoji at most — but NO surrounding quotes and NO trailing punctuation. Reply with ONLY the title, nothing else.`,
       })
@@ -2547,7 +2564,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       if (isNewConversation) await loadConversations()
 
       const key = await keyManager.getKey(selectedProvider.value)
-      if (providerRequiresApiKey(selectedProvider.value) && (!key || key === '')) {
+      const providerConfig = getProviderConfig(selectedProvider.value, key)
+      if (providerRequiresApiKey(selectedProvider.value) && (!providerConfig.apiKey || providerConfig.apiKey === '')) {
         throw new Error(`No API key configured for ${selectedProvider.value}.`)
       }
       const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
@@ -2631,9 +2649,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             : buildCodingSessionPromptBlock(trimmedText)
 
           const runtime = new AIChatRuntime({
-            provider: providerRequiresApiKey(selectedProvider.value)
-              ? ({ type: selectedProvider.value as any, apiKey: key } as any)
-              : ({ type: selectedProvider.value as any } as any),
+            provider: getProviderConfig(selectedProvider.value, key),
             model,
             systemPrompt,
             cachedSystemPrompt,
@@ -3180,9 +3196,10 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       if (isNewConversation) await loadConversations()
 
       const key = await keyManager.getKey(selectedProvider.value)
+      const providerConfig = getProviderConfig(selectedProvider.value, key)
       const waifu = selectedWaifu.value
 
-      if (providerRequiresApiKey(selectedProvider.value) && (!key || key === '')) {
+      if (providerRequiresApiKey(selectedProvider.value) && (!providerConfig.apiKey || providerConfig.apiKey === '')) {
         throw new Error(`No API key configured for ${selectedProvider.value}. Open Settings and add one to chat with ${waifu?.displayName || 'your assistant'}.`)
       }
 
@@ -3225,9 +3242,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       }
 
       const runtime = new AIChatRuntime({
-        provider: providerRequiresApiKey(selectedProvider.value)
-          ? ({ type: selectedProvider.value as any, apiKey: key } as any)
-          : ({ type: selectedProvider.value as any } as any),
+        provider: getProviderConfig(selectedProvider.value, key),
         model,
         systemPrompt,
         cachedSystemPrompt,

@@ -34,6 +34,20 @@ export class OllamaProvider extends BaseAIProvider {
       supportsTools: false,
       supportsVision: false,
     },
+    {
+      id: "llama-3.1-8b",
+      displayName: "Llama 3.1 8B",
+      contextWindow: 8192,
+      supportsTools: false,
+      supportsVision: false,
+    },
+    {
+      id: "llama-3.1-8b-instant",
+      displayName: "Llama 3.1 8B Instant",
+      contextWindow: 8192,
+      supportsTools: false,
+      supportsVision: false,
+    },
   ];
 
   constructor(options: { baseUrl?: string } = {}) {
@@ -57,14 +71,26 @@ export class OllamaProvider extends BaseAIProvider {
       });
 
       if (!response.ok) {
-        throw new Error(`Ollama error: ${response.statusText}`);
+        const errorData = await response.json().catch(() => null)
+        const message =
+          errorData?.error?.message ||
+          errorData?.error ||
+          errorData?.message ||
+          response.statusText
+        throw new Error(`Ollama error: ${message}`)
       }
 
       const data = await response.json();
+      const content =
+        data.choices?.[0]?.message?.content ||
+        data.message?.content ||
+        data.choices?.[0]?.content ||
+        data.content ||
+        ""
 
       return {
         id: `ollama_${Date.now()}`,
-        content: data.message?.content || "",
+        content,
         usage: {
           promptTokens: 0,
           completionTokens: 0,

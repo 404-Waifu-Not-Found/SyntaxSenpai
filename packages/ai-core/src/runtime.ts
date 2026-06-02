@@ -26,6 +26,7 @@ export interface AISetupOptions {
   systemPrompt?: string;
   /** Stable prompt prefix forwarded to providers that support prompt caching. */
   cachedSystemPrompt?: string;
+  cacheBreakpointIndex?: number;
   temperature?: number;
   maxTokens?: number;
   maxToolIterations?: number;
@@ -52,6 +53,7 @@ export interface StreamMessageOptions {
   history?: Message[];
   systemPrompt?: string;
   cachedSystemPrompt?: string;
+  cacheBreakpointIndex?: number;
   temperature?: number;
   maxTokens?: number;
   signal?: AbortSignal;
@@ -83,6 +85,7 @@ export class AIChatRuntime {
       model: options.model,
       systemPrompt: options.systemPrompt,
       cachedSystemPrompt: options.cachedSystemPrompt,
+      cacheBreakpointIndex: options.cacheBreakpointIndex,
       temperature: options.temperature,
       maxTokens: options.maxTokens,
       maxToolIterations: options.maxToolIterations ?? 6,
@@ -265,6 +268,7 @@ export class AIChatRuntime {
       tools: options.tools,
       systemPrompt: options.systemPrompt,
       cachedSystemPrompt: options.cachedSystemPrompt,
+      cacheBreakpointIndex: options.cacheBreakpointIndex,
       signal: options.signal,
       temperature: options.temperature,
       maxTokens: options.maxTokens,
@@ -281,6 +285,7 @@ export class AIChatRuntime {
       tools?: ToolDefinition[];
       systemPrompt?: string;
       cachedSystemPrompt?: string;
+      cacheBreakpointIndex?: number;
       signal?: AbortSignal;
       temperature?: number;
       maxTokens?: number;
@@ -295,6 +300,7 @@ export class AIChatRuntime {
       tools: override.tools,
       systemPrompt: override.systemPrompt ?? this.defaults.systemPrompt,
       cachedSystemPrompt: override.cachedSystemPrompt ?? this.defaults.cachedSystemPrompt,
+      cacheBreakpointIndex: override.cacheBreakpointIndex ?? this.defaults.cacheBreakpointIndex,
       signal: override.signal,
       temperature: override.temperature ?? this.defaults.temperature,
       maxTokens: override.maxTokens ?? this.defaults.maxTokens,

@@ -1686,6 +1686,8 @@ export const useChatStore = defineStore('chat', () => {
       cachedSystemPrompt += buildMasterContextBlock()
       cachedSystemPrompt += buildLanguagePromptBlock()
       cachedSystemPrompt += buildSkillsAuthoringPromptBlock()
+      cachedSystemPrompt += formatSkillsForPrompt(availableSkills.value)
+      cachedSystemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
 
       let systemPrompt = ''
       const firstUserMessage = messages.value.find((m) => m.role === 'user')?.content || ''
@@ -1693,9 +1695,7 @@ export const useChatStore = defineStore('chat', () => {
       systemPrompt += buildMemoryContext()
       systemPrompt += buildAffectionPrompt(affection.value, waifu.displayName || 'Waifu')
       systemPrompt += buildMilestoneSidecarBlock(waifu.id)
-      systemPrompt += formatSkillsForPrompt(availableSkills.value)
       systemPrompt += buildApiTelemetryPrompt()
-      systemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
       systemPrompt += activeCodingRepo.value
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(firstUserMessage)
@@ -1759,6 +1759,7 @@ export const useChatStore = defineStore('chat', () => {
       const streamIter = runtime.streamMessage({
         text: `${proactivePrompt} ${proactiveStyleInstruction} ${proactiveTimingInstruction}`,
         history: aiHistory,
+        cacheBreakpointIndex: aiHistory.findIndex((m: any) => m.role === 'user'),
         temperature: proactiveChatTemperature.value,
         signal: streamController.value?.signal,
       })
@@ -2616,6 +2617,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           cachedSystemPrompt += buildMasterContextBlock()
           cachedSystemPrompt += buildLanguagePromptBlock()
           cachedSystemPrompt += buildSkillsAuthoringPromptBlock()
+          cachedSystemPrompt += formatSkillsForPrompt(availableSkills.value)
+          cachedSystemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
           if (hasTools) {
             if (systemInfo && systemInfo.homedir) {
               cachedSystemPrompt += `\n\n[System Environment]\nOS: ${systemInfo.platform}\nUsername: ${systemInfo.username}\nHome directory: ${systemInfo.homedir}\nShell: ${systemInfo.shell ?? 'unknown'}`
@@ -2630,10 +2633,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           systemPrompt += buildMemoryContext()
           systemPrompt += buildAffectionPrompt(affectionValue, waifu.displayName || 'Waifu')
           systemPrompt += buildMilestoneSidecarBlock(waifu.id)
-          systemPrompt += formatSkillsForPrompt(availableSkills.value)
           systemPrompt += buildApiTelemetryPrompt()
           systemPrompt += buildGroupChatPromptBlock(waifu, waifus, pendingTasks.get(waifu.id) || [], round)
-          systemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
           systemPrompt += activeCodingRepo.value
             ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
             : buildCodingSessionPromptBlock(trimmedText)
@@ -2693,6 +2694,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               tools,
               systemPrompt,
               cachedSystemPrompt,
+              cacheBreakpointIndex: aiHistory.findIndex((m: any) => m.role === 'user'),
               maxIterations,
               abortSignal: streamController.value?.signal,
               onAssistantIterationStart: () => {
@@ -2872,7 +2874,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               else queueMicrotask(flushContent)
             }
             const streamStartedAt = performance.now()
-            for await (const chunk of runtime.streamMessage({ text: trimmedText, history: sharedHistory, signal: streamController.value?.signal })) {
+            for await (const chunk of runtime.streamMessage({ text: trimmedText, history: sharedHistory, cacheBreakpointIndex: sharedHistory.findIndex((m: any) => m.role === 'user'), signal: streamController.value?.signal })) {
               if (streamController.value?.signal.aborted) break
               if (chunk.type === 'text_delta' && chunk.delta) {
                 finalContent += chunk.delta
@@ -3215,6 +3217,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       cachedSystemPrompt += buildMasterContextBlock()
       cachedSystemPrompt += buildLanguagePromptBlock()
       cachedSystemPrompt += buildSkillsAuthoringPromptBlock()
+      cachedSystemPrompt += formatSkillsForPrompt(availableSkills.value)
+      cachedSystemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
 
       // Volatile suffix — changes per turn, never marked cacheable.
       let systemPrompt = ''
@@ -3222,9 +3226,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       systemPrompt += buildMemoryContext()
       systemPrompt += buildAffectionPrompt(affection.value, waifu?.displayName || 'Waifu')
       systemPrompt += buildMilestoneSidecarBlock(waifu.id)
-      systemPrompt += formatSkillsForPrompt(availableSkills.value)
       systemPrompt += buildApiTelemetryPrompt()
-      systemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
       systemPrompt += activeCodingRepo.value
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(trimmedText)
@@ -3395,6 +3397,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           tools,
           systemPrompt,
           cachedSystemPrompt,
+          cacheBreakpointIndex: aiHistory.findIndex((m: any) => m.role === 'user'),
           maxIterations,
           abortSignal: streamController.value?.signal,
           onAssistantIterationStart: () => {
@@ -3611,7 +3614,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           last.content = assistantContent
         }
 
-        const streamIter = runtime.streamMessage({ text, history: aiMessages, signal: streamController.value?.signal })
+        const streamIter = runtime.streamMessage({ text, history: aiMessages, cacheBreakpointIndex: aiMessages.findIndex((m: any) => m.role === 'user'), signal: streamController.value?.signal })
         for await (const chunk of streamIter) {
           if (streamController.value?.signal.aborted) break
           if (chunk.type === 'text_delta' && chunk.delta) {

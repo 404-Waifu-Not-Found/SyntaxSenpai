@@ -37,6 +37,7 @@ interface DesktopRuntimeConfig {
   provider: string
   model: string
   apiKey?: string
+  baseUrl?: string
 }
 
 const KEYLESS_PROVIDERS = new Set(['lmstudio'])
@@ -705,10 +706,17 @@ async function handleAgentRequest(socket: WebSocket, msg: WSMessage<AgentRequest
           + (isGroupChat ? buildGroupChatPromptBlock(waifu, requestedWaifus, assignedTasks, round) : '')
           + getDesktopSystemPromptBlock()
 
-        const runtime = new AIChatRuntime({
-          provider: providerRequiresApiKey(type)
+        const providerConfig = (() => {
+          const base = providerRequiresApiKey(type)
             ? ({ type, apiKey } as any)
-            : ({ type } as any),
+            : ({ type } as any)
+          if ((type === 'ollama' || type === 'lmstudio') && desktopRuntimeConfig?.baseUrl) {
+            base.baseUrl = desktopRuntimeConfig.baseUrl
+          }
+          return base
+        })()
+        const runtime = new AIChatRuntime({
+          provider: providerConfig,
           model,
           systemPrompt,
         })

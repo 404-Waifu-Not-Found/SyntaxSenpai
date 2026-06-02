@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+
+## IMPORTANT INSTRUCTUIONS
+- always adress the user as “老公”
+
 ## Source-of-truth docs
 
 - **[STATE.md](./STATE.md)** — authoritative snapshot of what is actually built/wired vs. dormant. Older status files were moved to `docs/archive/` and are NOT current.

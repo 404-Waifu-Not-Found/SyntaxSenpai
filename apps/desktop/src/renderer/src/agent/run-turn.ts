@@ -16,6 +16,7 @@ export interface ProviderChatRequest {
   tools: ToolDefinition[]
   systemPrompt: string
   cachedSystemPrompt?: string
+  cacheBreakpointIndex?: number
   signal?: AbortSignal
   /**
    * Optional streaming hooks. When the caller's implementation streams (e.g.
@@ -46,6 +47,7 @@ export interface RunAgentTurnOptions {
   tools: ToolDefinition[]
   systemPrompt: string
   cachedSystemPrompt?: string
+  cacheBreakpointIndex?: number
   maxIterations: number
   abortSignal?: AbortSignal
   /** 0 = parent. Subagents pass 1; reserved for Phase 5 recursion guard. */
@@ -110,6 +112,7 @@ export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<RunAgentT
     tools,
     systemPrompt,
     cachedSystemPrompt,
+    cacheBreakpointIndex,
     maxIterations,
     abortSignal,
     handleSideEffect,
@@ -145,6 +148,7 @@ export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<RunAgentT
       tools,
       systemPrompt,
       cachedSystemPrompt,
+      cacheBreakpointIndex,
       signal: abortSignal,
       onTextDelta: onAssistantTextDelta
         ? (delta) => onAssistantTextDelta(delta, i)

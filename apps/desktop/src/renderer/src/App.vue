@@ -44,6 +44,54 @@ const windowedMessages = computed(() => {
   return list.slice(list.length - visibleMessageCount.value)
 })
 
+/**
+ * Group consecutive `isProcessStep` messages into the visible message that
+ * follows them, so the UI can render a single collapsible "process" panel
+ * above each assistant reply (ChatGPT-style) instead of letting every tool
+ * call and intermediate reasoning bubble flow inline.
+ *
+ * If a turn ends with trailing process steps (no final reply yet, e.g. the
+ * user aborted mid-stream), the last step becomes the host so we still
+ * surface what happened.
+ */
+type ProcessStep = { id: string; content: string; subagents?: any }
+type MessageGroup = { msg: any; processSteps: ProcessStep[] }
+
+const messageGroups = computed<MessageGroup[]>(() => {
+  const list = windowedMessages.value
+  const groups: MessageGroup[] = []
+  let pending: ProcessStep[] = []
+  for (const msg of list) {
+    if (msg.isProcessStep) {
+      pending.push({ id: msg.id, content: msg.content, subagents: (msg as any).subagents })
+    } else {
+      groups.push({ msg, processSteps: pending })
+      pending = []
+    }
+  }
+  if (pending.length > 0) {
+    const host = pending[pending.length - 1]
+    groups.push({
+      msg: { ...list[list.length - 1], id: host.id },
+      processSteps: pending.slice(0, -1),
+    })
+  }
+  return groups
+})
+
+const expandedProcessGroups = ref<Set<string>>(new Set())
+
+function toggleProcessExpanded(messageId: string) {
+  const next = new Set(expandedProcessGroups.value)
+  if (next.has(messageId)) next.delete(messageId)
+  else next.add(messageId)
+  expandedProcessGroups.value = next
+}
+
+function isProcessExpanded(messageId: string): boolean {
+  return expandedProcessGroups.value.has(messageId)
+}
+
 function revealOlderMessages() {
   visibleMessageCount.value = Math.min(
     visibleMessageCount.value + MESSAGE_WINDOW_PAGE,
@@ -90,10 +138,13 @@ async function submitRenameConversation() {
 
 // Reset the window whenever the user switches conversations so opening an
 // old thread starts at the tail, not wherever they paged to in another chat.
+// Also drop any expanded process panels — those decisions don't carry across
+// conversations.
 watch(
   () => store.conversationId,
   () => {
     visibleMessageCount.value = MESSAGE_WINDOW_INITIAL
+    expandedProcessGroups.value = new Set()
   },
 )
 
@@ -112,11 +163,18 @@ watch(
     if (len <= prevLen) return
     const last: any = store.messages[len - 1]
     if (!last || last.role !== 'assistant' || !last.content) return
+    // Process-step bubbles (tool calls, intermediate reasoning) shouldn't drive
+    // sentiment or TTS — only the final reply should.
+    if (last.isProcessStep || (typeof last.id === 'string' && last.id.startsWith('tool-'))) return
     const content = String(last.content)
     last.sentiment = classifySentiment(content)
     voice.speak(content, store.selectedWaifuId)
   },
 )
+// Reset agent-set expression when next turn starts (user sends a message)
+watch(() => store.isLoading, (loading) => {
+  if (loading) store.live2dExpression = null
+})
 
 const rainbowToggleBg = computed(() => {
   if (!theme.value.rainbow.enabled) return 'rgb(64,64,64)'
@@ -1679,6 +1737,7 @@ async function removeLive2DFromCurrentWaifu() {
   }
 }
 const latestSentimentExpression = computed(() => {
+  if (store.live2dExpression) return store.live2dExpression
   for (let i = store.messages.length - 1; i >= 0; i--) {
     const m = (store.messages as any[])[i]
     if (m.role === 'assistant' && m.sentiment?.expression) return m.sentiment.expression
@@ -2314,15 +2373,25 @@ watch(
 // Auto-relay the final assistant message back to WeChat when the active
 // conversation is bound to a WeChat peer. Fires on the isLoading true→false
 // transition so we catch the post-tool-loop finalization regardless of which
-// code path produced the message.
+// code path produced the message. Skips process-step bubbles (tool calls,
+// intermediate reasoning) which now linger in messages.value behind the
+// collapsible panel.
 watch(() => store.isLoading, (now, prev) => {
   if (!(prev === true && now === false)) return
   const binding = store.currentWeChatBinding
   if (!binding) return
   const convId = store.conversationId
   if (!convId) return
-  const last = store.messages[store.messages.length - 1]
-  if (!last || last.role !== 'assistant') return
+  let last: any = null
+  for (let i = store.messages.length - 1; i >= 0; i--) {
+    const m: any = store.messages[i]
+    if (m.role !== 'assistant') break
+    if (m.isProcessStep) continue
+    if (typeof m.id === 'string' && m.id.startsWith('tool-')) continue
+    last = m
+    break
+  }
+  if (!last) return
   const content = (last.content ?? '').toString()
   if (!content.trim()) return
   // Skip echoing back error bubbles produced by the chat store's catch block.
@@ -5722,72 +5791,115 @@ async function handleImportData() {
           leave-to-class="opacity-0 -translate-y-2"
         >
           <div
-            v-for="msg in windowedMessages"
-            :key="msg.id"
+            v-for="group in messageGroups"
+            :key="group.msg.id"
             :class="[
               compactChatLayout ? 'group flex gap-2' : 'group flex',
-              msg.role === 'user' ? 'justify-end items-end' : 'justify-start items-start',
+              group.msg.role === 'user' ? 'justify-end items-end' : 'justify-start items-start',
             ]"
           >
-            <div v-if="msg.role !== 'user'" :class="[compactChatLayout ? 'mr-1.5 shrink-0 relative' : 'mr-3 shrink-0 relative']">
+            <div v-if="group.msg.role !== 'user'" :class="[compactChatLayout ? 'mr-1.5 shrink-0 relative' : 'mr-3 shrink-0 relative']">
               <div
                 :class="[compactChatLayout ? 'compact-chat-avatar themed-assistant-avatar w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold text-white' : 'themed-assistant-avatar w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white']"
-                :title="msg.waifuDisplayName || store.selectedWaifu?.displayName"
+                :title="group.msg.waifuDisplayName || store.selectedWaifu?.displayName"
               >
-                {{ msg.waifuDisplayName?.[0] || store.selectedWaifu?.displayName?.[0] || 'A' }}
+                {{ group.msg.waifuDisplayName?.[0] || store.selectedWaifu?.displayName?.[0] || 'A' }}
               </div>
               <span
-                v-if="msg.sentiment && msg.sentiment.expression !== 'neutral'"
+                v-if="group.msg.sentiment && group.msg.sentiment.expression !== 'neutral'"
                 class="absolute -bottom-1 -right-1 text-[11px] leading-none select-none pointer-events-none transition-all duration-300"
-                :style="{ transform: `scale(${0.85 + (msg.sentiment.intensity ?? 0) * 0.35})` }"
-                :aria-label="`Mood: ${msg.sentiment.expression}`"
+                :style="{ transform: `scale(${0.85 + (group.msg.sentiment.intensity ?? 0) * 0.35})` }"
+                :aria-label="`Mood: ${group.msg.sentiment.expression}`"
               >
-                {{ sentimentEmoji(msg.sentiment.expression) }}
+                {{ sentimentEmoji(group.msg.sentiment.expression) }}
               </span>
             </div>
 
             <div :class="[
-              (msg.role !== 'user' || msg.source === 'wechat') ? 'flex flex-col min-w-0' : 'min-w-0',
+              (group.msg.role !== 'user' || group.msg.source === 'wechat') ? 'flex flex-col min-w-0' : 'min-w-0',
               compactChatLayout ? 'max-w-[calc(100%-2.25rem)]' : '',
             ]">
               <span
-                v-if="msg.role !== 'user' && store.isGroupChat && msg.waifuDisplayName"
+                v-if="group.msg.role !== 'user' && store.isGroupChat && group.msg.waifuDisplayName"
                 :class="[compactChatLayout ? 'text-[10px] text-neutral-400 mb-0.5 ml-0.5 font-semibold' : 'text-[11px] text-neutral-400 mb-0.5 ml-1 font-semibold']"
               >
-                {{ msg.waifuDisplayName }}
+                {{ group.msg.waifuDisplayName }}
               </span>
               <span
-                v-if="msg.role === 'user' && msg.source === 'wechat'"
+                v-if="group.msg.role === 'user' && group.msg.source === 'wechat'"
                 :class="[compactChatLayout ? 'text-[10px] text-emerald-400/80 mb-0.5 mr-0.5 font-semibold self-end flex items-center gap-1' : 'text-[11px] text-emerald-400/80 mb-0.5 mr-1 font-semibold self-end flex items-center gap-1']"
-                :title="msg.sourceLabel ? `From WeChat contact: ${msg.sourceLabel}` : 'Received from WeChat'"
+                :title="group.msg.sourceLabel ? `From WeChat contact: ${group.msg.sourceLabel}` : 'Received from WeChat'"
               >
                 <span aria-hidden="true">💬</span>
-                <span>via WeChat{{ msg.sourceLabel ? ` · ${msg.sourceLabel}` : '' }}</span>
+                <span>via WeChat{{ group.msg.sourceLabel ? ` · ${group.msg.sourceLabel}` : '' }}</span>
               </span>
+
+              <!-- Collapsible "process" panel: tool calls + intermediate
+                   reasoning bubbles that ran before this reply. Collapsed
+                   by default, mirrors the ChatGPT-style hide-the-work pattern. -->
+              <div
+                v-if="group.processSteps.length > 0 && group.msg.role !== 'user'"
+                :class="[
+                  'process-panel rounded-xl border border-white/10 bg-neutral-900/40 backdrop-blur-sm',
+                  compactChatLayout ? 'mb-1.5 max-w-md' : 'mb-2 max-w-xl',
+                ]"
+              >
+                <button
+                  type="button"
+                  class="process-panel-toggle w-full flex items-center gap-2 px-3 py-1.5 text-left text-[11px] text-neutral-300 hover:text-white transition-colors"
+                  :aria-expanded="isProcessExpanded(group.msg.id)"
+                  :aria-label="isProcessExpanded(group.msg.id) ? 'Hide thinking and process' : 'Show thinking and process'"
+                  @click="toggleProcessExpanded(group.msg.id)"
+                >
+                  <span class="process-panel-chevron inline-block w-3 text-neutral-500 transition-transform" :class="isProcessExpanded(group.msg.id) ? 'rotate-90' : ''">▸</span>
+                  <span>🧠</span>
+                  <span class="font-semibold">{{ isProcessExpanded(group.msg.id) ? 'Hide' : 'Show' }} thinking &amp; process</span>
+                  <span class="text-neutral-500">·</span>
+                  <span class="text-neutral-500">{{ group.processSteps.length }} step{{ group.processSteps.length === 1 ? '' : 's' }}</span>
+                </button>
+                <div v-if="isProcessExpanded(group.msg.id)" class="process-panel-steps px-3 pb-2 pt-1 space-y-2 border-t border-white/5">
+                  <div
+                    v-for="step in group.processSteps"
+                    :key="step.id"
+                    class="process-panel-step"
+                  >
+                    <ChatBubble
+                      role="assistant"
+                      :content="step.content"
+                      :show-copy="false"
+                    />
+                    <SubagentPanel
+                      v-if="step.subagents && step.subagents.length > 0"
+                      :subagents="step.subagents"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <ChatBubble
-                :role="msg.role"
-                :content="msg.content"
-                :timestamp="msg.timestamp"
-                :recent="msg.id === store.recentMessageId"
-                :show-copy="msg.role === 'assistant'"
+                :role="group.msg.role"
+                :content="group.msg.content"
+                :timestamp="group.msg.timestamp"
+                :recent="group.msg.id === store.recentMessageId"
+                :show-copy="group.msg.role === 'assistant'"
               />
               <div
-                v-if="msg.pendingApproval"
+                v-if="group.msg.pendingApproval"
                 :class="[
                   'mt-2 flex gap-2 rounded-xl border border-amber-400/25 bg-amber-400/10 p-2',
                   compactChatLayout ? 'max-w-[260px]' : 'max-w-md',
                 ]"
               >
-                <template v-if="msg.pendingApproval.status === 'pending'">
+                <template v-if="group.msg.pendingApproval.status === 'pending'">
                   <button
                     class="btn-primary flex-1 text-xs"
-                    @click="store.approveToolApproval(msg.pendingApproval.id)"
+                    @click="store.approveToolApproval(group.msg.pendingApproval.id)"
                   >
                     Approve
                   </button>
                   <button
                     class="btn-secondary flex-1 text-xs text-rose-300"
-                    @click="store.denyToolApproval(msg.pendingApproval.id)"
+                    @click="store.denyToolApproval(group.msg.pendingApproval.id)"
                   >
                     Deny
                   </button>
@@ -5795,21 +5907,21 @@ async function handleImportData() {
                 <div
                   v-else
                   class="w-full text-center text-xs font-semibold"
-                  :class="msg.pendingApproval.status === 'approved' ? 'text-emerald-300' : 'text-rose-300'"
+                  :class="group.msg.pendingApproval.status === 'approved' ? 'text-emerald-300' : 'text-rose-300'"
                 >
-                  {{ msg.pendingApproval.status === 'approved' ? 'Approved' : 'Denied' }}
+                  {{ group.msg.pendingApproval.status === 'approved' ? 'Approved' : 'Denied' }}
                 </div>
               </div>
               <SubagentPanel
-                v-if="msg.subagents && msg.subagents.length > 0"
-                :subagents="msg.subagents"
+                v-if="group.msg.subagents && group.msg.subagents.length > 0"
+                :subagents="group.msg.subagents"
               />
               <div
-                v-if="msg.attachments && msg.attachments.length > 0"
-                :class="['flex flex-wrap gap-2 mt-1.5', msg.role === 'user' ? 'justify-end' : 'justify-start']"
+                v-if="group.msg.attachments && group.msg.attachments.length > 0"
+                :class="['flex flex-wrap gap-2 mt-1.5', group.msg.role === 'user' ? 'justify-end' : 'justify-start']"
               >
                 <img
-                  v-for="att in msg.attachments"
+                  v-for="att in group.msg.attachments"
                   :key="att.id"
                   :src="att.url"
                   :alt="att.name"
@@ -5818,7 +5930,7 @@ async function handleImportData() {
                 />
               </div>
               <div
-                v-if="msg.role === 'assistant' && !msg.id.startsWith('tool-')"
+                v-if="group.msg.role === 'assistant' && !group.msg.id.startsWith('tool-')"
                 :class="[
                   compactChatLayout
                     ? 'flex flex-wrap gap-1.5 mt-1 ml-0.5 opacity-100 transition-opacity duration-150'
@@ -5829,7 +5941,7 @@ async function handleImportData() {
                   :class="[compactChatLayout ? 'text-[10px] text-neutral-500 hover:text-primary-300 transition-colors' : 'text-[11px] text-neutral-500 hover:text-primary-300 transition-colors']"
                   :title="t('message.regenerateTitle')"
                   :aria-label="t('message.regenerateTitle')"
-                  @click="store.regenerateFromMessage(msg.id)"
+                  @click="store.regenerateFromMessage(group.msg.id)"
                 >
                   {{ t('message.regenerate') }}
                 </button>
@@ -5837,14 +5949,14 @@ async function handleImportData() {
                   :class="[compactChatLayout ? 'text-[10px] text-neutral-500 hover:text-red-400 transition-colors' : 'text-[11px] text-neutral-500 hover:text-red-400 transition-colors']"
                   :title="t('message.deleteTitle')"
                   :aria-label="t('message.deleteTitle')"
-                  @click="store.deleteMessage(msg.id)"
+                  @click="store.deleteMessage(group.msg.id)"
                 >
                   {{ t('message.delete') }}
                 </button>
               </div>
             </div>
 
-            <div v-if="msg.role === 'user'" :class="[compactChatLayout ? 'ml-1.5 shrink-0' : 'ml-3 shrink-0']">
+            <div v-if="group.msg.role === 'user'" :class="[compactChatLayout ? 'ml-1.5 shrink-0' : 'ml-3 shrink-0']">
               <div :class="[compactChatLayout ? 'compact-chat-avatar themed-user-avatar w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-semibold text-white' : 'themed-user-avatar w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white']">
                 U
               </div>
@@ -6086,6 +6198,35 @@ async function handleImportData() {
 </template>
 
 <style scoped>
+/* Collapsible "show thinking & process" panel above each assistant reply.
+   The header chevron rotates on expand for a ChatGPT-style affordance.
+   The nested ChatBubble inside `.process-panel-step` shrinks to a more
+   compact look so the panel reads as a process log rather than a stack of
+   first-class messages. */
+.process-panel {
+  font-feature-settings: "tnum" 1;
+}
+.process-panel-toggle:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.6);
+  outline-offset: 2px;
+  border-radius: 0.75rem;
+}
+.process-panel-chevron {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.process-panel-steps :deep(.chat-bubble-shell) {
+  max-width: 100%;
+  padding: 0.4rem 0.65rem;
+  border-radius: 0.55rem;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: none;
+  font-size: 0.78rem;
+}
+.process-panel-steps :deep(.chat-bubble-content) {
+  font-size: 0.78rem;
+}
+
 /* Accessibility: visually-hidden text for screen readers. */
 .sr-only {
   position: absolute;

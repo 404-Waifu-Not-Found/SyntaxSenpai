@@ -15,7 +15,7 @@ import {
   ensureDir,
 } from "../live2d-import";
 
-const REAL_FIXTURE_ZIP = "/Users/unoxyrich/Downloads/mao_pro_zh.zip";
+const REAL_FIXTURE_ZIP = process.env.LIVE2D_FIXTURE_ZIP ?? '';
 
 function mkTempDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));

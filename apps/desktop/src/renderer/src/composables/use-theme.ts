@@ -1,4 +1,4 @@
-import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 
 export interface ThemeColors {
   bg: string

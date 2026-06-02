@@ -77,12 +77,16 @@ export function registerExportIpc() {
     }
   })
 
-  ipcMain.handle('export:openAsset', async (_event: any, options?: { title?: string; buttonLabel?: string; includeAnimation?: boolean }) => {
+  ipcMain.handle(
+    'export:openAsset',
+    async (
+      _event: any,
+      { title, buttonLabel, includeAnimation = true }: { title?: string; buttonLabel?: string; includeAnimation?: boolean } = {},
+    ) => {
     try {
-      const includeAnimation = options?.includeAnimation !== false
       const result = await dialog.showOpenDialog({
-        title: options?.title || 'Select local asset',
-        buttonLabel: options?.buttonLabel || 'Select',
+        title: title || 'Select local asset',
+        buttonLabel: buttonLabel || 'Select',
         filters: includeAnimation
           ? [
               { name: 'Images & animations', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'json', 'lottie'] },

@@ -41,12 +41,10 @@ export class MistralProvider extends OpenAICompatibleProvider {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    const model = request.model || "mistral-small-latest";
     return super.chat(request);
   }
 
   async *stream(request: ChatRequest): AsyncIterable<StreamChunk> {
-    const model = request.model || "mistral-small-latest";
     yield* super.stream(request);
   }
 }

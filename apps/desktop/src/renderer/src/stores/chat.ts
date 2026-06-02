@@ -6,14 +6,13 @@ import { AIChatRuntime, withRetry, classifyError, describeError, type ToolCall }
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
 import { createLogger } from '../composables/logger'
-import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, loadPluginTools, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, TODO_WRITE_TOOL_NAME, TODO_READ_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, CARD_MARKER_FENCE, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
+import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, SET_EXPRESSION_TOOL_NAME, TODO_WRITE_TOOL_NAME, TODO_READ_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, CARD_MARKER_FENCE, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
 import { runAgentTurn, type SideEffectResult } from '../agent/run-turn'
 import {
   dispatchSubagents,
   type SubagentSnapshot,
   SUBAGENT_DEFAULT_MAX_ITERATIONS,
   SUBAGENT_DEFAULT_CONCURRENCY,
-  SUBAGENT_MAX_COUNT,
   SUBAGENT_MIN_ITERATIONS,
   SUBAGENT_HARD_MAX_ITERATIONS,
   SUBAGENT_MIN_CONCURRENCY,
@@ -161,6 +160,14 @@ export interface Message {
   source?: 'wechat'
   /** Human-readable origin label (e.g. the WeChat peer's display name). */
   sourceLabel?: string
+  /**
+   * When true, this message is an intermediate step (tool call output or a
+   * pre-final reasoning bubble) that the UI folds into a collapsible "process"
+   * panel above the final assistant reply, instead of rendering as its own
+   * standalone bubble. The flag is set after the turn finishes — during
+   * streaming the bubbles are still shown live so the user can watch progress.
+   */
+  isProcessStep?: boolean
 }
 
 interface ApiTelemetry {
@@ -952,6 +959,7 @@ export const useChatStore = defineStore('chat', () => {
       : builtInWaifus.slice(0, 2).map((waifu) => waifu.id),
   )
   const affection = ref(loadAffection(builtInWaifus[0]?.id || 'aria'))
+  const live2dExpression = ref<string | null>(null)
   const apiTelemetry = ref<ApiTelemetry>(createEmptyApiTelemetry())
   const apiTelemetryHistory = ref<ApiTelemetrySample[]>(loadApiTelemetryHistory())
   const apiTelemetryAlert = ref<ApiTelemetryAlert>(createEmptyApiAlert())
@@ -1394,6 +1402,7 @@ export const useChatStore = defineStore('chat', () => {
     return [
       STOP_TOOL_NAME,
       SET_AFFECTION_TOOL_NAME,
+      SET_EXPRESSION_TOOL_NAME,
       TODO_WRITE_TOOL_NAME,
       TODO_READ_TOOL_NAME,
       RENAME_CHAT_TOOL_NAME,
@@ -1714,6 +1723,8 @@ export const useChatStore = defineStore('chat', () => {
       cachedSystemPrompt += buildMasterContextBlock()
       cachedSystemPrompt += buildLanguagePromptBlock()
       cachedSystemPrompt += buildSkillsAuthoringPromptBlock()
+      cachedSystemPrompt += formatSkillsForPrompt(availableSkills.value)
+      cachedSystemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
 
       let systemPrompt = ''
       const firstUserMessage = messages.value.find((m) => m.role === 'user')?.content || ''
@@ -1721,9 +1732,7 @@ export const useChatStore = defineStore('chat', () => {
       systemPrompt += buildMemoryContext()
       systemPrompt += buildAffectionPrompt(affection.value, waifu.displayName || 'Waifu')
       systemPrompt += buildMilestoneSidecarBlock(waifu.id)
-      systemPrompt += formatSkillsForPrompt(availableSkills.value)
       systemPrompt += buildApiTelemetryPrompt()
-      systemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
       systemPrompt += activeCodingRepo.value
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(firstUserMessage)
@@ -1785,6 +1794,7 @@ export const useChatStore = defineStore('chat', () => {
       const streamIter = runtime.streamMessage({
         text: `${proactivePrompt} ${proactiveStyleInstruction} ${proactiveTimingInstruction}`,
         history: aiHistory,
+        cacheBreakpointIndex: aiHistory.findIndex((m: any) => m.role === 'user'),
         temperature: proactiveChatTemperature.value,
         signal: streamController.value?.signal,
       })
@@ -2626,6 +2636,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           cachedSystemPrompt += buildMasterContextBlock()
           cachedSystemPrompt += buildLanguagePromptBlock()
           cachedSystemPrompt += buildSkillsAuthoringPromptBlock()
+          cachedSystemPrompt += formatSkillsForPrompt(availableSkills.value)
+          cachedSystemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
           if (hasTools) {
             if (systemInfo && systemInfo.homedir) {
               cachedSystemPrompt += `\n\n[System Environment]\nOS: ${systemInfo.platform}\nUsername: ${systemInfo.username}\nHome directory: ${systemInfo.homedir}\nShell: ${systemInfo.shell ?? 'unknown'}`
@@ -2640,10 +2652,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           systemPrompt += buildMemoryContext()
           systemPrompt += buildAffectionPrompt(affectionValue, waifu.displayName || 'Waifu')
           systemPrompt += buildMilestoneSidecarBlock(waifu.id)
-          systemPrompt += formatSkillsForPrompt(availableSkills.value)
           systemPrompt += buildApiTelemetryPrompt()
           systemPrompt += buildGroupChatPromptBlock(waifu, waifus, pendingTasks.get(waifu.id) || [], round)
-          systemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
           systemPrompt += activeCodingRepo.value
             ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
             : buildCodingSessionPromptBlock(trimmedText)
@@ -2701,6 +2711,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               tools,
               systemPrompt,
               cachedSystemPrompt,
+              cacheBreakpointIndex: aiHistory.findIndex((m: any) => m.role === 'user'),
               maxIterations,
               abortSignal: streamController.value?.signal,
               onAssistantIterationStart: () => {
@@ -2732,6 +2743,13 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                   }
                   if (milestone) emitMilestoneToast(waifu, milestone)
                   return { resultContent: `好感度 updated to ${newVal}` }
+                }
+                if (toolCall.name === SET_EXPRESSION_TOOL_NAME) {
+                  const expr = String((toolCall.arguments as any).expression || 'neutral')
+                  if (selectedWaifuId.value === waifu.id) {
+                    live2dExpression.value = expr
+                  }
+                  return { resultContent: `Expression set to ${expr}` }
                 }
                 if (toolCall.name === TODO_WRITE_TOOL_NAME) {
                   const items = parseTodoList((toolCall.arguments as any).items)
@@ -2830,9 +2848,15 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               finalContent = prependCardMarkers(pendingCards, finalContent)
             }
 
+            // Mark every tool bubble emitted during this waifu's turn as a
+            // process step so the UI folds them behind the collapsible
+            // "process" panel above the final reply, instead of deleting
+            // them (the previous behavior threw away the trace entirely).
             if (finalContent && toolMsgIds.length > 0) {
-              const idsToRemove = new Set(toolMsgIds)
-              messages.value = messages.value.filter((message) => !idsToRemove.has(message.id))
+              const stepIds = new Set(toolMsgIds)
+              for (const m of messages.value) {
+                if (stepIds.has(m.id)) (m as Message).isProcessStep = true
+              }
             }
           } else {
             // No-tools branch: stream directly into the live bubble.
@@ -2867,7 +2891,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               else queueMicrotask(flushContent)
             }
             const streamStartedAt = performance.now()
-            for await (const chunk of runtime.streamMessage({ text: trimmedText, history: sharedHistory, signal: streamController.value?.signal })) {
+            for await (const chunk of runtime.streamMessage({ text: trimmedText, history: sharedHistory, cacheBreakpointIndex: sharedHistory.findIndex((m: any) => m.role === 'user'), signal: streamController.value?.signal })) {
               if (streamController.value?.signal.aborted) break
               if (chunk.type === 'text_delta' && chunk.delta) {
                 finalContent += chunk.delta
@@ -3211,6 +3235,8 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       cachedSystemPrompt += buildMasterContextBlock()
       cachedSystemPrompt += buildLanguagePromptBlock()
       cachedSystemPrompt += buildSkillsAuthoringPromptBlock()
+      cachedSystemPrompt += formatSkillsForPrompt(availableSkills.value)
+      cachedSystemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
 
       // Volatile suffix — changes per turn, never marked cacheable.
       let systemPrompt = ''
@@ -3218,9 +3244,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       systemPrompt += buildMemoryContext()
       systemPrompt += buildAffectionPrompt(affection.value, waifu?.displayName || 'Waifu')
       systemPrompt += buildMilestoneSidecarBlock(waifu.id)
-      systemPrompt += formatSkillsForPrompt(availableSkills.value)
       systemPrompt += buildApiTelemetryPrompt()
-      systemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
       systemPrompt += activeCodingRepo.value
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(trimmedText)
@@ -3253,11 +3277,14 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         // 有工具时，模型会在“思考 → 调工具 → 读结果 → 再决定”之间循环，直到 stop_response 给出最终答复。
         const provider = runtime.getProvider()
 
-        // Build AI-compatible message history (skip tool-display messages from UI).
+        // Build AI-compatible message history (skip tool-display messages from
+        // UI, and the intermediate live bubbles we now retain behind the
+        // collapsible "process" panel — neither belongs in the canonical turn
+        // history we send back to the model).
         // When a user message has image attachments, emit ContentPart[] so the
         // provider mapper translates them to the provider's multi-modal shape.
         const aiHistory: any[] = messages.value
-          .filter((m) => m.role === 'user' || m.role === 'assistant')
+          .filter((m) => (m.role === 'user' || m.role === 'assistant') && !m.isProcessStep && !m.id.startsWith('tool-'))
           .map((m) => ({
             id: m.id,
             role: m.role,
@@ -3270,7 +3297,12 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           }))
 
         const maxIterations = effectiveMaxToolIterations.value
-        const toolMsgIds: string[] = [] // track tool bubbles so we can remove them later
+        // Tracks every bubble produced inside this turn that is NOT the final
+        // assistant reply — tool execution bubbles plus intermediate live
+        // bubbles from earlier iterations. After the turn settles we mark
+        // each of these with `isProcessStep: true` so the UI folds them into
+        // the collapsible "process" panel above the final reply.
+        const processStepIds: string[] = []
         const apiRoundTrips: number[] = []
         const pendingCards: RenderCardPayload[] = []
 
@@ -3300,6 +3332,13 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               timestamp: msg.timestamp,
               waifuId: msg.waifuId,
               waifuDisplayName: msg.waifuDisplayName,
+              // Carry the process-step flag through to storage so the collapse
+              // behavior survives reload. The flag may still be undefined here
+              // (it's only set once the turn finalizes); a second save with the
+              // flag set is debounced by `persistedLiveBubbleIds`, so update
+              // happens in-memory only — acceptable since the canonical reply
+              // is the final live bubble, which is never a process step.
+              isProcessStep: msg.isProcessStep,
             }).catch((e) => {
               console.warn('Failed to save assistant message:', e)
             }),
@@ -3307,6 +3346,12 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         }
 
         const beginNextLiveBubble = () => {
+          // The bubble that was just finalized is by definition not the final
+          // reply (a new iteration is starting), so record it for the
+          // post-turn process-step marking pass.
+          if (liveBubbleAdded && liveAssistantId) {
+            processStepIds.push(liveAssistantId)
+          }
           liveAssistantId = `assistant-${Date.now()}-${++liveBubbleSequence}`
           liveBubbleAdded = false
           liveText = ''
@@ -3368,6 +3413,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           tools,
           systemPrompt,
           cachedSystemPrompt,
+          cacheBreakpointIndex: aiHistory.findIndex((m: any) => m.role === 'user'),
           maxIterations,
           abortSignal: streamController.value?.signal,
           onAssistantIterationStart: () => {
@@ -3401,6 +3447,11 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               }
               return { resultContent: `好感度 updated to ${newVal}` }
             }
+            if (tc.name === SET_EXPRESSION_TOOL_NAME) {
+              const expr = String((tc.arguments as any).expression || 'neutral')
+              live2dExpression.value = expr
+              return { resultContent: `Expression set to ${expr}` }
+            }
             if (tc.name === TODO_WRITE_TOOL_NAME) {
               const items = parseTodoList((tc.arguments as any).items)
               activeTodoList.value = items
@@ -3425,7 +3476,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
               const args = (tc.arguments ?? {}) as { rationale?: string; subagents?: any[] }
               const specs = Array.isArray(args.subagents) ? args.subagents : []
               const dispatchMsgId = `tool-${Date.now()}-${tc.id}`
-              toolMsgIds.push(dispatchMsgId)
+              processStepIds.push(dispatchMsgId)
               const initialMessage: Message = {
                 id: dispatchMsgId,
                 role: 'assistant',
@@ -3466,7 +3517,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           onToolStart: (tc) => {
             const label = describeToolCall(tc)
             const toolMsgId = `tool-${Date.now()}-${tc.id}`
-            toolMsgIds.push(toolMsgId)
+            processStepIds.push(toolMsgId)
             messages.value.push({
               id: toolMsgId,
               role: 'assistant',
@@ -3499,13 +3550,11 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           finalContent = prependCardMarkers(pendingCards, finalContent)
         }
 
-        // Remove tool execution messages now that we have the final response
-        if (finalContent && toolMsgIds.length > 0) {
-          const idsToRemove = new Set(toolMsgIds)
-          messages.value = messages.value.filter((m) => !idsToRemove.has(m.id))
-        }
-
         // Show the AI's final response — reuse the live streaming bubble.
+        // The final live bubble (`liveAssistantId`) is the canonical reply;
+        // every other bubble produced during this turn (tool calls + earlier
+        // iteration text/reasoning) gets folded into the collapsible "process"
+        // panel rendered above the reply.
         if (finalContent) {
           recordApiTelemetry(
             apiRoundTrips.reduce((sum, value) => sum + value, 0),
@@ -3534,6 +3583,19 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             recentMessageId.value = liveAssistantId
             queueLiveBubbleSave(finalMessage)
           }
+
+          // Mark every bubble produced earlier in this turn as a process step
+          // so the UI folds them behind the collapsible panel. Skip the final
+          // reply itself (which has the just-written `cleanContent`).
+          if (processStepIds.length > 0) {
+            const stepIds = new Set(processStepIds.filter((id) => id !== liveAssistantId))
+            if (stepIds.size > 0) {
+              for (const m of messages.value) {
+                if (stepIds.has(m.id)) (m as Message).isProcessStep = true
+              }
+            }
+          }
+
           await Promise.allSettled(liveBubbleSaveTasks)
           // Auto-name after first exchange (runs in background, doesn't block UI)
           if (isNewConversation && convId) autoNameConversation(convId, text)
@@ -3568,7 +3630,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           last.content = assistantContent
         }
 
-        const streamIter = runtime.streamMessage({ text, history: aiMessages, signal: streamController.value?.signal })
+        const streamIter = runtime.streamMessage({ text, history: aiMessages, cacheBreakpointIndex: aiMessages.findIndex((m: any) => m.role === 'user'), signal: streamController.value?.signal })
         for await (const chunk of streamIter) {
           if (streamController.value?.signal.aborted) break
           if (chunk.type === 'text_delta' && chunk.delta) {
@@ -3864,6 +3926,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     agentMode,
     selectedWaifu,
     affection,
+    live2dExpression,
     apiTelemetry,
     apiTelemetryHistory,
     apiTelemetryAlert,

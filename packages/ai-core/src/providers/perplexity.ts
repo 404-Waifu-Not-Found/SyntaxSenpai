@@ -36,7 +36,6 @@ export class PerplexityProvider extends BaseAIProvider {
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
     const messages = convertToOpenAIMessages(this.buildMessages(request));
-    const tools = this.getToolDefinitions(request.tools);
 
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {

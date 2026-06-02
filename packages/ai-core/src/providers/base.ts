@@ -240,44 +240,82 @@ function toAnthropicContent(content: Message["content"]): Array<Record<string, u
 /**
  * Helper to convert messages to Anthropic format.
  * Handles tool_use blocks on assistant messages and tool_result blocks for tool responses.
+ *
+ * @param messages - conversation messages (system messages filtered out)
+ * @param cacheBreakpointIndex - if set, the message at this offset gets
+ *   `cache_control: ephemeral` on its last content block so everything up to
+ *   and including it is eligible for prompt caching.
  */
 export function convertToAnthropicMessages(
-  messages: Message[]
+  messages: Message[],
+  cacheBreakpointIndex?: number
 ): Array<Record<string, unknown>> {
-  // Filter out system messages (handled separately in Anthropic)
-  return messages
-    .filter((msg) => msg.role !== "system")
-    .map((msg) => {
-      // Assistant message that invoked tools
-      if (msg.role === "assistant" && msg.toolCalls && msg.toolCalls.length > 0) {
-        const text =
-          typeof msg.content === "string" ? msg.content : "";
-        const blocks: Array<Record<string, unknown>> = [];
-        if (text) blocks.push({ type: "text", text });
-        for (const tc of msg.toolCalls) {
-          blocks.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.arguments });
-        }
-        return { role: "assistant", content: blocks };
-      }
+  const result: Array<Record<string, unknown>> = [];
 
-      // Tool result message
-      if (msg.role === "tool" && msg.toolCallId) {
-        const toolContent = typeof msg.content === "string"
-          ? msg.content
-          : JSON.stringify(msg.content);
-        return {
-          role: "user",
-          content: [
-            { type: "tool_result", tool_use_id: msg.toolCallId, content: toolContent },
-          ],
-        };
-      }
+  for (let msgIndex = 0; msgIndex < messages.length; msgIndex++) {
+    const msg = messages[msgIndex];
+    if (msg.role === "system") continue;
 
-      return {
-        role: msg.role as "user" | "assistant",
-        content: toAnthropicContent(msg.content),
-      };
-    });
+    const isBreakpoint = msg.role === "user" && cacheBreakpointIndex === msgIndex;
+
+    // Assistant message that invoked tools
+    if (msg.role === "assistant" && msg.toolCalls && msg.toolCalls.length > 0) {
+      const text =
+        typeof msg.content === "string" ? msg.content : "";
+      const blocks: Array<Record<string, unknown>> = [];
+      if (text) blocks.push({ type: "text", text });
+      for (const tc of msg.toolCalls) {
+        blocks.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.arguments });
+      }
+      result.push({ role: "assistant", content: blocks });
+      continue;
+    }
+
+    // Tool result message
+    if (msg.role === "tool" && msg.toolCallId) {
+      const toolContent = typeof msg.content === "string"
+        ? msg.content
+        : JSON.stringify(msg.content);
+      result.push({
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: msg.toolCallId, content: toolContent },
+        ],
+      });
+      continue;
+    }
+
+    // Regular text message. When this is the cache breakpoint, wrap string
+    // content in a content-block array so we can attach cache_control.
+    let content = msg.role === "user" && isBreakpoint
+      ? toAnthropicContentBlocks(msg.content)
+      : toAnthropicContent(msg.content);
+
+    if (isBreakpoint && Array.isArray(content) && content.length > 0) {
+      const last = content[content.length - 1] as Record<string, unknown>;
+      last.cache_control = { type: "ephemeral" };
+    }
+
+    result.push({ role: msg.role as "user" | "assistant", content });
+  }
+
+  return result;
+}
+
+function toAnthropicContentBlocks(content: Message["content"]): Array<Record<string, unknown>> {
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  return content.map((part) => {
+    if (part.type === "text") return { type: "text", text: part.text ?? "" };
+    if (part.type === "image_url") {
+      const url = part.imageUrl?.url ?? "";
+      const dataMatch = /^data:([^;]+);base64,(.+)$/.exec(url);
+      if (dataMatch) {
+        return { type: "image", source: { type: "base64", media_type: dataMatch[1], data: dataMatch[2] } };
+      }
+      return { type: "image", source: { type: "url", url } };
+    }
+    return { type: "text", text: JSON.stringify(part) };
+  });
 }
 
 /**

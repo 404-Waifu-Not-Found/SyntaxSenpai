@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { __testing } from "../providers/anthropic";
-import type { ChatRequest } from "../types";
+import { convertToAnthropicMessages } from "../providers/base";
+import type { ChatRequest, Message } from "../types";
 
 const { buildCachedSystem } = __testing;
 
@@ -59,5 +60,63 @@ describe("buildCachedSystem", () => {
       tools: [{ name: "only", description: "x", parameters: { type: "object" } }],
     });
     expect(result.tools![0].cache_control).toBeUndefined();
+  });
+});
+
+describe("convertToAnthropicMessages — message-level cache_control", () => {
+  const user1: Message = { id: "u1", role: "user", content: "hello" };
+  const assistant1: Message = { id: "a1", role: "assistant", content: "hi there" };
+  const user2: Message = { id: "u2", role: "user", content: "how are you" };
+
+  it("marks first user message with cache_control when breakpoint index matches", () => {
+    const result = convertToAnthropicMessages([user1, assistant1, user2], 0);
+    expect(result).toHaveLength(3);
+
+    const firstContent = result[0].content as Array<{ type: string; text: string; cache_control?: unknown }>;
+    expect(firstContent).toHaveLength(1);
+    expect(firstContent[0].cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  it("marks the specified user message, not others", () => {
+    const result = convertToAnthropicMessages([user1, assistant1, user2], 2);
+    expect(result).toHaveLength(3);
+
+    const firstContent = result[0].content as Array<{ type: string; cache_control?: unknown }>;
+    expect(firstContent[0].cache_control).toBeUndefined();
+
+    const thirdContent = result[2].content as Array<{ type: string; text: string; cache_control?: unknown }>;
+    expect(thirdContent[0].cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  it("does not mark assistant messages even if index matches", () => {
+    const result = convertToAnthropicMessages([user1, assistant1], 1);
+    const secondContent = result[1].content;
+    // Assistant content is a string, not an array, since it has no cache_control
+    expect(typeof secondContent).toBe("string");
+    expect(secondContent).toBe("hi there");
+  });
+
+  it("no crash when breakpoint index is out of range", () => {
+    const result = convertToAnthropicMessages([user1, assistant1], 99);
+    expect(result).toHaveLength(2);
+    const firstContent = result[0].content as Array<{ type: string; cache_control?: unknown }>;
+    expect(firstContent[0].cache_control).toBeUndefined();
+  });
+
+  it("filters system messages and still applies breakpoint by original index", () => {
+    const sysMsg: Message = { id: "s1", role: "system", content: "system prompt" };
+    const result = convertToAnthropicMessages([sysMsg, user1, assistant1], 1);
+    // system is filtered, user1 is at effective index 0 in output, but original index 1
+    expect(result).toHaveLength(2);
+    const firstContent = result[0].content as Array<{ type: string; text: string; cache_control?: unknown }>;
+    expect(firstContent[0].cache_control).toEqual({ type: "ephemeral" });
+    expect(firstContent[0].text).toBe("hello");
+  });
+
+  it("no cache_control when breakpointIndex is undefined", () => {
+    const result = convertToAnthropicMessages([user1, assistant1]);
+    expect(result).toHaveLength(2);
+    const firstContent = result[0].content;
+    expect(typeof firstContent).toBe("string");
   });
 });

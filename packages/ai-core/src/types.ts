@@ -97,6 +97,18 @@ export interface ChatRequest {
    * `cachedSystemPrompt + systemPrompt` and treat it as a single system prompt.
    */
   cachedSystemPrompt?: string;
+  /**
+   * When set, the message at this index in `messages` gets `cache_control:
+   * ephemeral` on its last content block (Anthropic only). Everything up to and
+   * including that message is eligible for prompt caching.
+   *
+   * Strategy for high cache-hit rates: set this to the index of the FIRST
+   * user message in the conversation. The system prompt + first exchange stay
+   * cached across turns, and only new messages after the breakpoint are
+   * uncached. Within the 5-min TTL window this gives a stable cache key for
+   * the heavy prefix while new turns append light-weight messages.
+   */
+  cacheBreakpointIndex?: number;
   /** Optional abort signal — providers that respect it stop the in-flight request. */
   signal?: AbortSignal;
 }

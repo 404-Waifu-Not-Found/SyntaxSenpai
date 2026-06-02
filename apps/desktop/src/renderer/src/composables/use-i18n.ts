@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 
 export type Locale = 'en' | 'zh' | 'fr' | 'ru' | 'ja'
 

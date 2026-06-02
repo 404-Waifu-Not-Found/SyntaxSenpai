@@ -100,7 +100,7 @@ export class AnthropicProvider extends BaseAIProvider {
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
-    const messages = convertToAnthropicMessages(request.messages);
+    const messages = convertToAnthropicMessages(request.messages, request.cacheBreakpointIndex);
     const { system, tools } = buildCachedSystem(request);
 
     const response = await this.client.messages.create(
@@ -152,7 +152,7 @@ export class AnthropicProvider extends BaseAIProvider {
   }
 
   async *stream(request: ChatRequest): AsyncIterable<StreamChunk> {
-    const messages = convertToAnthropicMessages(request.messages);
+    const messages = convertToAnthropicMessages(request.messages, request.cacheBreakpointIndex);
     const { system, tools } = buildCachedSystem(request);
 
     const stream = await this.client.messages.stream(

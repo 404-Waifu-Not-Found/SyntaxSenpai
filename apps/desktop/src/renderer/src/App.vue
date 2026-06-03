@@ -171,11 +171,6 @@ watch(
     voice.speak(content, store.selectedWaifuId)
   },
 )
-// Reset agent-set expression when next turn starts (user sends a message)
-watch(() => store.isLoading, (loading) => {
-  if (loading) store.live2dExpression = null
-})
-
 const rainbowToggleBg = computed(() => {
   if (!theme.value.rainbow.enabled) return 'rgb(64,64,64)'
   const h = currentRainbowHue.value
@@ -205,6 +200,43 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = 
 
 // Ollama base URL (per-provider preference)
 const ollamaBaseUrl = ref('')
+
+// ── Tavily web-search API key (stored in the secure keystore) ────────────────
+const tavilyApiKey = ref('')
+const tavilyKeySaving = ref(false)
+const tavilyKeyStatus = ref('')
+const tavilyKeyStatusOk = ref(false)
+
+async function loadTavilyApiKey() {
+  try {
+    const res = await invoke('keystore:get', 'tavily')
+    tavilyApiKey.value = (res?.success && res.key) ? res.key : ''
+  } catch {
+    // keystore unavailable — leave blank, DuckDuckGo fallback still works
+  }
+}
+
+async function saveTavilyApiKey() {
+  tavilyKeySaving.value = true
+  tavilyKeyStatus.value = ''
+  try {
+    const key = tavilyApiKey.value.trim()
+    const channel = key ? 'keystore:set' : 'keystore:delete'
+    const res = key ? await invoke(channel, 'tavily', key) : await invoke(channel, 'tavily')
+    if (res?.success) {
+      tavilyKeyStatusOk.value = true
+      tavilyKeyStatus.value = key ? 'Tavily key saved — web search will use Tavily.' : 'Tavily key cleared — using DuckDuckGo fallback.'
+    } else {
+      tavilyKeyStatusOk.value = false
+      tavilyKeyStatus.value = res?.error || 'Failed to update Tavily key.'
+    }
+  } catch (err: any) {
+    tavilyKeyStatusOk.value = false
+    tavilyKeyStatus.value = err?.message || String(err)
+  } finally {
+    tavilyKeySaving.value = false
+  }
+}
 
 // ── WeChat settings tab state ───────────────────────────────────────────────
 const wechatQrDataUrl = ref<string | null>(null)
@@ -401,10 +433,126 @@ async function deleteSkill(slug: string) {
   const result = await invoke('skills:delete', slug)
   if (result?.success) {
     skillsList.value = skillsList.value.filter((s) => s.slug !== slug)
+    if (skillEditSlug.value === slug) cancelSkillEdit()
     store.refreshAvailableSkills()
     showToast(`Removed skill "${slug}"`, 'success')
   } else {
     showToast(result?.error || 'Delete failed', 'error')
+  }
+}
+
+// --- Import skills from GitHub -------------------------------------------
+const skillImportSource = ref('VoltAgent/skills')
+const skillImportOverwrite = ref(false)
+const skillImporting = ref(false)
+const skillImportStatus = ref('')
+
+async function importSkillsFromGithub(presetSource?: string) {
+  const source = (presetSource ?? skillImportSource.value).trim()
+  if (presetSource) skillImportSource.value = presetSource
+  if (!source) {
+    showToast('Enter a GitHub repo (e.g. owner/repo)', 'error')
+    return
+  }
+  skillImporting.value = true
+  skillImportStatus.value = 'Starting…'
+  try {
+    const result = await invoke('skills:import', {
+      source,
+      overwrite: skillImportOverwrite.value,
+    })
+    if (!result?.success) {
+      skillImportStatus.value = ''
+      showToast(result?.error || 'Import failed', 'error')
+      return
+    }
+    const installed = result.installed?.length || 0
+    const skipped = result.skipped?.length || 0
+    const errors = result.errors?.length || 0
+    skillImportStatus.value =
+      `Installed ${installed} skill${installed === 1 ? '' : 's'}` +
+      (skipped ? `, skipped ${skipped}` : '') +
+      (errors ? `, ${errors} error${errors === 1 ? '' : 's'}` : '') +
+      ` (branch ${result.ref}).`
+    await refreshSkillsTab()
+    store.refreshAvailableSkills()
+    showToast(
+      installed ? `Imported ${installed} skill${installed === 1 ? '' : 's'}` : 'No new skills imported',
+      installed ? 'success' : 'error',
+    )
+  } catch (err: any) {
+    skillImportStatus.value = ''
+    showToast(err?.message || String(err), 'error')
+  } finally {
+    skillImporting.value = false
+  }
+}
+
+// --- Create / edit a skill by hand ---------------------------------------
+const skillEditSlug = ref<string | null>(null) // null = not editing; '' = creating new
+const skillEditForm = ref({ slug: '', name: '', description: '', body: '' })
+const skillEditSaving = ref(false)
+
+function startCreateSkill() {
+  skillEditSlug.value = ''
+  skillEditForm.value = { slug: '', name: '', description: '', body: '' }
+}
+
+async function startEditSkill(slug: string) {
+  const entry = skillsList.value.find((s) => s.slug === slug)
+  let body = entry?.body
+  if (!body) {
+    try {
+      const result = await invoke('skills:read', slug)
+      if (result?.success && result.skill?.body) body = result.skill.body
+    } catch { /* non-fatal */ }
+  }
+  skillEditSlug.value = slug
+  skillEditForm.value = {
+    slug,
+    name: entry?.name || '',
+    description: entry?.description || '',
+    body: body || '',
+  }
+}
+
+function cancelSkillEdit() {
+  skillEditSlug.value = null
+  skillEditForm.value = { slug: '', name: '', description: '', body: '' }
+}
+
+async function saveSkillEdit() {
+  const f = skillEditForm.value
+  const isNew = skillEditSlug.value === ''
+  const slug = (isNew ? f.slug : (skillEditSlug.value as string)).trim().toLowerCase()
+  if (!slug || !/^[a-z0-9][a-z0-9_-]*$/.test(slug) || slug.length > 64) {
+    showToast('Slug must be lowercase a-z, 0-9, - or _ (≤ 64 chars)', 'error')
+    return
+  }
+  if (!f.name.trim() || !f.description.trim() || !f.body.trim()) {
+    showToast('Name, description and body are all required', 'error')
+    return
+  }
+  skillEditSaving.value = true
+  try {
+    const result = await invoke('skills:write', {
+      slug,
+      name: f.name.trim(),
+      description: f.description.trim(),
+      body: f.body,
+    })
+    if (!result?.success) {
+      showToast(result?.error || 'Save failed', 'error')
+      return
+    }
+    cancelSkillEdit()
+    await refreshSkillsTab()
+    store.refreshAvailableSkills()
+    showToast(`Saved skill "${slug}"`, 'success')
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  } finally {
+    skillEditSaving.value = false
   }
 }
 
@@ -2234,6 +2382,8 @@ onMounted(() => {
     // Refresh Cubism Core install status so the Live2D tab can show it
     // immediately without a round-trip when first opened.
     refreshCubismCoreStatus()
+    // Preload the Tavily key so Settings → AI shows it without opening keystore.
+    loadTavilyApiKey()
     if (store.isSetup) {
       store.loadConversations()
       store.loadMemories()
@@ -2289,6 +2439,9 @@ onMounted(() => {
   window.addEventListener('app:memory-updated', onAppMemoryUpdated as EventListener)
   window.addEventListener('app:skill-created', onAppSkillCreated as EventListener)
   window.addEventListener('app:tool-proposed', onAppToolProposed as EventListener)
+  on('skills:import-progress', (msg: string) => {
+    if (skillImporting.value) skillImportStatus.value = msg
+  })
   window.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('pointerdown', onGlobalPointerDown)
   window.addEventListener('pointermove', updateLive2DPanelPointer)
@@ -3576,7 +3729,7 @@ async function handleImportData() {
                 <div>
                   <div class="text-sm font-semibold text-neutral-200">Web search</div>
                   <p class="mt-1 text-xs text-neutral-400">
-                    Disabled by default. When enabled, the agent can fetch DuckDuckGo result links/snippets only; it should not use web search as realtime data.
+                    Disabled by default. When enabled, the agent fetches search result links/snippets only; it should not use web search as realtime data.
                   </p>
                 </div>
                 <button
@@ -3590,6 +3743,30 @@ async function handleImportData() {
                     :style="{ transform: store.webSearchEnabled ? 'translateX(20px)' : 'translateX(0)' }"
                   />
                 </button>
+              </div>
+
+              <div class="mt-3 border-t border-neutral-800 pt-3">
+                <label class="block text-xs font-semibold text-neutral-300 mb-1">Tavily API key (optional)</label>
+                <div class="flex items-center gap-2">
+                  <input
+                    v-model="tavilyApiKey"
+                    type="password"
+                    placeholder="tvly-..."
+                    class="input-field flex-1"
+                    aria-label="Tavily API key"
+                  >
+                  <button class="btn-secondary text-xs shrink-0" :disabled="tavilyKeySaving" @click="saveTavilyApiKey">
+                    {{ tavilyKeySaving ? 'Saving…' : 'Save' }}
+                  </button>
+                </div>
+                <p class="mt-1 text-[11px] text-neutral-500">
+                  When set, web search runs through
+                  <a class="underline" href="https://github.com/tavily-ai/tavily-mcp" target="_blank" rel="noopener noreferrer">Tavily's remote MCP server</a>
+                  (higher-quality, AI-oriented results). Leave blank to use the keyless DuckDuckGo fallback. Stored in the secure keystore.
+                </p>
+                <p v-if="tavilyKeyStatus" class="mt-1 text-[11px]" :class="tavilyKeyStatusOk ? 'text-emerald-400' : 'text-red-400'">
+                  {{ tavilyKeyStatus }}
+                </p>
               </div>
             </div>
 
@@ -4424,28 +4601,107 @@ async function handleImportData() {
 
           <!-- Skills Tab -->
           <div v-if="settingsTab === 'skills'">
+            <!-- Import skills from GitHub -->
+            <div class="settings-card">
+              <div class="mb-3">
+                <h3 class="text-sm font-bold text-white">Import skills from GitHub</h3>
+                <p class="text-xs text-neutral-400">
+                  Pull <code class="font-mono text-neutral-300">SKILL.md</code> packs from any public repo. Paste <code class="font-mono text-neutral-300">owner/repo</code>, a sub-path, or a full GitHub URL. Note: index repos like <code class="font-mono text-neutral-300">VoltAgent/awesome-agent-skills</code> only link out — import the source repo (e.g. <code class="font-mono text-neutral-300">VoltAgent/skills</code>).
+                </p>
+              </div>
+              <div class="flex gap-2 items-center">
+                <input
+                  v-model="skillImportSource"
+                  type="text"
+                  placeholder="owner/repo  or  https://github.com/owner/repo/tree/main/skills"
+                  class="flex-1 rounded-lg bg-neutral-900/70 border border-neutral-800 px-3 py-2 text-xs text-white font-mono"
+                  :disabled="skillImporting"
+                  @keydown.enter="importSkillsFromGithub()"
+                />
+                <button
+                  class="btn-primary shrink-0 text-xs"
+                  :disabled="skillImporting"
+                  @click="importSkillsFromGithub()"
+                >
+                  {{ skillImporting ? 'Importing…' : 'Import' }}
+                </button>
+              </div>
+              <div class="flex items-center justify-between gap-3 mt-2">
+                <div class="flex gap-2 flex-wrap">
+                  <button class="btn-ghost text-[11px]" :disabled="skillImporting" @click="importSkillsFromGithub('VoltAgent/skills')">VoltAgent/skills</button>
+                  <button class="btn-ghost text-[11px]" :disabled="skillImporting" @click="importSkillsFromGithub('anthropics/skills')">anthropics/skills</button>
+                </div>
+                <label class="flex items-center gap-1.5 text-[11px] text-neutral-400 shrink-0">
+                  <input v-model="skillImportOverwrite" type="checkbox" :disabled="skillImporting" />
+                  Overwrite existing
+                </label>
+              </div>
+              <p v-if="skillImportStatus" class="text-[11px] text-neutral-300 mt-2 font-mono">{{ skillImportStatus }}</p>
+            </div>
+
             <div class="settings-card">
               <div class="flex items-start justify-between gap-3 mb-3">
                 <div>
-                  <h3 class="text-sm font-bold text-white">Waifu-authored skills</h3>
+                  <h3 class="text-sm font-bold text-white">Skill library</h3>
                   <p class="text-xs text-neutral-400">
-                    Reusable knowledge packs the waifu saves with <code class="font-mono text-neutral-300">create_skill</code>. Each SKILL.md lives under your user-data folder and is included as a short summary in every system prompt; the waifu pulls the full body in with <code class="font-mono text-neutral-300">use_skill</code>.
+                    Reusable knowledge packs the waifu saves with <code class="font-mono text-neutral-300">create_skill</code>. Each SKILL.md lives under your user-data folder and is included as a short summary in every system prompt; the waifu pulls the full body in with <code class="font-mono text-neutral-300">use_skill</code>. Edit or hand-write your own below.
                   </p>
                 </div>
-                <button
-                  class="btn-secondary shrink-0"
-                  :disabled="skillsLoading"
-                  aria-label="Refresh skill list"
-                  @click="refreshSkillsTab"
-                >
-                  {{ skillsLoading ? 'Loading…' : 'Refresh' }}
-                </button>
+                <div class="flex gap-2 shrink-0">
+                  <button class="btn-primary text-xs" @click="startCreateSkill">+ New</button>
+                  <button
+                    class="btn-secondary"
+                    :disabled="skillsLoading"
+                    aria-label="Refresh skill list"
+                    @click="refreshSkillsTab"
+                  >
+                    {{ skillsLoading ? 'Loading…' : 'Refresh' }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- Create / edit form -->
+              <div v-if="skillEditSlug !== null" class="rounded-lg border border-violet-500/40 bg-violet-950/20 p-3 mb-3 space-y-2">
+                <div class="text-xs font-semibold text-violet-200">
+                  {{ skillEditSlug === '' ? 'New skill' : `Editing ${skillEditSlug}` }}
+                </div>
+                <input
+                  v-if="skillEditSlug === ''"
+                  v-model="skillEditForm.slug"
+                  type="text"
+                  placeholder="slug (lowercase a-z, 0-9, - or _)"
+                  class="w-full rounded bg-neutral-900/70 border border-neutral-800 px-2 py-1.5 text-xs text-white font-mono"
+                />
+                <input
+                  v-model="skillEditForm.name"
+                  type="text"
+                  placeholder="Name — short human title"
+                  class="w-full rounded bg-neutral-900/70 border border-neutral-800 px-2 py-1.5 text-xs text-white"
+                />
+                <input
+                  v-model="skillEditForm.description"
+                  type="text"
+                  placeholder="Description — one line shown to the waifu so she knows when to use it"
+                  class="w-full rounded bg-neutral-900/70 border border-neutral-800 px-2 py-1.5 text-xs text-white"
+                />
+                <textarea
+                  v-model="skillEditForm.body"
+                  rows="10"
+                  placeholder="Body — full markdown instructions the waifu follows"
+                  class="w-full rounded bg-neutral-900/70 border border-neutral-800 px-2 py-1.5 text-[11px] text-white font-mono"
+                ></textarea>
+                <div class="flex gap-2 justify-end">
+                  <button class="btn-ghost text-xs" :disabled="skillEditSaving" @click="cancelSkillEdit">Cancel</button>
+                  <button class="btn-primary text-xs" :disabled="skillEditSaving" @click="saveSkillEdit">
+                    {{ skillEditSaving ? 'Saving…' : 'Save' }}
+                  </button>
+                </div>
               </div>
 
               <p v-if="skillsError" class="text-xs text-red-400 mb-2">{{ skillsError }}</p>
 
               <p v-if="!skillsLoading && skillsList.length === 0 && !skillsError" class="text-xs text-neutral-500 py-2">
-                No skills yet. Ask the waifu to save one: "remember this recipe as a skill."
+                No skills yet. Import a pack above, click "+ New", or ask the waifu to save one: "remember this recipe as a skill."
               </p>
 
               <ul class="flex flex-col gap-2">
@@ -4467,6 +4723,13 @@ async function handleImportData() {
                         @click="toggleSkillExpanded(skill.slug)"
                       >
                         {{ skillsExpanded.has(skill.slug) ? 'Hide' : 'View' }}
+                      </button>
+                      <button
+                        class="btn-ghost text-xs"
+                        :aria-label="`Edit skill ${skill.slug}`"
+                        @click="startEditSkill(skill.slug)"
+                      >
+                        Edit
                       </button>
                       <button
                         class="btn-secondary text-xs text-red-400"
@@ -6145,6 +6408,7 @@ async function handleImportData() {
             <Live2DAvatar
               :model-path="currentWaifuLive2D.modelJsonPath"
               :expression="latestSentimentExpression"
+              :expression-revision="store.live2dExpressionRevision"
               :motion-map="currentWaifuLive2D.expressionMotions"
               :width="live2dPanelWidth"
               :height="live2dPanelHeight"

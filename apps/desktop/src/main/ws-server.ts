@@ -71,7 +71,7 @@ const MOBILE_AGENT_TOOLS = [
   {
     name: 'web_search',
     description:
-      'Fetch top public DuckDuckGo result links/snippets for a query. Use only to find links or source candidates. This is not a realtime data source; do not use it to answer weather, stocks, scores, prices, or other live facts directly. Prefer terminal for problem solving, diagnostics, local searches, installs, and verification.',
+      'Fetch top public DuckDuckGo result links/snippets for a query. Use it to find source candidates, including for unfamiliar or possibly recent memes, slang, internet phrases, and references. This is not a realtime data source; do not use it to answer weather, stocks, scores, prices, or other live facts directly. Prefer terminal for problem solving, diagnostics, local searches, installs, and verification.',
     parameters: {
       type: 'object',
       properties: {
@@ -270,8 +270,8 @@ function getDesktopSystemPromptBlock() {
   }
 
   const webSearchStatus = isWebSearchEnabled()
-    ? 'The web_search tool only fetches top DuckDuckGo result links/snippets; it is not a realtime data source, so never present it as actual live weather, stock, score, price, or other realtime info.'
-    : 'The web_search tool is disabled by the user and is not available. Do not try to call it; use terminal or explain that web search must be enabled in Settings to fetch links.'
+    ? 'The web_search tool fetches top web search result links/snippets (Tavily when a key is configured, otherwise DuckDuckGo). Use it once when you do not confidently recognize a meme, slang term, internet phrase, or possibly recent reference; add a small amount of context such as "meme meaning", and use a fetched source when snippets are insufficient. A short out-of-context message — a bare number, a lone odd word, or an emoji combo that does not follow from the conversation — is a strong signal it is a meme or inside joke, not a literal technical value: do not confidently map it to a port number, HTTP status code, or error code; search it first, then react to what it actually is. If the evidence is weak or conflicting, say you could not confidently identify the reference instead of inventing a meaning. web_search is not a realtime data source, so never present it as actual live weather, stock, score, price, or other realtime info.'
+    : 'The web_search tool is disabled by the user and is not available. Do not try to call it. If you do not confidently recognize a meme, slang term, internet phrase, or reference, say so plainly and explain that web search must be enabled in Settings to look it up.'
 
   return `\n\n[Desktop Execution Environment]\nYou are running on the user's desktop computer right now.\nOS: ${process.platform}\nUsername: ${username}\nHome directory: ${os.homedir()}\n\nPrioritize terminal commands for solving problems. When the user asks you to inspect, diagnose, install, run, verify, search locally, check network behavior, operate the computer, or pull realtime/current public data, use terminal instead of pretending. To perform tasks: identify the concrete user goal, choose the terminal command or other tool that can move it forward, read tool results carefully, try one corrected retry after a failure, verify the outcome when possible, then call stop_response. For realtime data, use direct terminal commands/APIs: weather via wttr.in, for example curl.exe -s "https://wttr.in/Tokyo?format=3" or curl.exe -s "https://wttr.in/Tokyo?format=j1"; infer approximate location with curl.exe -s "https://ipinfo.io/json" only when needed; time/IP/API/package versions via Get-Date, worldtimeapi.org, api.ipify.org, Invoke-RestMethod, npm view, or pnpm view. Full examples live in docs/agent-skills/common-commands.skill. ${webSearchStatus} If no available tool can complete the task, say exactly which capability is missing and give the next best actionable step.`
 }

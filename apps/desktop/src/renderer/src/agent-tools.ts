@@ -400,7 +400,7 @@ export const agentTools: ToolDefinition[] = [
   {
     name: 'web_search',
     description:
-      'Fetch top public DuckDuckGo result links/snippets for a query. Use only to find links or source candidates. This is not a realtime data source; do not use it to answer weather, stocks, scores, prices, or other live facts directly. Prefer terminal for problem solving, diagnostics, local searches, installs, and verification.',
+      'Fetch top public DuckDuckGo result links/snippets for a query. Use it to find source candidates, including for unfamiliar or possibly recent memes, slang, internet phrases, and references. This is not a realtime data source; do not use it to answer weather, stocks, scores, prices, or other live facts directly. Prefer terminal for problem solving, diagnostics, local searches, installs, and verification.',
     parameters: {
       type: 'object',
       properties: {

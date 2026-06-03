@@ -363,6 +363,204 @@ function decodeDuckDuckGoRedirect(url: string): string {
   }
 }
 
+// ── Tavily remote MCP server (https://github.com/tavily-ai/tavily-mcp) ────────
+// Preferred web-search backend when an API key is configured. We talk to Tavily's
+// hosted MCP endpoint (https://mcp.tavily.com/mcp/?tavilyApiKey=…) over the MCP
+// Streamable-HTTP transport — initialize → notifications/initialized → tools/call
+// for the `tavily-search` tool — instead of the bare REST API. Falls back to the
+// keyless DuckDuckGo scraping path below when no key is present or the MCP call errors.
+const TAVILY_MCP_BASE = 'https://mcp.tavily.com/mcp/'
+
+let keytarModule: any = null
+function loadKeytar(): any {
+  if (keytarModule !== null) return keytarModule || null
+  try {
+    keytarModule = require('keytar')
+  } catch {
+    keytarModule = false // sentinel: tried and unavailable
+  }
+  return keytarModule || null
+}
+
+async function getTavilyApiKey(): Promise<string> {
+  const fromEnv = String(process.env.TAVILY_API_KEY || '').trim()
+  if (fromEnv) return fromEnv
+  const kt = loadKeytar()
+  if (kt) {
+    try {
+      const stored = await kt.getPassword('syntax-senpai-keys', 'tavily')
+      if (stored && String(stored).trim()) return String(stored).trim()
+    } catch {
+      // keytar read failed — treat as no key, fall back to DuckDuckGo
+    }
+  }
+  return ''
+}
+
+// A Streamable-HTTP MCP response is either a single JSON-RPC object
+// (application/json) or an SSE stream (text/event-stream) whose `data:` frames
+// each carry one JSON-RPC message. Pull the frame matching our request id.
+function parseMcpHttpBody(contentType: string, body: string, wantId: number | null): any {
+  if (!body) return null
+  if (/text\/event-stream/i.test(contentType)) {
+    let fallback: any = null
+    for (const line of body.split(/\r?\n/)) {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('data:')) continue
+      const payload = trimmed.slice(5).trim()
+      if (!payload || payload === '[DONE]') continue
+      try {
+        const msg = JSON.parse(payload)
+        if (wantId !== null && msg?.id === wantId) return msg
+        if (fallback === null) fallback = msg
+      } catch {
+        // skip non-JSON keep-alive frames
+      }
+    }
+    return fallback
+  }
+  return JSON.parse(body)
+}
+
+async function tavilyMcpRpc(
+  endpoint: string,
+  message: any,
+  sessionId: string | null,
+  signal: AbortSignal,
+): Promise<{ result: any; sessionId: string | null }> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    accept: 'application/json, text/event-stream',
+  }
+  if (sessionId) headers['mcp-session-id'] = sessionId
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(message),
+    signal,
+  })
+
+  const nextSession = response.headers.get('mcp-session-id') || sessionId
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`Tavily MCP ${message?.method} failed: ${response.status} ${response.statusText}${detail ? ` — ${detail.slice(0, 200)}` : ''}`)
+  }
+
+  // Notifications (no id) get a 202 with an empty body — nothing to parse.
+  if (message?.id === undefined) {
+    await response.text().catch(() => '')
+    return { result: null, sessionId: nextSession }
+  }
+
+  const contentType = response.headers.get('content-type') || ''
+  const text = await response.text()
+  const parsed = parseMcpHttpBody(contentType, text, message.id)
+  if (parsed?.error) {
+    throw new Error(`Tavily MCP ${message?.method} error: ${parsed.error?.message || JSON.stringify(parsed.error)}`)
+  }
+  return { result: parsed?.result, sessionId: nextSession }
+}
+
+// Extract Tavily's search payload from an MCP tools/call result. The server
+// returns the data in structuredContent and/or as JSON inside a text content
+// block, depending on version — try both, then normalize to { answer, results }.
+function normalizeTavilyToolResult(toolResult: any, limit: number) {
+  let data: any = toolResult?.structuredContent ?? null
+  if (!data) {
+    const textBlock = Array.isArray(toolResult?.content)
+      ? toolResult.content.find((c: any) => c?.type === 'text' && typeof c.text === 'string')
+      : null
+    if (textBlock) {
+      try {
+        data = JSON.parse(textBlock.text)
+      } catch {
+        // Non-JSON text result — surface it as a single informational answer.
+        data = { answer: textBlock.text, results: [] }
+      }
+    }
+  }
+
+  const results = (Array.isArray(data?.results) ? data.results : [])
+    .map((item: any) => ({
+      title: String(item?.title || item?.url || '').trim(),
+      url: String(item?.url || '').trim(),
+      snippet: String(item?.content || item?.snippet || '').trim(),
+    }))
+    .filter((r: { title: string; url: string }) => r.title && r.url)
+    .slice(0, limit)
+
+  return {
+    answer: typeof data?.answer === 'string' ? data.answer : '',
+    results,
+  }
+}
+
+async function fetchTavilyResults(query: string, limit: number, apiKey: string) {
+  const endpoint = `${TAVILY_MCP_BASE}?tavilyApiKey=${encodeURIComponent(apiKey)}`
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 15000)
+  try {
+    // 1) initialize handshake — establishes the MCP session.
+    const init = await tavilyMcpRpc(
+      endpoint,
+      {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'syntax-senpai', version: '0.0.1' },
+        },
+      },
+      null,
+      controller.signal,
+    )
+    const sessionId = init.sessionId
+
+    // 2) initialized notification — required before tools/call.
+    await tavilyMcpRpc(
+      endpoint,
+      { jsonrpc: '2.0', method: 'notifications/initialized' },
+      sessionId,
+      controller.signal,
+    )
+
+    // 3) call the tavily-search tool.
+    const call = await tavilyMcpRpc(
+      endpoint,
+      {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: {
+          name: 'tavily-search',
+          arguments: {
+            query,
+            max_results: limit,
+            search_depth: 'basic',
+            include_answer: true,
+          },
+        },
+      },
+      sessionId,
+      controller.signal,
+    )
+
+    if (call.result?.isError) {
+      const errText = Array.isArray(call.result?.content)
+        ? call.result.content.map((c: any) => c?.text).filter(Boolean).join(' ')
+        : ''
+      throw new Error(`Tavily MCP tavily-search returned an error${errText ? `: ${errText.slice(0, 200)}` : ''}`)
+    }
+
+    return normalizeTavilyToolResult(call.result, limit)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function fetchDuckDuckGoHtmlResults(query: string, limit: number) {
   const response = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
     headers: {
@@ -429,6 +627,36 @@ export async function webSearch(query: string, limit = 5) {
     }
 
     const cappedLimit = Math.max(1, Math.min(8, Number(limit) || 5))
+
+    // Prefer Tavily when configured; fall back to DuckDuckGo on missing key/error.
+    const tavilyKey = await getTavilyApiKey()
+    if (tavilyKey) {
+      try {
+        const tavily = await fetchTavilyResults(normalizedQuery, cappedLimit, tavilyKey)
+        const lines: string[] = [`Tavily search results for: ${normalizedQuery}`]
+        if (tavily.answer) {
+          lines.push(`\nAnswer: ${tavily.answer}`)
+        }
+        if (tavily.results.length === 0) {
+          lines.push('\nNo search results found.')
+        } else {
+          tavily.results.forEach((result: { title: string; url: string; snippet?: string }, index: number) => {
+            lines.push(`\n${index + 1}. ${result.title}\nURL: ${result.url}${result.snippet ? `\nSnippet: ${result.snippet}` : ''}`)
+          })
+        }
+        return {
+          success: true,
+          provider: 'tavily',
+          query: normalizedQuery,
+          results: tavily.results,
+          instant: tavily.answer ? { abstract: tavily.answer, abstractUrl: '', heading: '', related: [] } : undefined,
+          content: lines.join('\n'),
+        }
+      } catch {
+        // Tavily failed (auth/quota/network) — silently degrade to DuckDuckGo.
+      }
+    }
+
     const instant = await fetchDuckDuckGoInstantAnswer(normalizedQuery).catch(() => null)
     const htmlResults = await fetchDuckDuckGoHtmlResults(normalizedQuery, cappedLimit).catch(() => [])
     const results = htmlResults.length > 0
@@ -451,6 +679,7 @@ export async function webSearch(query: string, limit = 5) {
 
     return {
       success: true,
+      provider: 'duckduckgo',
       query: normalizedQuery,
       results,
       instant: instant || undefined,

@@ -424,8 +424,8 @@ function formatTodoList(items: TodoItem[]): string {
 function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: string, isWebSearchEnabled: boolean): string {
   const shellLine = shell ? `\n- Shell: ${shell}. Each terminal call is a new process — \`cd\` does NOT persist between calls; use absolute paths or chain with \`&&\`.` : ''
   const webSearchLine = isWebSearchEnabled
-    ? '- web_search → DuckDuckGo result links/snippets only. NOT a realtime data source. Never use it for weather, stocks, scores, prices, time, or any live facts. Use only to find URLs the user can open.'
-    : '- web_search is disabled by the user. Do not call it. If links would help, say web search must be enabled in Settings.'
+    ? '- web_search → web result links/snippets (Tavily when a key is configured, otherwise DuckDuckGo). Use it to find sources for unfamiliar or possibly recent memes, slang, internet phrases, references, and named topics — including short out-of-context tokens (a bare number, a lone odd word, an emoji combo) that read as an inside joke rather than a literal value. It is NOT a realtime data source: never use it for weather, stocks, scores, prices, time, or other live facts.'
+    : '- web_search is disabled by the user. Do not call it. If a lookup would help, say web search must be enabled in Settings.'
   // 这段提示词专门约束 agent 如何选工具、何时停止重试以及何时必须先验证结果。
   return `\n\n[Agent Behavior]
 You can act on the user's machine through tools. Your goal is to actually finish the task, verified, not to sound like you finished it.
@@ -452,6 +452,14 @@ Realtime / live data — decision tree:
 2. If \`terminal\` is NOT available → do NOT call web_search as a substitute. Tell the user plainly: "I can't fetch live <weather/price/etc.> right now because terminal access is disabled — enable it in Settings and I'll get it." Then stop.
 3. Never interpret web_search results as realtime data, even if a snippet looks like an answer. Snippets are stale and often wrong for live facts.
 
+Unfamiliar memes, slang, and internet references:
+1. Infer common abbreviations, compressed pinyin, memes, and slang from conversational context ONLY when the user's intent is genuinely clear. Answer naturally; do not explain the phrase unless asked. For example, treat an excited "kskbl" stream announcement as casual chat and react briefly in Chinese, such as "卧槽，真的假的？卧槽，真开播了。"
+2. A short, out-of-context message — a bare number, a lone odd word, an emoji combo, or a phrase that does not follow from the conversation — is a STRONG signal it is a meme, slang, or inside joke, NOT a literal technical value. Do NOT confidently map it to a technical meaning (port number, HTTP status code, error code, version) and do NOT brush it off as random. When web_search is enabled, search it FIRST with the user's exact words plus "meme" or "slang meaning" BEFORE you reply, then react in character to what it actually turns out to be.
+3. Otherwise, if you genuinely do not recognize a phrase, are unsure enough that your response depends on the exact meaning, or it may be a recent or niche reference, use \`web_search\` once with the user's exact phrase plus a small amount of context such as "meme meaning" or "slang meaning".
+4. Treat snippets as leads. If a promising result needs more context, use \`webfetch\` on that result before explaining it.
+5. If search is disabled, results are empty, or the evidence is weak or conflicting, say plainly and in character that you don't get the reference and ask what they mean. Do NOT invent a meaning and do NOT pretend a bare number is a technical value.
+6. When a search resolves the reference, answer the user's actual message naturally and in character. Do not turn every casual phrase into a research report.
+
 Terminal recipes for realtime data:
 - Weather: \`curl.exe -s "https://wttr.in/Tokyo?format=3"\` (one-liner) or \`curl.exe -s "https://wttr.in/Tokyo?format=j1"\` (JSON; read \`current_condition[0]\` for now, \`weather[1]\` for tomorrow). On macOS/Linux use \`curl\` instead of \`curl.exe\`.
 - If the user asks for weather with no location: ask them once, OR infer via \`curl.exe -s "https://ipinfo.io/json"\` and use the \`city\` field. Do not guess.
@@ -461,9 +469,9 @@ Terminal recipes for realtime data:
 
 Anti-loop rules (CRITICAL — violating these wastes the user's tokens):
 - Never call the same tool twice in a row with the same or near-same arguments. If the first call didn't give you what you need, the second one with a reworded query won't either — diagnose instead.
-- If web_search returns an empty summary, "No instant answer", or only unrelated links: STOP. Do not retry with a different query. State the limitation and offer the terminal alternative (or ask the user to enable terminal/web_search).
+- If web_search returns an empty summary, "No instant answer", or only unrelated links: STOP. Do not retry with a different query. State the limitation and ask for context or explain which capability must be enabled.
 - If a tool fails or returns unusable output twice across the whole turn, stop calling tools and explain the blocker to the user in your final message.
-- Do not call web_search to "double-check" something you already answered. One search, tops, and only if it genuinely adds links.
+- Do not call web_search to "double-check" something you already know. One search, tops, and only if it can resolve uncertainty or add useful sources.
 
 Workflow for non-trivial tasks:
 1. If the task has more than ~2 steps, write a one-line plan in your thinking before calling any tool. Revise it if a step fails.
@@ -828,7 +836,7 @@ function buildLanguagePromptBlock(): string {
   } catch { /* ignore */ }
   const name = localeNames[locale]
   return `\n\n[Master's preferred language]
-The Master has set their interface language to ${name}. Default to replying in ${name} unless the Master writes to you in another language, in which case mirror their choice. Tool-call JSON, file contents, code snippets, and terminal commands stay in their original form — language applies to prose, explanations, and the final_message.`
+The Master has set their interface language to ${name}. Default to replying in ${name} unless the Master writes to you in another language, in which case mirror their choice. Treat recognized romanized Chinese, compressed pinyin, and Chinese internet initialisms such as "kskbl" as Chinese chat and reply in Chinese. Tool-call JSON, file contents, code snippets, and terminal commands stay in their original form — language applies to prose, explanations, and the final_message.`
 }
 
 function buildConversationLanguageRuleBlock(firstUserText: string): string {
@@ -960,6 +968,8 @@ export const useChatStore = defineStore('chat', () => {
   )
   const affection = ref(loadAffection(builtInWaifus[0]?.id || 'aria'))
   const live2dExpression = ref<string | null>(null)
+  const live2dExpressionRevision = ref(0)
+  const live2dExpressionSetThisTurn = ref(false)
   const apiTelemetry = ref<ApiTelemetry>(createEmptyApiTelemetry())
   const apiTelemetryHistory = ref<ApiTelemetrySample[]>(loadApiTelemetryHistory())
   const apiTelemetryAlert = ref<ApiTelemetryAlert>(createEmptyApiAlert())
@@ -976,6 +986,24 @@ export const useChatStore = defineStore('chat', () => {
     250,
     60000,
   ))
+
+  function applyLive2DExpression(expression: string | null, source: 'turn-start' | 'agent') {
+    live2dExpression.value = expression
+    live2dExpressionRevision.value += 1
+    if (source === 'agent') live2dExpressionSetThisTurn.value = true
+  }
+
+  function beginLive2DTurn() {
+    live2dExpressionSetThisTurn.value = false
+    applyLive2DExpression('neutral', 'turn-start')
+  }
+
+  function finishLive2DTurn() {
+    if (!live2dExpressionSetThisTurn.value && live2dExpression.value === 'neutral') {
+      applyLive2DExpression(null, 'turn-start')
+    }
+    live2dExpressionSetThisTurn.value = false
+  }
   const webSearchEnabled = ref(readStoredBoolean(WEB_SEARCH_ENABLED_STORAGE_KEY, false))
   const proactiveChatEnabled = ref(readStoredBoolean(PROACTIVE_CHAT_ENABLED_STORAGE_KEY, false))
   const proactiveChatIdleFollowUpEnabled = ref(readStoredBoolean(PROACTIVE_CHAT_IDLE_FOLLOW_UP_ENABLED_STORAGE_KEY, true))
@@ -1733,9 +1761,30 @@ export const useChatStore = defineStore('chat', () => {
       systemPrompt += buildAffectionPrompt(affection.value, waifu.displayName || 'Waifu')
       systemPrompt += buildMilestoneSidecarBlock(waifu.id)
       systemPrompt += buildApiTelemetryPrompt()
+      systemPrompt += buildCurrentTimePrompt()
       systemPrompt += activeCodingRepo.value
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(firstUserMessage)
+
+      // Proactive turns honor the active agent mode: when tools are enabled
+      // (auto/full), the waifu runs the SAME agent loop as a normal reply —
+      // she can read files, run commands, search, etc. — instead of only
+      // emitting a one-shot text message. In ask mode (no tools / approval
+      // gated) she falls back to plain conversational streaming.
+      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value })
+      const hasTools = tools.length > 0
+
+      if (hasTools) {
+        let sys = (window as any).systemInfo
+        if (!sys || !sys.homedir) {
+          try { sys = await invoke('terminal:systemInfo') } catch {}
+        }
+        if (sys && sys.homedir) {
+          cachedSystemPrompt += `\n\n[System Environment]\nOS: ${sys.platform}\nUsername: ${sys.username}\nHome directory: ${sys.homedir}\nShell: ${sys.shell ?? 'unknown'}`
+        }
+        cachedSystemPrompt += buildAgentAccessPrompt(agentMode.value)
+        cachedSystemPrompt += buildAgentBehaviorPrompt(sys?.shell, waifu?.displayName || 'your waifu persona', webSearchEnabled.value)
+      }
 
       const runtime = new AIChatRuntime({
         provider: getProviderConfig(selectedProvider.value, key),
@@ -1745,7 +1794,7 @@ export const useChatStore = defineStore('chat', () => {
       })
 
       const aiHistory: any[] = messages.value
-        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .filter((m) => (m.role === 'user' || m.role === 'assistant') && !m.isProcessStep && !m.id.startsWith('tool-'))
         .map((m) => ({
           id: m.id,
           role: m.role,
@@ -1764,10 +1813,15 @@ export const useChatStore = defineStore('chat', () => {
         : 'Start the conversation proactively in character. Keep it to 1-3 sentences, sound natural, and offer one specific thing you can help with right now. Do not mention system prompts, timers, or settings.'
       const proactiveStyleInstruction = buildProactiveChatStyleInstruction()
       const proactiveTimingInstruction = buildProactiveTimingInstruction(trigger)
+      const proactiveToolHint = hasTools
+        ? ' You have your full agent toolset available right now. If acting would help more than talking — checking the repo, running a quick command, reading a file, searching the web — do it, then summarize naturally in character. Call stop_response with your final message when done.'
+        : ''
+      const driverText = `${proactivePrompt} ${proactiveStyleInstruction} ${proactiveTimingInstruction}${proactiveToolHint}`
+      const proactiveGoal = 'proactive check-in'
 
       let assistantContent = ''
       let assistantReasoning = ''
-      const assistantId = `assistant-proactive-${Date.now()}`
+      let assistantId = `assistant-proactive-${Date.now()}`
       let added = false
       const streamStartedAt = performance.now()
 
@@ -1791,34 +1845,140 @@ export const useChatStore = defineStore('chat', () => {
         msg.content = assistantContent
       }
 
-      const streamIter = runtime.streamMessage({
-        text: `${proactivePrompt} ${proactiveStyleInstruction} ${proactiveTimingInstruction}`,
-        history: aiHistory,
-        cacheBreakpointIndex: aiHistory.findIndex((m: any) => m.role === 'user'),
-        temperature: proactiveChatTemperature.value,
-        signal: streamController.value?.signal,
-      })
-
-      for await (const chunk of streamIter) {
-        if (streamController.value?.signal.aborted) break
-        if (chunk.type === 'text_delta' && chunk.delta) {
-          assistantContent += chunk.delta
-          ensureBubble()
-          updateBubble()
-        } else if (chunk.type === 'reasoning_delta' && chunk.delta) {
-          assistantReasoning += chunk.delta
+      if (hasTools) {
+        const provider = runtime.getProvider()
+        const pendingCards: RenderCardPayload[] = []
+        let bubbleSeq = 0
+        // Each iteration gets its own bubble so the final reply lands *below*
+        // any tool-call bubbles instead of overwriting earlier narration.
+        const beginNextBubble = () => {
+          assistantId = `assistant-proactive-${Date.now()}-${++bubbleSeq}`
+          added = false
+          assistantContent = ''
         }
+
+        // Append the proactive instruction as the driving user turn — it's sent
+        // to the model but never shown as a real user message in the thread.
+        const turnHistory = [
+          ...aiHistory,
+          { id: `proactive-driver-${Date.now()}`, role: 'user', content: driverText },
+        ]
+
+        const turnResult = await runAgentTurn({
+          callProvider: (req) => streamProviderChat(provider, req),
+          model,
+          history: turnHistory,
+          tools,
+          systemPrompt,
+          cachedSystemPrompt,
+          cacheBreakpointIndex: turnHistory.findIndex((m: any) => m.role === 'user'),
+          maxIterations: effectiveMaxToolIterations.value,
+          abortSignal: streamController.value?.signal,
+          onIteration: () => { beginNextBubble() },
+          onAssistantTextDelta: (delta) => {
+            assistantContent += delta
+            ensureBubble()
+            updateBubble()
+          },
+          onAssistantReasoningDelta: (delta) => { assistantReasoning += delta },
+          onApiRoundTrip: (durationMs) => {
+            recordApiTelemetry(durationMs, [durationMs], selectedProvider.value, model)
+          },
+          handleSideEffect: async (tc): Promise<SideEffectResult | null> => {
+            if (tc.name === STOP_TOOL_NAME) {
+              return { resultContent: 'ok', stop: true, finalContent: (tc.arguments as any).final_message || '' }
+            }
+            if (tc.name === SET_AFFECTION_TOOL_NAME) {
+              const newVal = Math.max(0, Math.min(100, Math.round(+(tc.arguments as any).value || affection.value)))
+              affection.value = newVal
+              const milestone = updateAffectionWithMilestone(selectedWaifuId.value, newVal)
+              if (milestone) {
+                const w = allWaifus.value.find((x) => x.id === selectedWaifuId.value)
+                if (w) emitMilestoneToast(w, milestone)
+              }
+              return { resultContent: `好感度 updated to ${newVal}` }
+            }
+            if (tc.name === SET_EXPRESSION_TOOL_NAME) {
+              const expr = String((tc.arguments as any).expression || 'neutral')
+              applyLive2DExpression(expr, 'agent')
+              return { resultContent: `Expression set to ${expr}` }
+            }
+            if (tc.name === TODO_WRITE_TOOL_NAME) {
+              const items = parseTodoList((tc.arguments as any).items)
+              activeTodoList.value = items
+              return { resultContent: `Todo list updated (${items.filter((i) => i.status === 'done').length}/${items.length} done).` }
+            }
+            if (tc.name === TODO_READ_TOOL_NAME) {
+              return { resultContent: formatTodoList(activeTodoList.value) }
+            }
+            if (tc.name === RENAME_CHAT_TOOL_NAME) {
+              return { resultContent: await applyRenameChat((tc.arguments as any).title, conversationId.value) }
+            }
+            if (tc.name === RENDER_CARD_TOOL_NAME) {
+              const payload = parseRenderCardArgs(tc.arguments)
+              if (payload) {
+                pendingCards.push(payload)
+                return { resultContent: `Rendered ${payload.type} card.` }
+              }
+              return { resultContent: 'Error: render_card requires a valid { type, data } object.' }
+            }
+            return null
+          },
+          executeTool: (tc) => executeToolCallForAgentMode(provider, model, tc, proactiveGoal),
+          onToolStart: (tc) => {
+            const toolMsgId = `tool-${Date.now()}-${tc.id}`
+            messages.value.push({
+              id: toolMsgId,
+              role: 'assistant',
+              content: `\u{1F4BB} \`${describeToolCall(tc)}\``,
+              timestamp: now(),
+            })
+            recentMessageId.value = toolMsgId
+            return toolMsgId
+          },
+        })
+
+        const finalRaw = (turnResult.finalContent || assistantContent || '').trim()
+        if (!finalRaw) {
+          if (added) messages.value = messages.value.filter((m) => m.id !== assistantId)
+          return
+        }
+        let finalText = extractMemoryFromAIResponse(finalRaw)
+        if (pendingCards.length > 0) finalText = prependCardMarkers(pendingCards, finalText)
+        ensureBubble()
+        assistantContent = finalText
+        updateBubble()
+      } else {
+        const streamIter = runtime.streamMessage({
+          text: driverText,
+          history: aiHistory,
+          cacheBreakpointIndex: aiHistory.findIndex((m: any) => m.role === 'user'),
+          temperature: proactiveChatTemperature.value,
+          signal: streamController.value?.signal,
+        })
+
+        for await (const chunk of streamIter) {
+          if (streamController.value?.signal.aborted) break
+          if (chunk.type === 'text_delta' && chunk.delta) {
+            assistantContent += chunk.delta
+            ensureBubble()
+            updateBubble()
+          } else if (chunk.type === 'reasoning_delta' && chunk.delta) {
+            assistantReasoning += chunk.delta
+          }
+        }
+
+        if (!assistantContent.trim()) {
+          if (added) messages.value = messages.value.filter((m) => m.id !== assistantId)
+          return
+        }
+
+        const streamDurationMs = performance.now() - streamStartedAt
+        recordApiTelemetry(streamDurationMs, [streamDurationMs], selectedProvider.value, model)
+        assistantContent = extractMemoryFromAIResponse(assistantContent)
       }
 
-      if (!assistantContent.trim()) {
-        if (added) messages.value = messages.value.filter((m) => m.id !== assistantId)
-        return
-      }
-
-      const streamDurationMs = performance.now() - streamStartedAt
-      recordApiTelemetry(streamDurationMs, [streamDurationMs], selectedProvider.value, model)
-
-      const cleanContent = extractMemoryFromAIResponse(assistantContent)
+      const cleanContent = assistantContent
       const savedMessage = messages.value.find((m) => m.id === assistantId)
       if (savedMessage) {
         savedMessage.content = cleanContent
@@ -2493,6 +2653,27 @@ You are aware of your most recent API timing data.
 Do not mention these timings unless the user asks about speed, latency, slowness, or performance. If they do ask, use these numbers accurately and stay in character.`
   }
 
+  function buildCurrentTimePrompt(): string {
+    // 每条消息都重新生成，放进非缓存的动态提示词里，避免破坏 prompt 缓存命中率。
+    const now = new Date()
+    const iso = now.toISOString()
+    const local = now.toLocaleString(undefined, {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZoneName: 'short'
+    })
+    return `\n\n[Current Time]
+The user just sent a message. The current date and time is:
+- Local: ${local}
+- ISO 8601 (UTC): ${iso}
+
+Use this for any time-aware reasoning (greetings, "today", scheduling, how long since the last message). Do not announce the time unprompted unless it is naturally relevant; weave it in only when it fits the conversation.`
+  }
+
   function recordApiTelemetry(totalMs: number, roundTripMs: number[], provider: string, model: string) {
     // 这里记录整轮回复的耗时画像，后续设置页、提示词和性能告警都会读取这些数据。
     const lastRoundTripMs = roundTripMs.length > 0 ? roundTripMs[roundTripMs.length - 1] : totalMs
@@ -2559,6 +2740,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     recentMessageId.value = userMsg.id
     inputValue.value = ''
     isLoading.value = true
+    beginLive2DTurn()
     streamController.value = new AbortController()
 
     try {
@@ -2653,6 +2835,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           systemPrompt += buildAffectionPrompt(affectionValue, waifu.displayName || 'Waifu')
           systemPrompt += buildMilestoneSidecarBlock(waifu.id)
           systemPrompt += buildApiTelemetryPrompt()
+          systemPrompt += buildCurrentTimePrompt()
           systemPrompt += buildGroupChatPromptBlock(waifu, waifus, pendingTasks.get(waifu.id) || [], round)
           systemPrompt += activeCodingRepo.value
             ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
@@ -2747,7 +2930,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
                 if (toolCall.name === SET_EXPRESSION_TOOL_NAME) {
                   const expr = String((toolCall.arguments as any).expression || 'neutral')
                   if (selectedWaifuId.value === waifu.id) {
-                    live2dExpression.value = expr
+                    applyLive2DExpression(expr, 'agent')
                   }
                   return { resultContent: `Expression set to ${expr}` }
                 }
@@ -3002,6 +3185,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         timestamp: now(),
       })
     } finally {
+      finishLive2DTurn()
       isLoading.value = false
       streamController.value = null
       setTimeout(() => { recentMessageId.value = null }, 1100)
@@ -3134,6 +3318,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       recentMessageId.value = userMsg.id
       inputValue.value = ''
       isLoading.value = true
+      beginLive2DTurn()
 
       try {
         let convId = conversationId.value
@@ -3185,6 +3370,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
           timestamp: now(),
         })
       } finally {
+        finishLive2DTurn()
         isLoading.value = false
         setTimeout(() => { recentMessageId.value = null }, 1100)
       }
@@ -3204,6 +3390,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     recentMessageId.value = userMsg.id
     inputValue.value = ''
     isLoading.value = true
+    beginLive2DTurn()
     streamController.value = new AbortController()
 
     try {
@@ -3245,6 +3432,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
       systemPrompt += buildAffectionPrompt(affection.value, waifu?.displayName || 'Waifu')
       systemPrompt += buildMilestoneSidecarBlock(waifu.id)
       systemPrompt += buildApiTelemetryPrompt()
+      systemPrompt += buildCurrentTimePrompt()
       systemPrompt += activeCodingRepo.value
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(trimmedText)
@@ -3449,7 +3637,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
             }
             if (tc.name === SET_EXPRESSION_TOOL_NAME) {
               const expr = String((tc.arguments as any).expression || 'neutral')
-              live2dExpression.value = expr
+              applyLive2DExpression(expr, 'agent')
               return { resultContent: `Expression set to ${expr}` }
             }
             if (tc.name === TODO_WRITE_TOOL_NAME) {
@@ -3687,6 +3875,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
         timestamp: now(),
       })
     } finally {
+      finishLive2DTurn()
       isLoading.value = false
       streamController.value = null
       setTimeout(() => { recentMessageId.value = null }, 1100)
@@ -3927,6 +4116,7 @@ Do not mention these timings unless the user asks about speed, latency, slowness
     selectedWaifu,
     affection,
     live2dExpression,
+    live2dExpressionRevision,
     apiTelemetry,
     apiTelemetryHistory,
     apiTelemetryAlert,

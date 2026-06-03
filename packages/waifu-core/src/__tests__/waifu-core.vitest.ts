@@ -19,6 +19,9 @@ test("builtInWaifus and system prompt", () => {
   if (!prompt.includes("When chatting in Chinese, address the user as: 用户")) {
     throw new Error("Prompt missing default Chinese user address rule");
   }
+  if (!prompt.includes('if the user excitedly says "kskbl"')) {
+    throw new Error("Prompt missing casual internet abbreviation guidance");
+  }
 });
 
 test("system prompt uses configured nickname for Chinese address", () => {
@@ -26,7 +29,7 @@ test("system prompt uses configured nickname for Chinese address", () => {
   const rel = {
     waifuId: w.id,
     userId: "test",
-    nickname: "小金",
+    nickname: "老公",
     affectionLevel: 10,
     selectedAIProvider: w.preferredAIProvider || "openai",
     selectedModel: w.preferredModel || "gpt-4o-mini",
@@ -34,7 +37,7 @@ test("system prompt uses configured nickname for Chinese address", () => {
     lastInteractedAt: new Date().toISOString(),
   } as any;
   const prompt = buildSystemPrompt(w as any, rel, { userId: "test" } as any);
-  if (!prompt.includes("When chatting in Chinese, address the user as: 小金")) {
+  if (!prompt.includes("When chatting in Chinese, address the user as: 老公")) {
     throw new Error("Prompt did not use configured nickname for Chinese address");
   }
 });

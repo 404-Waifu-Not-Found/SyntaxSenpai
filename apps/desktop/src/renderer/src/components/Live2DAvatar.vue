@@ -11,6 +11,8 @@ const props = withDefaults(defineProps<{
   modelPath: string
   /** WaifuExpression name; component maps it to a motion group */
   expression?: string
+  /** Bump to force reapplying an unchanged expression value. */
+  expressionRevision?: number
   width?: number
   height?: number
   modelScale?: number
@@ -27,6 +29,7 @@ const props = withDefaults(defineProps<{
   renderScale?: number
 }>(), {
   expression: 'neutral',
+  expressionRevision: 0,
   width: 300,
   height: 400,
   modelScale: 1,
@@ -459,7 +462,7 @@ async function destroyModel() {
 }
 
 watch(() => props.modelPath, () => { void initModel() })
-watch(() => props.expression, (expr) => { void setExpression(expr); playMotion(expr) })
+watch(() => [props.expression, props.expressionRevision] as const, ([expr]) => { void setExpression(expr); playMotion(expr) })
 watch(() => [props.width, props.height, props.modelScale, props.offsetX, props.offsetY, props.renderScale], () => { layoutModel(); scheduleCursorFocus() })
 watch(() => props.trackCursor, () => { scheduleCursorFocus() })
 

@@ -277,16 +277,13 @@ function saveProviderPreferences(provider: string, updates: { model?: string; ba
   localStorage.setItem(PROVIDER_PREFERENCES_KEY, JSON.stringify(current))
 }
 
-function getProviderConfig(provider: string, apiKey?: string) {
+function getProviderConfig(provider: string, apiKey?: string | null) {
   const prefs = readProviderPreferences()[provider] || {}
   const config = providerRequiresApiKey(provider)
     ? ({ type: provider as any, apiKey: apiKey || '' } as any)
     : ({ type: provider as any } as any)
 
-  if (provider === 'ollama' && prefs.baseUrl) {
-    config.baseUrl = prefs.baseUrl
-  }
-  if (provider === 'lmstudio' && prefs.baseUrl) {
+  if ((provider === 'ollama' || provider === 'lmstudio') && prefs.baseUrl) {
     config.baseUrl = prefs.baseUrl
   }
 

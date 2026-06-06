@@ -55,7 +55,7 @@ export function registerWsIpc() {
     }
   })
 
-  ipcMain.handle('ws:updateRuntimeConfig', async (_event: unknown, config: { provider: string; model: string; apiKey?: string } | null) => {
+  ipcMain.handle('ws:updateRuntimeConfig', async (_event: unknown, config: { provider: string; model: string; apiKey?: string; baseUrl?: string } | null) => {
     try {
       setDesktopRuntimeConfig(config)
       return { success: true }

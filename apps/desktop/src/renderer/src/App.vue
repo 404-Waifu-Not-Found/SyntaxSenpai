@@ -1171,7 +1171,13 @@ const providerMetadata = [
   {
     id: 'ollama',
     displayName: 'Ollama (Local)',
-    models: [{ id: 'ollama-local', displayName: 'Detected Ollama Model' }],
+    models: [
+      { id: 'llama-3.1-8b', displayName: 'Llama 3.1 8B' },
+      { id: 'llama-3.1-8b-instant', displayName: 'Llama 3.1 8B Instant' },
+      { id: 'llama2', displayName: 'Llama 2' },
+      { id: 'mistral', displayName: 'Mistral' },
+      { id: 'neural-chat', displayName: 'Neural Chat' },
+    ],
   },
   {
     id: 'openai-codex',
@@ -2485,29 +2491,37 @@ watch(() => store.messages.length, () => {
   })
 })
 
-watch(() => store.selectedProvider, async (provider, previousProvider) => {
-  if (!provider || provider === previousProvider) return
-  // Load provider preferences (baseUrl for Ollama) before fetching models
-  try {
-    const prefs = JSON.parse(localStorage.getItem('syntax-senpai-provider-preferences') || '{}')
-    const p = prefs[provider] || {}
-    if (provider === 'ollama') {
-      ollamaBaseUrl.value = p.baseUrl || (import.meta.env.VITE_OLLAMA_BASE_URL || 'http://localhost:11434')
+watch(
+  () => store.selectedProvider,
+  async (provider, previousProvider) => {
+    if (!provider || provider === previousProvider) return
+    // Load provider preferences (baseUrl for Ollama) before fetching models
+    try {
+      const prefs = JSON.parse(localStorage.getItem('syntax-senpai-provider-preferences') || '{}')
+      const p = prefs[provider] || {}
+      if (provider === 'ollama') {
+        ollamaBaseUrl.value = p.baseUrl || (import.meta.env.VITE_OLLAMA_BASE_URL || 'http://localhost:11434')
+      }
+    } catch {
+      if (provider === 'ollama') ollamaBaseUrl.value = import.meta.env.VITE_OLLAMA_BASE_URL || 'http://localhost:11434'
     }
-  } catch {
-    if (provider === 'ollama') ollamaBaseUrl.value = import.meta.env.VITE_OLLAMA_BASE_URL || 'http://localhost:11434'
-  }
-  await store.hydrateProviderConfig(provider)
-  await loadProviderModels(provider, store.apiKey)
-})
+    await store.hydrateProviderConfig(provider)
+    await loadProviderModels(provider, store.apiKey)
+  },
+  { immediate: true },
+)
 
 watch(
   () => [store.selectedProvider, store.selectedModel, store.apiKey],
   async ([provider, model, apiKey]) => {
+    // Include baseUrl for Ollama/LMStudio from stored preferences
+    const prefs = JSON.parse(localStorage.getItem('syntax-senpai-provider-preferences') || '{}')
+    const baseUrl = prefs[provider]?.baseUrl || undefined
     await invoke('ws:updateRuntimeConfig', {
       provider,
       model,
       apiKey,
+      ...(baseUrl && { baseUrl }),
     })
   },
   { immediate: true },

@@ -46,12 +46,21 @@ const MODEL_COST_PER_1K: Array<{ match: RegExp; input: number; output: number }>
   { match: /deepseek/i,               input: 0.00014, output: 0.00028 },
   { match: /llama-3\.1-70b/i,         input: 0.00059, output: 0.00079 },
   { match: /mixtral-8x7b/i,           input: 0.00024, output: 0.00024 },
+  // NVIDIA NIM hosted open models (estimates; tune as NIM pricing firms up).
+  { match: /nemotron/i,               input: 0.0009, output: 0.0009 },
+  { match: /qwen3-coder/i,            input: 0.002,  output: 0.002 },
+  { match: /gpt-oss/i,                input: 0.0002, output: 0.0006 },
+  { match: /kimi-k2/i,                input: 0.0006, output: 0.0025 },
+  { match: /llama-3\.3-70b/i,         input: 0.0009, output: 0.0009 },
+  { match: /llama-3\.1-8b/i,          input: 0.0002, output: 0.0002 },
 ]
 
 // 根据模型名称粗略估算本轮对话成本，主要给界面展示用，不追求精确计费。
-function estimateCost(model: string, promptTokens: number, completionTokens: number): number {
+// Returns null when no pricing row matches so callers can show "unpriced"
+// (—) instead of a misleading $0.00.
+function estimateCost(model: string, promptTokens: number, completionTokens: number): number | null {
   const row = MODEL_COST_PER_1K.find((r) => r.match.test(model || ''))
-  if (!row) return 0
+  if (!row) return null
   return (promptTokens / 1000) * row.input + (completionTokens / 1000) * row.output
 }
 
@@ -248,6 +257,7 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   huggingface: 'meta-llama/Llama-3.3-70B-Instruct',
   'github-models': 'openai/gpt-4o-mini',
   ollama: 'llama3.1:8b',
+  nvidia: 'meta/llama-3.3-70b-instruct',
 }
 
 const AFFECTION_STORAGE_KEY = 'syntax-senpai-affection'
@@ -1068,12 +1078,18 @@ export const useChatStore = defineStore('chat', () => {
     totalTokens: 0,
     costUsd: 0,
     turns: 0,
+    // Real prompt-token count of the most recent round-trip — drives the
+    // context meter (exact context fill incl. system prompt + tool defs).
+    lastPromptTokens: 0,
+    // True once a token-bearing turn used a model with no pricing row, so the
+    // UI shows "—" rather than a misleading $0.00.
+    costUnpriced: false,
   })
   let proactiveChatTimer: ReturnType<typeof setTimeout> | null = null
   let onlineProactiveTimer: ReturnType<typeof setTimeout> | null = null
 
   function resetUsageTotals() {
-    usageTotals.value = { promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0, turns: 0 }
+    usageTotals.value = { promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, lastPromptTokens: 0, costUnpriced: false }
   }
 
   function recordUsage(model: string, usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number }) {
@@ -1081,12 +1097,15 @@ export const useChatStore = defineStore('chat', () => {
     const p = usage.promptTokens || 0
     const c = usage.completionTokens || 0
     const t = usage.totalTokens || p + c
+    const cost = estimateCost(model, p, c)
     usageTotals.value = {
       promptTokens: usageTotals.value.promptTokens + p,
       completionTokens: usageTotals.value.completionTokens + c,
       totalTokens: usageTotals.value.totalTokens + t,
-      costUsd: usageTotals.value.costUsd + estimateCost(model, p, c),
+      costUsd: usageTotals.value.costUsd + (cost ?? 0),
       turns: usageTotals.value.turns + 1,
+      lastPromptTokens: p || usageTotals.value.lastPromptTokens,
+      costUnpriced: usageTotals.value.costUnpriced || (cost === null && t > 0),
     }
   }
 
@@ -1373,6 +1392,7 @@ export const useChatStore = defineStore('chat', () => {
       let reasoningContent = ''
       const toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = []
       let synthId = 0
+      let usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined
 
       for await (const chunk of provider.stream(finalReq) as AsyncIterable<any>) {
         if (req.signal?.aborted) break
@@ -1391,6 +1411,10 @@ export const useChatStore = defineStore('chat', () => {
               ? (tc.arguments as Record<string, unknown>)
               : {},
           })
+        } else if (chunk.type === 'done' && chunk.usage) {
+          // Providers emit the terminal usage chunk last (openai.ts / anthropic.ts).
+          // Capturing it here is what makes the cost/token meter work in tools mode.
+          usage = chunk.usage
         } else if (chunk.type === 'error') {
           throw new Error(chunk.error || 'stream error')
         }
@@ -1401,7 +1425,7 @@ export const useChatStore = defineStore('chat', () => {
         content,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         reasoningContent: reasoningContent || undefined,
-        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        usage: usage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
         finishReason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
       }
     }

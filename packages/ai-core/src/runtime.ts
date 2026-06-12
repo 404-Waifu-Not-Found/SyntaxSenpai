@@ -394,6 +394,8 @@ export function createProviderConfigFromEnv(
       };
     case "fireworks":
       return { type: "fireworks", apiKey: getRequired(env, "FIREWORKS_API_KEY") };
+    case "nvidia":
+      return { type: "nvidia", apiKey: getRequired(env, "NVIDIA_API_KEY") };
     default:
       throw new Error(`Unsupported provider: ${provider as string}`);
   }

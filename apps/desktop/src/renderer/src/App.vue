@@ -1143,6 +1143,7 @@ const providerOrder = [
   'xai',
   'huggingface',
   'github-models',
+  'nvidia',
 ]
 const providerMetadata = [
   {
@@ -1271,6 +1272,18 @@ const providerMetadata = [
       { id: 'meta/Llama-3.3-70B-Instruct', displayName: 'Llama 3.3 70B' },
     ],
   },
+  {
+    id: 'nvidia',
+    displayName: 'NVIDIA NIM',
+    models: [
+      { id: 'meta/llama-3.3-70b-instruct', displayName: 'Llama 3.3 70B Instruct' },
+      { id: 'nvidia/llama-3.3-nemotron-super-49b-v1.5', displayName: 'Nemotron Super 49B v1.5' },
+      { id: 'qwen/qwen3-coder-480b-a35b-instruct', displayName: 'Qwen3 Coder 480B' },
+      { id: 'openai/gpt-oss-20b', displayName: 'GPT-OSS 20B' },
+      { id: 'moonshotai/kimi-k2.6', displayName: 'Kimi K2.6' },
+      { id: 'meta/llama-3.1-8b-instruct', displayName: 'Llama 3.1 8B (Fast)' },
+    ],
+  },
 ]
 const providers = providerOrder
   .map((id) => providerMetadata.find((provider) => provider.id === id))
@@ -1304,6 +1317,12 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'command-r-plus': 128000,
   'command-r': 128000,
   'command-a-03-2025': 256000,
+  'meta/llama-3.3-70b-instruct': 128000,
+  'nvidia/llama-3.3-nemotron-super-49b-v1.5': 128000,
+  'qwen/qwen3-coder-480b-a35b-instruct': 256000,
+  'openai/gpt-oss-20b': 128000,
+  'moonshotai/kimi-k2.6': 256000,
+  'meta/llama-3.1-8b-instruct': 128000,
 }
 
 const colorPresets: Array<{
@@ -2039,6 +2058,12 @@ const contextWindowSize = computed(() =>
 )
 
 const estimatedTokensUsed = computed(() => {
+  // Prefer the real prompt-token count from the last round-trip — it reflects
+  // the actual context sent (system prompt + tool defs + history). Fall back to
+  // a chars/4 estimate before the first response, or for providers that report
+  // no usage (e.g. ollama, lmstudio).
+  const real = store.usageTotals.lastPromptTokens
+  if (real > 0) return real
   const totalChars = store.messages.reduce((sum: number, m: any) => {
     const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '')
     return sum + content.length
@@ -5939,7 +5964,7 @@ async function handleImportData() {
 
       <!-- Usage + todo status strip (only when there's something to show) -->
       <div
-        v-if="hasStatusStrip && !compactChatLayout"
+        v-if="hasStatusStrip"
         :class="[
           compactChatLayout
             ? 'px-3 py-1.5 border-b border-white/5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-neutral-400'
@@ -5966,7 +5991,9 @@ async function handleImportData() {
             ↓ {{ store.usageTotals.completionTokens.toLocaleString(bcp47Locale(locale)) }}
           </span>
           <span :title="t('usage.estCost', { currency: currencyCodeForLocale(locale) })">
-            ≈ {{ formatLocalizedCost(store.usageTotals.costUsd, locale) }}
+            ≈ {{ store.usageTotals.costUnpriced && store.usageTotals.costUsd === 0
+                   ? '—'
+                   : formatLocalizedCost(store.usageTotals.costUsd, locale) }}
           </span>
         </div>
         <div

@@ -30,6 +30,13 @@ export interface RawSnapshot {
   truncated: boolean
 }
 
+export interface AgentTargetRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 // Shared helpers stringified into every action script: ref lookup + result shape.
 const HELPERS = `
   function __ssGet(ref) {
@@ -215,6 +222,25 @@ export function buildClickScript(ref: string): string {
     return { error: 'click_failed', message: String(e && e.message || e) }
   }
   return { ok: true, role: el.tagName.toLowerCase() }
+})()`
+}
+
+export function buildTargetRectScript(ref: string): string {
+  return `(async function () {
+  ${HELPERS}
+  var found = __ssGet(${JSON.stringify(ref)})
+  if (found.error) return found
+  var el = found.el
+  try { el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' }) } catch (e) {}
+  await new Promise(function (resolve) { setTimeout(resolve, 260) })
+  var rect = el.getBoundingClientRect()
+  return {
+    ok: true,
+    x: rect.left + rect.width / 2,
+    y: rect.top + rect.height / 2,
+    width: rect.width,
+    height: rect.height,
+  }
 })()`
 }
 

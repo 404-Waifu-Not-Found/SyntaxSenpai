@@ -541,13 +541,14 @@ export const agentTools: ToolDefinition[] = [
   {
     name: 'browser_tabs',
     description:
-      'Manage browser tabs: list open tabs, open a new one (optionally with a URL), close one, or switch the active tab.',
+      'Manage browser tabs: list open tabs, open one or more new tabs (optionally with a URL), close one, or switch the active tab. Use one action=new call with count=N when the user asks for duplicate tabs; do not issue N separate tool calls.',
     parameters: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['list', 'new', 'close', 'select'], description: 'The tab operation.' },
         tab_id: { type: 'string', description: 'Tab id (from action=list) for close/select.' },
         url: { type: 'string', description: 'URL to open when action=new.' },
+        count: { type: 'integer', description: 'Number of tabs to open for action=new, from 1 to 20.', default: 1 },
       },
       required: ['action'],
     },
@@ -742,7 +743,7 @@ export const agentTools: ToolDefinition[] = [
     name: PROPOSE_TOOL_TOOL_NAME,
     description:
       'Propose a NEW plugin tool for the user to review and approve. Use this when you realize a repeated task would be cleaner with a dedicated tool (e.g. an API wrapper, a custom parser) that doesn\'t exist yet. ' +
-      'You are writing untrusted JavaScript that the user must explicitly approve before it runs — write cautiously, include the same safety checks real plugins do (reject non-http(s) URLs, cap response sizes, handle errors). The code must `module.exports = { activate({ registerTool }) { registerTool({...}) } }` — the same shape as the shipped plugins. ' +
+      'You are writing untrusted JavaScript that the user must explicitly approve before it runs — write cautiously, include the same safety checks real plugins do (reject non-http(s) URLs, cap response sizes, handle errors). The code must export `activate({ registerTool })` and call `registerTool({ definition: { name, description, parameters }, requiresPermission, async execute(input, context) { ... } })`. Valid permissions are fileRead, fileWrite, shellExec, and networkAccess. ' +
       'After calling this, tell the user you\'ve proposed a tool and ask them to approve it in Settings → Plugins → Pending. Do NOT imply the tool is active or try to use it in the current turn — it cannot run until they approve and restart the app.',
     parameters: {
       type: 'object',
@@ -998,11 +999,18 @@ async function executeBrowserTool(toolCall: ToolCall): Promise<string> {
         if (action === 'new') {
           browserStore.openPanel()
           const url = args.url ? String(args.url) : ''
+          const count = Math.max(1, Math.min(20, Math.floor(Number(args.count) || 1)))
           if (url && !browserController.isAllowedBrowserUrl(url)) {
             return `Error: only http(s) URLs are allowed (got "${url}").`
           }
-          const tab = browserStore.newTab(url || undefined)
-          const wv = await browserController.waitForWebview(tab.id)
+          const tabs = Array.from({ length: count }, () => browserStore.newTab(url || undefined))
+          const webviews = await Promise.all(tabs.map((tab) => browserController.waitForWebview(tab.id)))
+          if (count > 1) {
+            const opened = webviews.filter(Boolean).length
+            return `Opened ${opened}/${count} new tabs${url ? ` at ${url}` : ''}. Active tab: [${tabs[tabs.length - 1].id}].`
+          }
+          const tab = tabs[0]
+          const wv = webviews[0]
           if (url && wv) {
             await browserController.waitForSettle(wv, 10000)
             const snap = await browserController.snapshot(tab.id)
@@ -1516,7 +1524,7 @@ export function describeToolCall(toolCall: ToolCall): string {
     case 'browser_read_page':
       return `browser_read_page(${args.offset ? `offset=${args.offset}` : ''})`
     case 'browser_tabs':
-      return `browser_tabs(${String(args.action ?? 'list')}${args.tab_id ? `, ${args.tab_id}` : ''}${args.url ? `, ${String(args.url).slice(0, 40)}` : ''})`
+      return `browser_tabs(${String(args.action ?? 'list')}${args.tab_id ? `, ${args.tab_id}` : ''}${args.url ? `, ${String(args.url).slice(0, 40)}` : ''}${Number(args.count) > 1 ? `, x${Number(args.count)}` : ''})`
     case BROWSER_SCREENSHOT_TOOL_NAME:
       return 'browser_screenshot()'
     case 'clipboard_read':

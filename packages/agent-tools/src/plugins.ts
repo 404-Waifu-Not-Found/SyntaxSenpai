@@ -12,6 +12,33 @@ import type {
 } from './types'
 import { ToolRegistry, toolRegistry } from './registry'
 
+function normalizePluginTool(tool: ToolImplementation | Record<string, unknown>): ToolImplementation {
+  if (tool && typeof tool === 'object' && (tool as ToolImplementation).definition?.name) {
+    return tool as ToolImplementation
+  }
+
+  const legacy = tool as any
+  if (
+    legacy &&
+    typeof legacy.name === 'string' &&
+    typeof legacy.description === 'string' &&
+    legacy.parameters &&
+    typeof legacy.execute === 'function'
+  ) {
+    return {
+      definition: {
+        name: legacy.name,
+        description: legacy.description,
+        parameters: legacy.parameters,
+      },
+      execute: legacy.execute,
+      requiresPermission: legacy.requiresPermission || 'networkAccess',
+    }
+  }
+
+  throw new Error('registerTool() requires a tool with definition.name, definition.description, definition.parameters, and execute()')
+}
+
 export interface LoadedToolPlugin {
   manifest: ToolPluginManifest;
   registeredTools: string[];
@@ -81,8 +108,9 @@ export async function loadToolPlugins({
 
       const registeredTools: string[] = []
       const registerTool = (tool: ToolImplementation) => {
-        registry.register(tool)
-        registeredTools.push(tool.definition.name)
+        const normalized = normalizePluginTool(tool)
+        registry.register(normalized)
+        registeredTools.push(normalized.definition.name)
       }
 
       await pluginModule.activate({

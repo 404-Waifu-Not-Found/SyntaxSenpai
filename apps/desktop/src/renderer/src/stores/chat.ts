@@ -6,7 +6,8 @@ import { AIChatRuntime, withRetry, classifyError, describeError, type ToolCall }
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
 import { createLogger } from '../composables/logger'
-import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, SET_EXPRESSION_TOOL_NAME, TODO_WRITE_TOOL_NAME, TODO_READ_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, CARD_MARKER_FENCE, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
+import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, SET_EXPRESSION_TOOL_NAME, TODO_WRITE_TOOL_NAME, TODO_READ_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, CARD_MARKER_FENCE, consumePendingBrowserScreenshot, modelSupportsVision, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
+import { useBrowserStore } from './browser'
 import { runAgentTurn, type SideEffectResult } from '../agent/run-turn'
 import {
   dispatchSubagents,
@@ -600,6 +601,28 @@ Verify before stop_response:
 - If the project also has a typecheck, lint, or test command relevant to your change and it's reasonable to run, run it. If something fails, fix it — don't report success over a broken build.
 - Read back the file you edited with read_file to confirm the change landed as intended, unless you just wrote it fresh.
 - stop_response.final_message should state what actually changed (\`file.ext:line\`) and any follow-ups the user still needs to do (e.g. install a new dep, restart the dev server).`
+}
+
+function buildBrowserSessionPromptBlock(visionCapable: boolean): string {
+  return `\n\n[Embedded Browser]
+You can drive a real browser embedded in the app via the browser_* tools. The user sees the same browser panel and can click around in it too — you share control.
+
+Workflow (snapshot → ref → act):
+- browser_navigate opens a page and returns a TEXT SNAPSHOT: interactive elements are labeled [e1], [e2], … with their role and name.
+- Act on elements by ref: browser_click for links/buttons, browser_type for inputs (submit=true presses Enter — the normal way to search).
+- Every action returns a FRESH snapshot of the resulting page state. Refs from older snapshots are dead the moment the page changes — never reuse them; take browser_snapshot if unsure.
+- The user may interact with the page between your actions. Trust only the latest snapshot.
+
+Reading and finding things:
+- browser_read_page extracts the readable article text — use it to actually read long content. Do NOT loop scroll+snapshot to read.
+- browser_scroll reveals off-screen elements (snapshots mark them [offscreen]).
+- If an element you expect isn't in the snapshot, scroll or re-snapshot — don't guess refs.
+- One action per tool call. After 2 failed attempts at the same interaction, tell the user what's blocking instead of retrying.
+${visionCapable ? '- browser_screenshot is a LAST RESORT for canvas/map/image-heavy pages where the text snapshot is useless.' : ''}
+Safety (non-negotiable):
+- NEVER type passwords, payment details, or 2FA codes — the field will refuse anyway; ask the user to type them directly in the panel.
+- Don't log into accounts, make purchases, or post/submit content on the user's behalf unless they explicitly asked for that exact action.
+- Only http(s) pages work; file:// and other schemes are blocked.`
 }
 
 function buildWeChatSessionPromptBlock(binding: WeChatBinding | null): string {
@@ -1554,6 +1577,26 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  /**
+   * browser_screenshot results are images, which can't ride in a string tool
+   * result — the executor parks the capture and this hook (passed to
+   * runAgentTurn.collectFollowupMessages) injects it as a user-role
+   * image_url message right after the tool result.
+   */
+  function collectBrowserScreenshotFollowups(tc: ToolCall): any[] | null {
+    if (tc.name !== BROWSER_SCREENSHOT_TOOL_NAME) return null
+    const shot = consumePendingBrowserScreenshot()
+    if (!shot) return null
+    return [{
+      id: `browser-screenshot-${Date.now()}`,
+      role: 'user',
+      content: [
+        { type: 'text', text: '[Screenshot of the embedded browser page, captured by browser_screenshot]' },
+        { type: 'image_url', imageUrl: { url: shot } },
+      ],
+    }]
+  }
+
   async function executeToolCallForAgentMode(provider: any, model: string, toolCall: ToolCall, userGoal: string): Promise<string> {
     if (agentMode.value === 'ask' && !isAutoApprovalExemptTool(toolCall.name)) {
       const approved = await requestUserToolApproval(toolCall)
@@ -1792,7 +1835,9 @@ export const useChatStore = defineStore('chat', () => {
       // she can read files, run commands, search, etc. — instead of only
       // emitting a one-shot text message. In ask mode (no tools / approval
       // gated) she falls back to plain conversational streaming.
-      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value })
+      const browserStore = useBrowserStore()
+      const visionCapable = modelSupportsVision(model)
+      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value, browserEnabled: browserStore.aiControlEnabled, visionCapable })
       const hasTools = tools.length > 0
 
       if (hasTools) {
@@ -1805,6 +1850,7 @@ export const useChatStore = defineStore('chat', () => {
         }
         cachedSystemPrompt += buildAgentAccessPrompt(agentMode.value)
         cachedSystemPrompt += buildAgentBehaviorPrompt(sys?.shell, waifu?.displayName || 'your waifu persona', webSearchEnabled.value)
+        if (browserStore.aiControlEnabled) cachedSystemPrompt += buildBrowserSessionPromptBlock(visionCapable)
       }
 
       const runtime = new AIChatRuntime({
@@ -1946,6 +1992,7 @@ export const useChatStore = defineStore('chat', () => {
             return null
           },
           executeTool: (tc) => executeToolCallForAgentMode(provider, model, tc, proactiveGoal),
+          collectFollowupMessages: collectBrowserScreenshotFollowups,
           onToolStart: (tc) => {
             const toolMsgId = `tool-${Date.now()}-${tc.id}`
             messages.value.push({
@@ -2784,7 +2831,9 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
       const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
       const waifus = activeWaifus.value
 
-      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value })
+      const groupBrowserStore = useBrowserStore()
+      const groupVisionCapable = modelSupportsVision(model)
+      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value, browserEnabled: groupBrowserStore.aiControlEnabled, visionCapable: groupVisionCapable })
       const hasTools = tools.length > 0
       let systemInfo: any = null
 
@@ -2847,6 +2896,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
             }
             cachedSystemPrompt += buildAgentAccessPrompt(agentMode.value)
             cachedSystemPrompt += buildAgentBehaviorPrompt(systemInfo?.shell, waifu.displayName || 'your waifu persona', webSearchEnabled.value)
+            if (groupBrowserStore.aiControlEnabled) cachedSystemPrompt += buildBrowserSessionPromptBlock(groupVisionCapable)
           }
 
           // Volatile suffix — changes per turn, never marked cacheable.
@@ -3017,6 +3067,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
                 return null
               },
               executeTool: (toolCall) => executeToolCallForAgentMode(provider, model, toolCall, trimmedText),
+              collectFollowupMessages: collectBrowserScreenshotFollowups,
               onToolStart: (toolCall) => {
                 const label = describeToolCall(toolCall)
                 const toolMsgId = `tool-${waifu.id}-${Date.now()}-${toolCall.id}`
@@ -3458,7 +3509,9 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(trimmedText)
 
-      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value })
+      const browserStore = useBrowserStore()
+      const visionCapable = modelSupportsVision(model)
+      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value, browserEnabled: browserStore.aiControlEnabled, visionCapable })
       const hasTools = tools.length > 0
 
       // Inject system context so the AI knows the user's environment
@@ -3472,6 +3525,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
         }
         cachedSystemPrompt += buildAgentAccessPrompt(agentMode.value)
         cachedSystemPrompt += buildAgentBehaviorPrompt(sys?.shell, waifu?.displayName || 'your waifu persona', webSearchEnabled.value)
+        if (browserStore.aiControlEnabled) cachedSystemPrompt += buildBrowserSessionPromptBlock(visionCapable)
       }
 
       const runtime = new AIChatRuntime({
@@ -3723,6 +3777,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
             return null
           },
           executeTool: (tc) => executeToolCallForAgentMode(provider, model, tc, trimmedText),
+          collectFollowupMessages: collectBrowserScreenshotFollowups,
           onToolStart: (tc) => {
             const label = describeToolCall(tc)
             const toolMsgId = `tool-${Date.now()}-${tc.id}`

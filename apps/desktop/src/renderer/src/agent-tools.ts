@@ -12,6 +12,8 @@
 
 import type { ToolDefinition, ToolCall } from '@syntax-senpai/ai-core'
 import { renderContentToPng } from './services/render-to-image'
+import * as browserController from './browser/controller'
+import { useBrowserStore } from './stores/browser'
 
 export type AgentMode = 'ask' | 'auto' | 'full'
 
@@ -38,6 +40,42 @@ const CODING_MODE_TOOLS = new Set<string>([
   GIT_PUSH_TOOL_NAME,
   GITHUB_PR_CREATE_TOOL_NAME,
 ])
+
+export const BROWSER_SCREENSHOT_TOOL_NAME = 'browser_screenshot'
+
+/** Tools that drive the embedded browser panel. Gated by the
+ * "AI browser control" setting; excluded from subagents (one webview, one driver). */
+export const BROWSER_TOOLS = new Set<string>([
+  'browser_navigate',
+  'browser_snapshot',
+  'browser_click',
+  'browser_type',
+  'browser_scroll',
+  'browser_history',
+  'browser_read_page',
+  'browser_tabs',
+  BROWSER_SCREENSHOT_TOOL_NAME,
+])
+
+/**
+ * Conservative pattern check for whether a model accepts image input.
+ * Gates browser_screenshot — text-only models simply never see the tool.
+ */
+export function modelSupportsVision(model: string): boolean {
+  return /claude|gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|gemini|grok-(vision|2|3|4)|pixtral|llava|qwen[.-]?vl|minicpm-v|gemma-3|internvl|phi-4-multimodal/i.test(String(model || ''))
+}
+
+// browser_screenshot results are images; string tool results can't carry them,
+// so the executor parks the capture here and the chat loop injects it as a
+// user-role image_url message right after the tool result (see run-turn.ts
+// collectFollowupMessages).
+let pendingBrowserScreenshot: string | null = null
+
+export function consumePendingBrowserScreenshot(): string | null {
+  const shot = pendingBrowserScreenshot
+  pendingBrowserScreenshot = null
+  return shot
+}
 
 export const CARD_MARKER_FENCE = 'syntax-senpai-card'
 
@@ -418,6 +456,109 @@ export const agentTools: ToolDefinition[] = [
     },
   },
   {
+    name: 'browser_navigate',
+    description:
+      'Open a URL in the embedded browser panel (visible to the user inside the app). Returns a text snapshot of the page with interactive elements labeled [e1], [e2], … — act on those refs with browser_click / browser_type. Use this (not web_search) when you need to actually visit, interact with, or read a live page.',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Full http(s) URL to open, e.g. "https://en.wikipedia.org".' },
+        new_tab: { type: 'boolean', description: 'Open in a new tab instead of the current one.', default: false },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'browser_snapshot',
+    description:
+      'Take a fresh text snapshot of the current browser page: title, URL, scroll position, interactive elements with [eN] refs, and a content outline. Refs are invalidated whenever the page changes — take a new snapshot instead of reusing old refs.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'browser_click',
+    description:
+      'Click an element in the browser by its snapshot ref (e.g. "e3"). The element flashes a highlight so the user sees what you did. Returns a fresh snapshot reflecting the result (including any navigation).',
+    parameters: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string', description: 'Element ref from the latest snapshot, e.g. "e3".' },
+      },
+      required: ['ref'],
+    },
+  },
+  {
+    name: 'browser_type',
+    description:
+      'Type text into an input/textarea by its snapshot ref. Set submit=true to press Enter afterwards (e.g. search boxes). Refuses password fields — the user must type credentials themselves. Returns a fresh snapshot.',
+    parameters: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string', description: 'Element ref of a textbox/searchbox from the latest snapshot.' },
+        text: { type: 'string', description: 'The text to type.' },
+        submit: { type: 'boolean', description: 'Press Enter after typing.', default: false },
+        clear: { type: 'boolean', description: 'Clear the field first (default) or append.', default: true },
+      },
+      required: ['ref', 'text'],
+    },
+  },
+  {
+    name: 'browser_scroll',
+    description:
+      'Scroll the browser page up or down by viewport pages, or scroll a specific ref into view. Returns a fresh snapshot of the newly visible region.',
+    parameters: {
+      type: 'object',
+      properties: {
+        direction: { type: 'string', enum: ['up', 'down'], description: 'Scroll direction.' },
+        pages: { type: 'integer', description: 'How many viewport-heights to scroll.', default: 1 },
+        ref: { type: 'string', description: 'Optional: scroll this element ref into view instead.' },
+      },
+      required: ['direction'],
+    },
+  },
+  {
+    name: 'browser_history',
+    description: 'Go back or forward in the active browser tab\'s history. Returns a fresh snapshot.',
+    parameters: {
+      type: 'object',
+      properties: {
+        direction: { type: 'string', enum: ['back', 'forward'], description: 'History direction.' },
+      },
+      required: ['direction'],
+    },
+  },
+  {
+    name: 'browser_read_page',
+    description:
+      'Extract the readable text of the current browser page (article-style). Use this to actually read long content instead of scroll+snapshot loops. Long pages are chunked — call again with the returned offset for more.',
+    parameters: {
+      type: 'object',
+      properties: {
+        offset: { type: 'integer', description: 'Character offset to continue reading from.', default: 0 },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'browser_tabs',
+    description:
+      'Manage browser tabs: list open tabs, open a new one (optionally with a URL), close one, or switch the active tab.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'new', 'close', 'select'], description: 'The tab operation.' },
+        tab_id: { type: 'string', description: 'Tab id (from action=list) for close/select.' },
+        url: { type: 'string', description: 'URL to open when action=new.' },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    name: BROWSER_SCREENSHOT_TOOL_NAME,
+    description:
+      'LAST RESORT: capture a screenshot of the current browser page, attached as an image. Only use when the text snapshot cannot describe the page (canvas, maps, image-heavy layouts). Prefer browser_snapshot / browser_read_page — they are much faster and cheaper.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  {
     name: 'spotify_now_playing',
     description:
       'Get the song currently playing on the user\'s Spotify. Returns track name, artist, album, playback position, and duration. Use this whenever the user asks what they\'re listening to, or when you want to comment on their music.',
@@ -728,12 +869,18 @@ function isPluginTool(name: string): boolean {
  */
 export function getToolsForMode(
   mode: AgentMode,
-  options: { webSearchEnabled?: boolean; codingMode?: boolean } = {},
+  options: { webSearchEnabled?: boolean; codingMode?: boolean; browserEnabled?: boolean; visionCapable?: boolean } = {},
 ): ToolDefinition[] {
   // Coding-mode tools (git_commit / git_push / github_pr_create) only appear when /code is active.
   const base = agentTools.filter((tool) => {
     if (tool.name === 'web_search') return options.webSearchEnabled === true
     if (CODING_MODE_TOOLS.has(tool.name)) return options.codingMode === true
+    if (BROWSER_TOOLS.has(tool.name)) {
+      if (options.browserEnabled !== true) return false
+      // Screenshot results are images — only offer it to vision-capable models.
+      if (tool.name === BROWSER_SCREENSHOT_TOOL_NAME) return options.visionCapable === true
+      return true
+    }
     return true
   })
   // Plugin-contributed tools are appended unconditionally — per-plugin
@@ -770,6 +917,126 @@ async function resolveWeChatPeer(
   }
   // No peers known yet — fall through with the raw value (matches prior behavior).
   return { userId: to }
+}
+
+/**
+ * Execute a browser tool against the embedded browser panel. All page
+ * interaction goes through the renderer-side controller directly (no IPC
+ * round-trip); tab management goes through the browser Pinia store.
+ */
+async function executeBrowserTool(toolCall: ToolCall): Promise<string> {
+  const args = toolCall.arguments as Record<string, any>
+  const browserStore = useBrowserStore()
+  if (!browserStore.aiControlEnabled) {
+    return 'Browser control is disabled. Ask the user to enable "AI browser control" in Settings → AI.'
+  }
+
+  try {
+    switch (toolCall.name) {
+      case 'browser_navigate': {
+        const url = String(args.url || '')
+        if (!browserController.isAllowedBrowserUrl(url)) {
+          return `Error: only http(s) URLs are allowed in the embedded browser (got "${url}").`
+        }
+        browserStore.openPanel()
+        const wantNewTab = args.new_tab === true || String(args.new_tab) === 'true'
+        if (wantNewTab || browserStore.tabs.length === 0) {
+          const tab = browserStore.newTab(url)
+          const wv = await browserController.waitForWebview(tab.id)
+          if (!wv) return 'Error: the browser tab failed to open. Try again.'
+          await browserController.waitForSettle(wv, 10000)
+          const snap = await browserController.snapshot(tab.id)
+          return `Opened ${wv.getURL()} — ${wv.getTitle()}\n\n${snap}`
+        }
+        await browserController.waitForWebview(browserStore.activeTabId)
+        const info = await browserController.navigate(url)
+        const snap = await browserController.snapshot()
+        return `Navigated to ${info.url} — ${info.title}\n\n${snap}`
+      }
+
+      case 'browser_snapshot':
+        return await browserController.snapshot()
+
+      case 'browser_click': {
+        const { summary, snapshotText } = await browserController.click(String(args.ref || ''))
+        return `${summary}\n\n${snapshotText}`
+      }
+
+      case 'browser_type': {
+        const { summary, snapshotText } = await browserController.type(
+          String(args.ref || ''),
+          String(args.text ?? ''),
+          { submit: args.submit === true || String(args.submit) === 'true', clear: args.clear !== false && String(args.clear) !== 'false' },
+        )
+        return `${summary}\n\n${snapshotText}`
+      }
+
+      case 'browser_scroll': {
+        const direction = args.direction === 'up' ? 'up' : 'down'
+        const pages = Math.max(1, Math.min(10, Number(args.pages) || 1))
+        const { summary, snapshotText } = await browserController.scroll(direction, pages, args.ref ? String(args.ref) : undefined)
+        return `${summary}\n\n${snapshotText}`
+      }
+
+      case 'browser_history': {
+        const direction = args.direction === 'forward' ? 'forward' : 'back'
+        const { summary, snapshotText } = await browserController.history(direction)
+        return snapshotText ? `${summary}\n\n${snapshotText}` : summary
+      }
+
+      case 'browser_read_page':
+        return await browserController.readPage(Math.max(0, Number(args.offset) || 0))
+
+      case 'browser_tabs': {
+        const action = String(args.action || 'list')
+        if (action === 'list') {
+          if (browserStore.tabs.length === 0) return 'No tabs open. Use browser_navigate to open a page.'
+          return browserStore.tabs
+            .map((t) => `${t.id === browserStore.activeTabId ? '* ' : '  '}[${t.id}] ${t.title} — ${t.url}`)
+            .join('\n')
+        }
+        if (action === 'new') {
+          browserStore.openPanel()
+          const url = args.url ? String(args.url) : ''
+          if (url && !browserController.isAllowedBrowserUrl(url)) {
+            return `Error: only http(s) URLs are allowed (got "${url}").`
+          }
+          const tab = browserStore.newTab(url || undefined)
+          const wv = await browserController.waitForWebview(tab.id)
+          if (url && wv) {
+            await browserController.waitForSettle(wv, 10000)
+            const snap = await browserController.snapshot(tab.id)
+            return `Opened new tab [${tab.id}] at ${wv.getURL()}\n\n${snap}`
+          }
+          return `Opened new empty tab [${tab.id}]. Use browser_navigate to load a page.`
+        }
+        if (action === 'close') {
+          const id = String(args.tab_id || '')
+          if (!browserStore.tabs.some((t) => t.id === id)) return `Error: no tab with id "${id}". Use action=list to see tabs.`
+          browserStore.closeTab(id)
+          return `Closed tab [${id}]. ${browserStore.tabs.length} tab(s) remain.`
+        }
+        if (action === 'select') {
+          const id = String(args.tab_id || '')
+          if (!browserStore.tabs.some((t) => t.id === id)) return `Error: no tab with id "${id}". Use action=list to see tabs.`
+          browserStore.selectTab(id)
+          await browserController.waitForWebview(id)
+          const snap = await browserController.snapshot(id)
+          return `Switched to tab [${id}].\n\n${snap}`
+        }
+        return `Error: unknown browser_tabs action "${action}".`
+      }
+
+      case BROWSER_SCREENSHOT_TOOL_NAME: {
+        const { dataUrl } = await browserController.screenshot()
+        pendingBrowserScreenshot = dataUrl
+        return 'Screenshot captured — it is attached as an image in the next message. Remember this is a fallback; prefer browser_snapshot for interaction.'
+      }
+    }
+    return `Error: unknown browser tool "${toolCall.name}".`
+  } catch (err: any) {
+    return `Error: ${err?.message || String(err)}`
+  }
 }
 
 /**
@@ -896,6 +1163,17 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
       if (!res.success) return `Web search error: ${res.error}`
       return res.content || 'No search results found.'
     }
+
+    case 'browser_navigate':
+    case 'browser_snapshot':
+    case 'browser_click':
+    case 'browser_type':
+    case 'browser_scroll':
+    case 'browser_history':
+    case 'browser_read_page':
+    case 'browser_tabs':
+    case BROWSER_SCREENSHOT_TOOL_NAME:
+      return executeBrowserTool(toolCall)
 
     case 'clipboard_read': {
       const res = await ipc.invoke('clipboard:read')
@@ -1223,6 +1501,24 @@ export function describeToolCall(toolCall: ToolCall): string {
       return `lsp_hover(${args.path ?? ''}:${args.line ?? ''}:${args.column ?? ''})`
     case 'web_search':
       return `web_search("${String(args.query ?? '').slice(0, 60)}")`
+    case 'browser_navigate':
+      return `browser_navigate(${String(args.url ?? '').slice(0, 60)}${(args as any).new_tab ? ', new tab' : ''})`
+    case 'browser_snapshot':
+      return 'browser_snapshot()'
+    case 'browser_click':
+      return `browser_click(${String(args.ref ?? '')})`
+    case 'browser_type':
+      return `browser_type(${String(args.ref ?? '')}, "${String(args.text ?? '').slice(0, 40)}"${(args as any).submit ? ', submit' : ''})`
+    case 'browser_scroll':
+      return `browser_scroll(${args.ref ? String(args.ref) : String(args.direction ?? 'down')})`
+    case 'browser_history':
+      return `browser_history(${String(args.direction ?? 'back')})`
+    case 'browser_read_page':
+      return `browser_read_page(${args.offset ? `offset=${args.offset}` : ''})`
+    case 'browser_tabs':
+      return `browser_tabs(${String(args.action ?? 'list')}${args.tab_id ? `, ${args.tab_id}` : ''}${args.url ? `, ${String(args.url).slice(0, 40)}` : ''})`
+    case BROWSER_SCREENSHOT_TOOL_NAME:
+      return 'browser_screenshot()'
     case 'clipboard_read':
       return 'clipboard_read()'
     case 'clipboard_write':

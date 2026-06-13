@@ -64,6 +64,14 @@ export interface RunAgentTurnOptions {
   /** Optional UI hook fired after a generic tool resolves. */
   onToolResult?: (tc: ToolCall, result: string, token: string | undefined) => void
 
+  /**
+   * Called after a generic tool's result message is appended. Any returned
+   * messages are appended right after it — used for multimodal payloads that
+   * can't ride in a string tool result (e.g. browser_screenshot images,
+   * which providers only accept as user-role image_url parts).
+   */
+  collectFollowupMessages?: (tc: ToolCall) => any[] | null | undefined
+
   /** Telemetry hook for each provider round-trip. */
   onApiRoundTrip?: (durationMs: number, response: any) => void
   /** Telemetry hook fired at the start of every iteration. */
@@ -119,6 +127,7 @@ export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<RunAgentT
     executeTool,
     onToolStart,
     onToolResult,
+    collectFollowupMessages,
     onApiRoundTrip,
     onIteration,
     onAssistantTextDelta,
@@ -203,6 +212,9 @@ export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<RunAgentT
         content: annotateToolResult(result, i, maxIterations),
         toolCallId: tc.id,
       })
+
+      const followups = collectFollowupMessages?.(tc)
+      if (followups && followups.length > 0) history.push(...followups)
     }
 
     if (stopped) break

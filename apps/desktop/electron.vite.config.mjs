@@ -72,7 +72,17 @@ export default defineConfig({
         '@': path.resolve(__dirname, './src/renderer/src')
       }
     },
-    plugins: [vue(), UnoCSS()],
+    plugins: [
+      vue({
+        template: {
+          compilerOptions: {
+            // Electron's <webview> tag (embedded browser panel) is not a Vue component.
+            isCustomElement: (tag) => tag === 'webview'
+          }
+        }
+      }),
+      UnoCSS()
+    ],
     optimizeDeps: {
       exclude: ['expo-secure-store', 'expo', 'keytar', 'better-sqlite3']
     },

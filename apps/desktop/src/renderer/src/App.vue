@@ -18,9 +18,12 @@ import MessageSkeleton from './components/MessageSkeleton.vue'
 import QrPairModal from './components/QrPairModal.vue'
 import RepositoryPickerModal from './components/RepositoryPickerModal.vue'
 import SakuraPetals from './components/SakuraPetals.vue'
+import BrowserPanel from './components/BrowserPanel.vue'
+import { useBrowserStore } from './stores/browser'
 import type { ActiveCodingRepo } from './types/coding-session'
 
 const store = useChatStore()
+const browser = useBrowserStore()
 const { invoke, on } = useIpc()
 const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, setUI, DEFAULT_THEME } = useTheme()
 const { t, locale, setLocale, localeOptions } = useI18n()
@@ -3809,6 +3812,28 @@ async function handleImportData() {
               </div>
             </div>
 
+            <div class="settings-card mb-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-sm font-semibold text-neutral-200">AI browser control</div>
+                  <p class="mt-1 text-xs text-neutral-400">
+                    Lets the waifu drive the embedded browser panel (🌐) — navigate, click, type, and read pages. You share the same browser and can take over anytime. Passwords are never typed by the AI.
+                  </p>
+                </div>
+                <button
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :style="{ background: browser.aiControlEnabled ? 'linear-gradient(90deg,#22c55e,#14b8a6)' : '#404040' }"
+                  :aria-label="`${browser.aiControlEnabled ? 'Disable' : 'Enable'} AI browser control`"
+                  @click="browser.setAiControlEnabled(!browser.aiControlEnabled)"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: browser.aiControlEnabled ? 'translateX(20px)' : 'translateX(0)' }"
+                  />
+                </button>
+              </div>
+            </div>
+
             <div class="mb-4">
               <label class="block text-sm font-semibold text-neutral-200 mb-2">{{ t('settings.provider') }}</label>
               <select v-model="store.selectedProvider" class="input-field">
@@ -5941,6 +5966,15 @@ async function handleImportData() {
             🤖
           </button>
           <button
+            :class="['btn-ghost p-2', browser.panelOpen ? 'bg-white/10' : '']"
+            :style="ghostButtonStyle"
+            :title="browser.panelOpen ? 'Close browser' : 'Open browser'"
+            :aria-label="browser.panelOpen ? 'Close browser' : 'Open browser'"
+            @click="browser.togglePanel()"
+          >
+            🌐
+          </button>
+          <button
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             title="AI Memory"
@@ -6404,6 +6438,9 @@ async function handleImportData() {
         </p>
       </div>
     </div>
+
+    <!-- Embedded browser panel (shared between the user and the waifu agent) -->
+    <BrowserPanel v-if="browser.panelOpen && !compactChatLayout" />
 
     <!-- Floating Live2D avatar panel -->
     <Teleport to="body">

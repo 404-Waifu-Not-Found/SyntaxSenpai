@@ -1,0 +1,193 @@
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
+import { useIpc } from '../composables/use-ipc'
+
+export interface BrowserTab {
+  id: string
+  url: string
+  title: string
+  favicon: string
+  isLoading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+}
+
+export interface BrowserDownload {
+  id: string
+  filename: string
+  url: string
+  totalBytes: number
+  receivedBytes: number
+  state: 'pending' | 'downloading' | 'completed' | 'cancelled' | 'interrupted'
+  savePath?: string
+}
+
+const PANEL_WIDTH_KEY = 'syntax-senpai-browser-panel-width'
+const AI_CONTROL_KEY = 'syntax-senpai-browser-ai-control'
+
+export const DEFAULT_NEW_TAB_URL = 'about:blank'
+
+/** Turn URL-bar input into a navigable URL (search query → DuckDuckGo). */
+export function normalizeUrlInput(input: string): string {
+  const trimmed = String(input || '').trim()
+  if (!trimmed) return DEFAULT_NEW_TAB_URL
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  // Looks like a host (has a dot, no spaces) → assume https.
+  if (!/\s/.test(trimmed) && /^[\w-]+(\.[\w-]+)+(:\d+)?(\/.*)?$/.test(trimmed)) {
+    return `https://${trimmed}`
+  }
+  return `https://duckduckgo.com/?q=${encodeURIComponent(trimmed)}`
+}
+
+export const useBrowserStore = defineStore('browser', () => {
+  const ipc = useIpc()
+
+  const panelOpen = ref(false)
+  const panelWidthPct = ref<number>(Number(localStorage.getItem(PANEL_WIDTH_KEY)) || 45)
+  const aiControlEnabled = ref(localStorage.getItem(AI_CONTROL_KEY) !== 'false')
+
+  const tabs = ref<BrowserTab[]>([])
+  const activeTabId = ref<string>('')
+  const downloads = ref<BrowserDownload[]>([])
+
+  const activeTab = computed(() => tabs.value.find((t) => t.id === activeTabId.value) || null)
+  const pendingDownloads = computed(() => downloads.value.filter((d) => d.state === 'pending'))
+
+  let tabSeq = 0
+
+  function newTab(url?: string): BrowserTab {
+    const tab: BrowserTab = {
+      id: `tab-${Date.now()}-${++tabSeq}`,
+      url: url || DEFAULT_NEW_TAB_URL,
+      title: 'New Tab',
+      favicon: '',
+      isLoading: false,
+      canGoBack: false,
+      canGoForward: false,
+    }
+    tabs.value.push(tab)
+    activeTabId.value = tab.id
+    return tab
+  }
+
+  function closeTab(id: string) {
+    const idx = tabs.value.findIndex((t) => t.id === id)
+    if (idx === -1) return
+    tabs.value.splice(idx, 1)
+    if (activeTabId.value === id) {
+      const next = tabs.value[Math.min(idx, tabs.value.length - 1)]
+      activeTabId.value = next ? next.id : ''
+    }
+  }
+
+  function selectTab(id: string) {
+    if (tabs.value.some((t) => t.id === id)) activeTabId.value = id
+  }
+
+  function updateTab(id: string, patch: Partial<BrowserTab>) {
+    const tab = tabs.value.find((t) => t.id === id)
+    if (tab) Object.assign(tab, patch)
+  }
+
+  function openPanel() {
+    panelOpen.value = true
+    if (tabs.value.length === 0) newTab()
+  }
+
+  function closePanel() {
+    panelOpen.value = false
+  }
+
+  function togglePanel() {
+    if (panelOpen.value) closePanel()
+    else openPanel()
+  }
+
+  function setPanelWidthPct(pct: number) {
+    panelWidthPct.value = Math.min(75, Math.max(20, pct))
+    localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidthPct.value))
+  }
+
+  function setAiControlEnabled(enabled: boolean) {
+    aiControlEnabled.value = enabled
+    localStorage.setItem(AI_CONTROL_KEY, enabled ? 'true' : 'false')
+  }
+
+  async function respondToDownload(id: string, allow: boolean) {
+    const dl = downloads.value.find((d) => d.id === id)
+    if (dl) dl.state = allow ? 'downloading' : 'cancelled'
+    try {
+      const res = await ipc.invoke('browser:download:respond', { id, allow })
+      if (dl && res?.savePath) dl.savePath = res.savePath
+    } catch {
+      if (dl) dl.state = 'interrupted'
+    }
+  }
+
+  let ipcWired = false
+  function wireIpcEvents() {
+    if (ipcWired) return
+    ipcWired = true
+
+    ipc.on('browser:openUrl', (_event: any, payload: { url: string }) => {
+      if (!payload?.url) return
+      openPanel()
+      newTab(payload.url)
+    })
+
+    ipc.on('browser:download:request', (_event: any, payload: any) => {
+      if (!payload?.id) return
+      downloads.value.push({
+        id: payload.id,
+        filename: payload.filename || 'download',
+        url: payload.url || '',
+        totalBytes: Number(payload.totalBytes) || 0,
+        receivedBytes: 0,
+        state: 'pending',
+      })
+    })
+
+    ipc.on('browser:download:progress', (_event: any, payload: any) => {
+      const dl = downloads.value.find((d) => d.id === payload?.id)
+      if (!dl || dl.state === 'pending') return
+      dl.receivedBytes = Number(payload.receivedBytes) || 0
+      if (Number(payload.totalBytes) > 0) dl.totalBytes = Number(payload.totalBytes)
+    })
+
+    ipc.on('browser:download:done', (_event: any, payload: any) => {
+      const dl = downloads.value.find((d) => d.id === payload?.id)
+      if (!dl) return
+      if (dl.state === 'cancelled') return
+      dl.state = payload?.state === 'completed' ? 'completed' : payload?.state === 'cancelled' ? 'cancelled' : 'interrupted'
+      if (payload?.savePath) dl.savePath = payload.savePath
+    })
+  }
+
+  function dismissDownload(id: string) {
+    const idx = downloads.value.findIndex((d) => d.id === id)
+    if (idx !== -1) downloads.value.splice(idx, 1)
+  }
+
+  return {
+    panelOpen,
+    panelWidthPct,
+    aiControlEnabled,
+    tabs,
+    activeTabId,
+    activeTab,
+    downloads,
+    pendingDownloads,
+    newTab,
+    closeTab,
+    selectTab,
+    updateTab,
+    openPanel,
+    closePanel,
+    togglePanel,
+    setPanelWidthPct,
+    setAiControlEnabled,
+    respondToDownload,
+    dismissDownload,
+    wireIpcEvents,
+  }
+})

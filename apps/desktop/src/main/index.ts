@@ -64,6 +64,7 @@ import { registerRepositoryIpc } from './ipc/repository'
 import { registerSkillsIpc } from './ipc/skills'
 import { registerPendingPluginsIpc } from './ipc/pending-plugins'
 import { registerWechatIpc, autoResumeBot as autoResumeWechatBot } from './ipc/wechat'
+import { registerBrowserIpc, isAllowedBrowserUrl, BROWSER_PARTITION } from './ipc/browser'
 import { startWsServer } from './ws-server'
 import { mainLogger } from './logger'
 
@@ -416,10 +417,27 @@ function createWindow(forcedMode?: WindowMode): void {
       // renderer. The sandbox would block require() in the preload layer.
       sandbox: false,
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      // Embedded browser panel uses <webview> tags (see BrowserPanel.vue).
+      webviewTag: true
     }
   })
   mainWindow = createdWindow
+
+  // Lock down every <webview> the renderer attaches: sandboxed guest, no
+  // node, no preload, http(s) only, and only our persistent browser session.
+  createdWindow.webContents.on('will-attach-webview', (event: any, webPreferences: any, params: any) => {
+    delete webPreferences.preload
+    delete webPreferences.preloadURL
+    webPreferences.nodeIntegration = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+    const src = String(params.src || '')
+    const srcAllowed = src === '' || src === 'about:blank' || isAllowedBrowserUrl(src)
+    if (!srcAllowed || params.partition !== BROWSER_PARTITION) {
+      event.preventDefault()
+    }
+  })
   currentWindowFrameless = shouldUseFramelessWindow(mode)
 
   if (isDev) {
@@ -626,6 +644,7 @@ app.whenReady().then(() => {
   registerSkillsIpc()
   registerPendingPluginsIpc()
   registerWechatIpc()
+  registerBrowserIpc()
   startWsServer().catch((err) => mainLogger.error({ err }, 'ws-server failed to start'))
   autoResumeWechatBot().catch((err) => mainLogger.warn({ err }, 'wechat auto-resume failed'))
 

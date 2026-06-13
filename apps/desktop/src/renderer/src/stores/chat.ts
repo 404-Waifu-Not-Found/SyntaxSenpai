@@ -454,6 +454,7 @@ Tool selection — use the dedicated tool, not a shell workaround:
 ${webSearchLine}
 - rename_chat → name the current conversation so the sidebar is useful. Call it once after the user's first message (pick a short, specific title — you are allowed personality) and again whenever the topic clearly shifts. Don't repeat-call it for the same topic.
 - render_card → display structured information as a rich inline visual card. Use ONLY for: current weather (type="weather"), tabular data with 3+ rows (type="table"), link previews with title+description+site (type="link_preview"), or before/after code diffs (type="code_comparison"). Do NOT use for prose, jokes, single values, greetings, or simple factual sentences. Call it BEFORE stop_response; the card appears alongside your final_message automatically, so don't also describe the same numbers in words.${shellLine}
+- browser_tabs → when asked to open the same page multiple times, call action="new" once with url and count (up to 20). Do not open duplicate tabs one by one.
 
 Realtime / live data — decision tree:
 1. If \`terminal\` is available → use it against a public API (see recipes below). This is the only correct way to get weather, time, stock, sports, or price data.
@@ -484,12 +485,13 @@ Anti-loop rules (CRITICAL — violating these wastes the user's tokens):
 Workflow for non-trivial tasks:
 1. If the task has more than ~2 steps, write a one-line plan in your thinking before calling any tool. Revise it if a step fails.
 2. Gather before you act. Read files / list dirs / check versions before editing or installing.
-3. Do one thing at a time. Don't batch unrelated commands in one \`&&\` chain — errors get buried.
+3. Parallelize independent work. When several terminal commands, reads, searches, or fetches do not depend on each other's results, emit all of those tool calls in the SAME reply; the runtime executes up to 8 at once. For example, opening the same requested URL in 10 tabs should be requested as 10 terminal calls in one reply, not one call per model round-trip. Keep dependent actions sequential, and don't hide unrelated commands in one \`&&\` chain.
 4. Read the tool result. If stderr is non-empty or the exit code is non-zero, DIAGNOSE before retrying. Never rerun the exact same failed command hoping it works.
 5. On failure: try once with a real fix. If it still fails, explain the blocker instead of looping.
 6. Verify before stopping. Confirm the file reads back correctly, the test passes, the process is up, etc. Only then call stop_response.
 
 Efficiency rules:
+- Prefer one parallel batch of independent tool calls over repeated model round-trips. Never parallelize actions whose order matters or that edit the same state.
 - Don't re-read a file you already have in context unless you just wrote to it.
 - Don't paste huge outputs back at the user — summarize.
 - Don't apologize in tool-calling turns; just fix the problem.
@@ -1940,6 +1942,7 @@ export const useChatStore = defineStore('chat', () => {
           cachedSystemPrompt,
           cacheBreakpointIndex: turnHistory.findIndex((m: any) => m.role === 'user'),
           maxIterations: effectiveMaxToolIterations.value,
+          maxParallelTools: agentMode.value === 'ask' ? 1 : 8,
           abortSignal: streamController.value?.signal,
           onIteration: () => { beginNextBubble() },
           onAssistantTextDelta: (delta) => {
@@ -2967,6 +2970,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
               cachedSystemPrompt,
               cacheBreakpointIndex: aiHistory.findIndex((m: any) => m.role === 'user'),
               maxIterations,
+              maxParallelTools: agentMode.value === 'ask' ? 1 : 8,
               abortSignal: streamController.value?.signal,
               onAssistantIterationStart: () => {
                 liveText = ''
@@ -3678,6 +3682,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           cachedSystemPrompt,
           cacheBreakpointIndex: aiHistory.findIndex((m: any) => m.role === 'user'),
           maxIterations,
+          maxParallelTools: agentMode.value === 'ask' ? 1 : 8,
           abortSignal: streamController.value?.signal,
           onAssistantIterationStart: () => {
             finalizeLiveBubble()

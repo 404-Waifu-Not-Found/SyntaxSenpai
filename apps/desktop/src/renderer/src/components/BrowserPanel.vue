@@ -12,6 +12,26 @@ import {
 const browser = useBrowserStore()
 browser.wireIpcEvents()
 
+type AgentCursorState = 'moving' | 'clicking' | 'typing' | 'loading' | 'hidden'
+const agentCursor = ref({ x: 48, y: 42, state: 'hidden' as AgentCursorState, visible: false })
+let agentCursorHideTimer: ReturnType<typeof setTimeout> | null = null
+
+function onAgentCursor(event: Event) {
+  const detail = (event as CustomEvent).detail || {}
+  if (agentCursorHideTimer) clearTimeout(agentCursorHideTimer)
+  agentCursor.value = {
+    x: Number.isFinite(detail.x) ? detail.x : agentCursor.value.x,
+    y: Number.isFinite(detail.y) ? detail.y : agentCursor.value.y,
+    state: detail.state || 'moving',
+    visible: detail.state !== 'hidden',
+  }
+  if (detail.state !== 'loading') {
+    agentCursorHideTimer = setTimeout(() => {
+      agentCursor.value.visible = false
+    }, 1800)
+  }
+}
+
 // ── Tab state persistence ──────────────────────────────────────────────────
 // Auto-save tab state whenever tabs or active tab changes (debounced).
 let saveTimer: ReturnType<typeof setTimeout> | null = null
@@ -31,6 +51,7 @@ watch(
 
 // Restore saved tabs on mount
 onMounted(() => {
+  window.addEventListener('syntax-senpai:browser-cursor', onAgentCursor)
   // Small delay to ensure the component is fully rendered before restoring webviews
   setTimeout(() => browser.restoreSavedTabs(), 100)
 })
@@ -172,6 +193,8 @@ function startDrag(e: MouseEvent) {
 }
 
 onBeforeUnmount(() => {
+  window.removeEventListener('syntax-senpai:browser-cursor', onAgentCursor)
+  if (agentCursorHideTimer) clearTimeout(agentCursorHideTimer)
   for (const id of wiredTabs) unregisterWebview(id)
 })
 
@@ -292,6 +315,21 @@ function formatBytes(n: number): string {
         :style="{ visibility: tab.id === browser.activeTabId ? 'visible' : 'hidden' }"
       />
       <div
+        class="ai-browser-cursor"
+        :class="[
+          `ai-browser-cursor--${agentCursor.state}`,
+          { 'ai-browser-cursor--visible': agentCursor.visible },
+        ]"
+        :style="{ transform: `translate3d(${agentCursor.x}px, ${agentCursor.y}px, 0)` }"
+        aria-hidden="true"
+      >
+        <div class="ai-browser-cursor__pointer">
+          <span class="ai-browser-cursor__core" />
+        </div>
+        <span class="ai-browser-cursor__label">AI</span>
+        <span class="ai-browser-cursor__ring" />
+      </div>
+      <div
         v-if="browser.tabs.length === 0"
         class="absolute inset-0 flex items-center justify-center text-neutral-500 text-sm bg-neutral-950"
       >
@@ -330,3 +368,143 @@ function formatBytes(n: number): string {
     </div>
   </div>
 </template>
+
+<style scoped>
+.ai-browser-cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 40;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    transform 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 160ms ease;
+  will-change: transform, opacity;
+}
+
+.ai-browser-cursor--visible {
+  opacity: 1;
+}
+
+.ai-browser-cursor__pointer {
+  position: absolute;
+  left: -10px;
+  top: -10px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  border-radius: 999px;
+  background: rgba(17, 17, 20, 0.9);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.ai-browser-cursor__core {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #f472b6;
+  box-shadow: 0 0 12px rgba(244, 114, 182, 0.72);
+}
+
+.ai-browser-cursor__label {
+  position: absolute;
+  left: 12px;
+  top: 11px;
+  min-width: 28px;
+  padding: 4px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9px;
+  background: rgba(17, 17, 20, 0.9);
+  color: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-align: center;
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+}
+
+.ai-browser-cursor__ring {
+  position: absolute;
+  left: -17px;
+  top: -17px;
+  width: 34px;
+  height: 34px;
+  border: 1.5px solid rgba(244, 114, 182, 0.72);
+  border-radius: 999px;
+  opacity: 0;
+  transform: scale(0.5);
+}
+
+.ai-browser-cursor--clicking .ai-browser-cursor__pointer {
+  transform: scale(0.82);
+}
+
+.ai-browser-cursor--clicking .ai-browser-cursor__ring {
+  animation: ai-cursor-click 520ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ai-browser-cursor--typing .ai-browser-cursor__pointer {
+  animation: ai-cursor-type 680ms ease-in-out infinite;
+}
+
+.ai-browser-cursor--typing .ai-browser-cursor__label::after {
+  content: ' typing';
+  color: #f9a8d4;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.ai-browser-cursor--loading .ai-browser-cursor__ring {
+  opacity: 1;
+  border-color: transparent;
+  border-top-color: #f472b6;
+  border-right-color: rgba(244, 114, 182, 0.32);
+  animation: ai-cursor-orbit 760ms linear infinite;
+}
+
+.ai-browser-cursor--loading .ai-browser-cursor__label::after {
+  content: ' navigating';
+  color: #f9a8d4;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+@keyframes ai-cursor-click {
+  0% { opacity: 0.9; transform: scale(0.45); }
+  100% { opacity: 0; transform: scale(1.65); }
+}
+
+@keyframes ai-cursor-type {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(0.88); }
+}
+
+@keyframes ai-cursor-orbit {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-browser-cursor {
+    transition: opacity 100ms linear;
+  }
+
+  .ai-browser-cursor__pointer,
+  .ai-browser-cursor__ring {
+    animation: none !important;
+    transition: none;
+  }
+}
+</style>

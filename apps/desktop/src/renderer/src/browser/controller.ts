@@ -5,12 +5,14 @@
 
 import {
   buildSnapshotScript,
+  buildTargetRectScript,
   buildClickScript,
   buildTypeScript,
   buildScrollScript,
   buildReadScript,
   READ_PAGE_CHUNK,
   type RawSnapshot,
+  type AgentTargetRect,
 } from './snapshot-script'
 import { formatSnapshot } from './snapshot-format'
 
@@ -131,6 +133,26 @@ async function executeInPage(wv: WebviewElement, script: string): Promise<any> {
   }
 }
 
+type AgentCursorState = 'moving' | 'clicking' | 'typing' | 'loading' | 'hidden'
+
+function emitAgentCursor(state: AgentCursorState, position?: Partial<AgentTargetRect>) {
+  window.dispatchEvent(new CustomEvent('syntax-senpai:browser-cursor', {
+    detail: { state, ...position },
+  }))
+}
+
+async function pointAtRef(wv: WebviewElement, ref: string, state: 'clicking' | 'typing') {
+  const target = await executeInPage(wv, buildTargetRectScript(ref))
+  if (target?.error === 'stale_ref') {
+    throw new Error(`Ref ${ref} is stale (the page changed). Take a new browser_snapshot and use fresh refs.`)
+  }
+  if (target?.error) return
+  emitAgentCursor('moving', target)
+  await new Promise((resolve) => setTimeout(resolve, 420))
+  emitAgentCursor(state, target)
+  await new Promise((resolve) => setTimeout(resolve, 140))
+}
+
 export async function snapshot(tabId?: string): Promise<string> {
   const wv = requireWebview(tabId)
   const raw = (await executeInPage(wv, buildSnapshotScript())) as RawSnapshot | { error: string }
@@ -145,6 +167,7 @@ export async function navigate(url: string, tabId?: string): Promise<{ url: stri
     throw new Error(`Blocked: only http(s) URLs are allowed in the embedded browser (got "${url}").`)
   }
   const wv = requireWebview(tabId)
+  emitAgentCursor('loading', { x: 48, y: 42 })
   try {
     await wv.loadURL(url)
   } catch {
@@ -152,12 +175,14 @@ export async function navigate(url: string, tabId?: string): Promise<{ url: stri
     // below still reflect the real outcome.
   }
   await waitForSettle(wv)
+  emitAgentCursor('moving', { x: 48, y: 42 })
   return { url: wv.getURL(), title: wv.getTitle() }
 }
 
 export async function click(ref: string, tabId?: string): Promise<{ summary: string; snapshotText: string }> {
   const wv = requireWebview(tabId)
   const before = wv.getURL()
+  await pointAtRef(wv, ref, 'clicking')
   const result = await executeInPage(wv, buildClickScript(ref))
   if (result?.error === 'stale_ref') {
     throw new Error(`Ref ${ref} is stale (the page changed). Take a new browser_snapshot and use fresh refs.`)
@@ -165,8 +190,10 @@ export async function click(ref: string, tabId?: string): Promise<{ summary: str
   if (result?.error && result.error !== 'context_destroyed') {
     throw new Error(`Click on ${ref} failed: ${result.message || result.error}`)
   }
+  emitAgentCursor('loading')
   await waitForSettle(wv)
   const after = wv.getURL()
+  emitAgentCursor('moving')
   const summary = after !== before
     ? `Clicked [${ref}] — navigated to ${after}`
     : `Clicked [${ref}].`
@@ -179,6 +206,7 @@ export async function type(
   opts: { submit?: boolean; clear?: boolean } = {},
 ): Promise<{ summary: string; snapshotText: string }> {
   const wv = requireWebview()
+  await pointAtRef(wv, ref, 'typing')
   const result = await executeInPage(wv, buildTypeScript(ref, text, opts.clear !== false))
   if (result?.error === 'stale_ref') {
     throw new Error(`Ref ${ref} is stale (the page changed). Take a new browser_snapshot and use fresh refs.`)
@@ -198,8 +226,10 @@ export async function type(
     wv.sendInputEvent({ type: 'char', keyCode: 'Return' })
     wv.sendInputEvent({ type: 'keyUp', keyCode: 'Return' })
     summary = `Typed into [${ref}] and pressed Enter.`
+    emitAgentCursor('loading')
   }
   await waitForSettle(wv)
+  emitAgentCursor('moving')
   return { summary, snapshotText: await snapshot() }
 }
 

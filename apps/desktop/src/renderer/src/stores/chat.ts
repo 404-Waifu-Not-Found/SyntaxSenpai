@@ -4159,6 +4159,135 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     }
   }
 
+  /**
+   * Compaction: send the current conversation to the AI for summarization,
+   * then replace the chat history with the compacted summary.
+   * This reduces context window usage while preserving key decisions and state.
+   */
+  async function compactContext() {
+    if (isLoading.value) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Chat is currently loading — wait for the current response to finish first.', type: 'warning' } }))
+      return
+    }
+    if (messages.value.length < 4) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Conversation is too short to compact.', type: 'warning' } }))
+      return
+    }
+
+    const key = await keyManager.getKey(selectedProvider.value)
+    const providerConfig = getProviderConfig(selectedProvider.value, key)
+    if (providerRequiresApiKey(selectedProvider.value) && (!providerConfig.apiKey || providerConfig.apiKey === '')) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'No API key configured.', type: 'error' } }))
+      return
+    }
+
+    const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
+    const waifu = selectedWaifu.value
+
+    let cachedSystemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, affection.value)
+    cachedSystemPrompt += formatSkillsForPrompt(availableSkills.value)
+
+    // Build a compact summarization system prompt
+    const compactSystemPrompt = [
+      'You are a context compaction assistant. Review the entire conversation below and produce a concise structured summary.',
+      '',
+      '## Format Requirements',
+      'Write in the waifu\'s character voice if present, otherwise write in a neutral assistant tone.',
+      '',
+      '## Structure Your Summary As:',
+      '1. **Task Overview** — What the user\'s core goal / request was',
+      '2. **Progress / Key Decisions** — What was accomplished, files changed, decisions made',
+      '3. **Important Context** — Technical constraints, preferences, discoveries, errors resolved',
+      '4. **Next Steps / State** — What needs to happen next, any open questions',
+      '5. **Preserved Details** — User preferences, environment details, domain-specific info',
+      '',
+      'Be thorough enough that the conversation can continue seamlessly from this summary.',
+      'DO NOT include meta-commentary about the compaction process itself.',
+      'Wrap the summary in <summary></summary> tags.',
+    ].join('\n')
+
+    const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    isLoading.value = true
+
+    try {
+      // Build AI-compatible message history (cast to any for the summarization pass)
+      const aiMessages = messages.value
+        .filter((m: any) => (m.role === 'user' || m.role === 'assistant') && !m.isProcessStep && !m.id.startsWith('tool-'))
+        .map((m: any) => ({
+          id: m.id || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          role: m.role,
+          content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+          createdAt: m.createdAt || new Date().toISOString(),
+        })) as any
+
+      const runtime = new AIChatRuntime({
+        provider: providerConfig,
+        model,
+        systemPrompt: compactSystemPrompt,
+        cachedSystemPrompt,
+      })
+
+      const response = await runtime.chatWithRetry({
+        model,
+        messages: aiMessages,
+        systemPrompt: compactSystemPrompt,
+        cachedSystemPrompt,
+        maxTokens: 4096,
+      })
+
+      // Extract summary from response
+      let summary = response.content || ''
+      // Strip <summary> tags if present
+      const summaryMatch = summary.match(/<summary>([\s\S]*?)<\/summary>/)
+      if (summaryMatch) {
+        summary = summaryMatch[1].trim()
+      }
+
+      if (!summary) {
+        window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Compaction produced an empty summary.', type: 'error' } }))
+        return
+      }
+
+      // Replace messages with the compacted version
+      // Keep only the last user message + this compaction summary
+      const lastUserMsg = [...messages.value].reverse().find((m: any) => m.role === 'user' && !m.isProcessStep && !m.id.startsWith('tool-'))
+      const compactedId = `compacted-${Date.now()}`
+      const compactedMsg: Message = {
+        id: compactedId,
+        role: 'assistant',
+        content: `📦 **Conversation Compacted** — earlier context summarized for efficiency.\n\n${summary}`,
+        timestamp: now(),
+      }
+
+      messages.value = [
+        ...(lastUserMsg ? [lastUserMsg] : []),
+        compactedMsg,
+      ]
+      recentMessageId.value = compactedId
+
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Conversation compacted successfully! Context window freed up. 📦', type: 'success' } }))
+
+      // Save to DB if conversation exists
+      const convId = conversationId.value
+      if (convId) {
+        try {
+          // Clear old messages and save the compacted ones
+          await invoke('store:clearMessages', convId)
+          for (const msg of messages.value) {
+            await invoke('store:addMessage', convId, msg)
+          }
+        } catch (e) {
+          console.warn('Failed to save compacted messages:', e)
+        }
+      }
+    } catch (err: any) {
+      chatLog.error('compaction failed', { message: err instanceof Error ? err.message : String(err) })
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: `Compaction failed: ${err instanceof Error ? err.message : String(err)}`, type: 'error' } }))
+    } finally {
+      isLoading.value = false
+    }
+  }
+
   function stopStream() {
     const ctrl = streamController.value
     if (!ctrl || ctrl.signal.aborted) return
@@ -4261,6 +4390,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     deleteConversation,
     renameConversation,
     toggleFavorite,
+    compactContext,
     loadMemories,
     setMemory,
     deleteMemory,

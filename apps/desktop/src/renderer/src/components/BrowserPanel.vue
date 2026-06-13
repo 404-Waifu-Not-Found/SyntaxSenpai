@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed, onBeforeUnmount } from 'vue'
+import { ref, watch, computed, onBeforeUnmount, onMounted } from 'vue'
 import { useBrowserStore, normalizeUrlInput, type BrowserTab } from '../stores/browser'
 import {
   registerWebview,
@@ -11,6 +11,29 @@ import {
 
 const browser = useBrowserStore()
 browser.wireIpcEvents()
+
+// ── Tab state persistence ──────────────────────────────────────────────────
+// Auto-save tab state whenever tabs or active tab changes (debounced).
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleSave() {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    browser.saveTabState()
+    saveTimer = null
+  }, 500)
+}
+// Watch tabs array structure (add/remove/reorder) and active tab
+watch(
+  [() => browser.tabs.map((t) => t.url + '|' + t.id), () => browser.activeTabId],
+  () => scheduleSave(),
+  { deep: true },
+)
+
+// Restore saved tabs on mount
+onMounted(() => {
+  // Small delay to ensure the component is fully rendered before restoring webviews
+  setTimeout(() => browser.restoreSavedTabs(), 100)
+})
 
 // ── webview lifecycle ────────────────────────────────────────────────────────
 // :src must stay the URL the tab was created with — rebinding it on every

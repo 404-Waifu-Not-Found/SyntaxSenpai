@@ -24,6 +24,8 @@ export interface BrowserDownload {
 
 const PANEL_WIDTH_KEY = 'syntax-senpai-browser-panel-width'
 const AI_CONTROL_KEY = 'syntax-senpai-browser-ai-control'
+const BROWSER_TABS_KEY = 'syntax-senpai-browser-tabs'
+const BROWSER_ACTIVE_TAB_KEY = 'syntax-senpai-browser-active-tab'
 
 export const DEFAULT_NEW_TAB_URL = 'about:blank'
 
@@ -168,6 +170,59 @@ export const useBrowserStore = defineStore('browser', () => {
     if (idx !== -1) downloads.value.splice(idx, 1)
   }
 
+  // ── Tab state persistence ──────────────────────────────────────────────────
+  /** Save current tab URLs and active tab to localStorage so they survive restart. */
+  function saveTabState() {
+    try {
+      const urls = tabs.value.map((t) => t.url)
+      localStorage.setItem(BROWSER_TABS_KEY, JSON.stringify(urls))
+      localStorage.setItem(BROWSER_ACTIVE_TAB_KEY, activeTabId.value)
+    } catch { /* localStorage full or unavailable — best effort */ }
+  }
+
+  /** Load previously saved tab URLs from localStorage. */
+  function loadSavedTabUrls(): string[] {
+    try {
+      const raw = localStorage.getItem(BROWSER_TABS_KEY)
+      if (!raw) return []
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed.filter((u): u is string => typeof u === 'string') : []
+    } catch { return [] }
+  }
+
+  /** Load saved active tab id from localStorage. */
+  function loadSavedActiveTabId(): string {
+    try {
+      return localStorage.getItem(BROWSER_ACTIVE_TAB_KEY) || ''
+    } catch { return '' }
+  }
+
+  /** Re-create tabs from saved state. Call this on app mount after the panel is rendered. */
+  function restoreSavedTabs() {
+    const urls = loadSavedTabUrls()
+    const savedActiveId = loadSavedActiveTabId()
+    if (urls.length === 0) {
+      // No saved state — start with a fresh blank tab
+      if (tabs.value.length === 0) newTab()
+      return
+    }
+    // Clear any existing tabs (e.g. the default one created by openPanel)
+    tabs.value = []
+    activeTabId.value = ''
+    // Re-create tabs from saved URLs
+    for (const url of urls) {
+      newTab(url)
+    }
+    // Restore active tab
+    if (savedActiveId && tabs.value.some((t) => t.id === savedActiveId)) {
+      activeTabId.value = savedActiveId
+    }
+    // If panel was open, keep it open
+    if (urls.length > 0) {
+      panelOpen.value = true
+    }
+  }
+
   return {
     panelOpen,
     panelWidthPct,
@@ -189,5 +244,7 @@ export const useBrowserStore = defineStore('browser', () => {
     respondToDownload,
     dismissDownload,
     wireIpcEvents,
+    saveTabState,
+    restoreSavedTabs,
   }
 })

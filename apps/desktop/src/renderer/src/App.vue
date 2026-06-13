@@ -2324,6 +2324,51 @@ const startupAccentStyle = computed(() => {
 
 const showShortcuts = ref(false)
 
+// ── Slash-command overlay ───────────────────────────────────────────────────
+interface SlashCommand {
+  name: string
+  description: string
+  usage: string
+  category: 'chat' | 'code' | 'terminal' | 'system'
+}
+const SLASH_COMMANDS: SlashCommand[] = [
+  { name: '/setmeter', description: 'Set affection meter', usage: '/setmeter <0-100>', category: 'system' },
+  { name: '/code', description: 'Open code repository picker', usage: '/code', category: 'code' },
+  { name: '/endcode', description: 'Exit coding mode', usage: '/endcode', category: 'code' },
+  { name: '/clear', description: 'Clear current chat history', usage: '/clear', category: 'chat' },
+  { name: '/verify deletion', description: 'Confirm chat deletion', usage: '/verify deletion', category: 'chat' },
+  { name: '/cmd', description: 'Run a terminal command', usage: '/cmd <command>', category: 'terminal' },
+  { name: '/terminal', description: 'Run a terminal command', usage: '/terminal <command>', category: 'terminal' },
+  { name: '$', description: 'Quick terminal command shortcut', usage: '$ <command>', category: 'terminal' },
+]
+const showSlashMenu = ref(false)
+const slashMenuIndex = ref(0)
+const slashFilter = ref('')
+const slashMenuRef = ref<HTMLElement | null>(null)
+
+const filteredSlashCommands = computed(() => {
+  const q = slashFilter.value.toLowerCase()
+  if (!q) return SLASH_COMMANDS
+  return SLASH_COMMANDS.filter((cmd) => cmd.name.toLowerCase().includes(q) || cmd.description.toLowerCase().includes(q))
+})
+
+function openSlashMenu() {
+  showSlashMenu.value = true
+  slashMenuIndex.value = 0
+  slashFilter.value = store.inputValue.slice(1) // after "/"
+}
+
+function closeSlashMenu() {
+  showSlashMenu.value = false
+  slashFilter.value = ''
+}
+
+function applySlashCommand(cmd: SlashCommand) {
+  store.inputValue = cmd.usage
+  closeSlashMenu()
+  inputRef.value?.focus()
+}
+
 function onAppError(e: Event) {
   const detail = (e as CustomEvent).detail
   const msg = typeof detail === 'string' ? detail : 'Unexpected error'
@@ -2519,6 +2564,30 @@ watch(() => store.messages.length, () => {
   })
 })
 
+// Watch input value for slash-command overlay — show when "/" is at position 0
+// and the previous non-empty word wasn't part of a command already.
+watch(() => store.inputValue, (val) => {
+  const trimmed = val.trimStart()
+  if (trimmed.startsWith('/') && !showSlashMenu.value) {
+    // Only show if "/" is at absolute position 0 or preceded only by whitespace
+    const firstCharIdx = val.indexOf(val.trimStart())
+    if (firstCharIdx === 0) {
+      openSlashMenu()
+    }
+  }
+  // Update filter as user types more after "/"
+  if (showSlashMenu.value) {
+    const afterSlash = store.inputValue.slice(1).split(/\s+/)[0] || ''
+    slashFilter.value = afterSlash
+    // Reset selection index when filter changes
+    slashMenuIndex.value = 0
+    // Close if input no longer starts with "/"
+    if (!store.inputValue.trimStart().startsWith('/')) {
+      closeSlashMenu()
+    }
+  }
+})
+
 watch(
   () => store.selectedProvider,
   async (provider, previousProvider) => {
@@ -2609,8 +2678,43 @@ function adjustInputHeight() {
 }
 
 function handleKeyDown(e: KeyboardEvent) {
+  // Slash menu active — keyboard navigation
+  if (showSlashMenu.value) {
+    if (e.key === 'Escape') {
+      closeSlashMenu()
+      e.preventDefault()
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      slashMenuIndex.value = (slashMenuIndex.value + 1) % filteredSlashCommands.value.length
+      e.preventDefault()
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      slashMenuIndex.value = (slashMenuIndex.value - 1 + filteredSlashCommands.value.length) % filteredSlashCommands.value.length
+      e.preventDefault()
+      return
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault()
+      const cmd = filteredSlashCommands.value[slashMenuIndex.value]
+      if (cmd) applySlashCommand(cmd)
+      return
+    }
+    // Close on backspace when filter is empty (only "/" left)
+    if (e.key === 'Backspace' && !slashFilter.value) {
+      closeSlashMenu()
+      return
+    }
+  }
+
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
+    if (showSlashMenu.value) {
+      const cmd = filteredSlashCommands.value[slashMenuIndex.value]
+      if (cmd) applySlashCommand(cmd)
+      return
+    }
     store.sendMessage(store.inputValue)
   }
 }
@@ -6386,24 +6490,79 @@ async function handleImportData() {
           >
             📎
           </button>
-          <textarea
-            id="chat-input"
-            ref="inputRef"
-            v-model="store.inputValue"
-            :placeholder="t('chat.inputPlaceholder')"
-            :aria-label="t('chat.inputPlaceholder')"
-            :disabled="store.isLoading"
-            rows="1"
-            :class="[
-              compactChatLayout ? 'compact-chat-input input-field flex-1 min-w-[12rem] resize-none text-sm leading-5 py-2.5' : 'input-field flex-1 resize-none',
-              'disabled:opacity-50',
-            ]"
-            style="max-height: 100px"
-            :style="inputSurfaceStyle"
-            @input="adjustInputHeight"
-            @keydown="handleKeyDown"
-            @paste="handlePaste"
-          />
+          <div class="relative flex-1 min-w-[12rem]">
+            <!-- Slash-command overlay -->
+            <div
+              v-if="showSlashMenu && filteredSlashCommands.length > 0"
+              ref="slashMenuRef"
+              class="absolute bottom-full left-0 right-0 mb-1 z-30 overflow-hidden rounded-xl border border-white/10 bg-neutral-900/95 backdrop-blur-xl shadow-2xl"
+            >
+              <!-- Header -->
+              <div class="flex items-center gap-2 px-3 py-2 border-b border-white/5">
+                <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-500">Commands</span>
+                <span v-if="slashFilter" class="text-[10px] font-mono text-primary-400">filter: /{{ slashFilter }}</span>
+                <span class="ml-auto text-[10px] text-neutral-500">
+                  <kbd class="px-1 py-0.5 rounded bg-white/10 text-[9px] font-mono">↑↓</kbd> navigate
+                  <kbd class="px-1 py-0.5 rounded bg-white/10 text-[9px] font-mono">⏎</kbd> select
+                  <kbd class="px-1 py-0.5 rounded bg-white/10 text-[9px] font-mono">Esc</kbd> close
+                </span>
+              </div>
+              <!-- Command list -->
+              <div class="max-h-48 overflow-y-auto py-1">
+                <button
+                  v-for="(cmd, idx) in filteredSlashCommands"
+                  :key="cmd.name"
+                  :class="[
+                    'w-full flex items-start gap-3 px-3 py-2 text-left transition-colors duration-100',
+                    idx === slashMenuIndex
+                      ? 'bg-primary-500/15 text-white'
+                      : 'text-neutral-300 hover:bg-white/5',
+                  ]"
+                  @click="applySlashCommand(cmd)"
+                  @mouseenter="slashMenuIndex = idx"
+                >
+                  <!-- Category badge -->
+                  <span
+                    class="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+                    :class="{
+                      'bg-amber-500/20 text-amber-300': cmd.category === 'chat',
+                      'bg-emerald-500/20 text-emerald-300': cmd.category === 'code',
+                      'bg-cyan-500/20 text-cyan-300': cmd.category === 'terminal',
+                      'bg-violet-500/20 text-violet-300': cmd.category === 'system',
+                    }"
+                  >
+                    {{ cmd.category }}
+                  </span>
+                  <div class="min-w-0 flex-1">
+                    <div class="text-sm font-semibold font-mono">{{ cmd.name }}</div>
+                    <div class="text-[11px] text-neutral-400">{{ cmd.description }}</div>
+                    <div class="text-[10px] text-neutral-500 font-mono mt-0.5">{{ cmd.usage }}</div>
+                  </div>
+                </button>
+              </div>
+              <div v-if="filteredSlashCommands.length === 0" class="px-3 py-4 text-center text-xs text-neutral-500">
+                No matching commands for <span class="font-mono text-neutral-400">/{{ slashFilter }}</span>
+              </div>
+            </div>
+            <textarea
+              id="chat-input"
+              ref="inputRef"
+              v-model="store.inputValue"
+              :placeholder="t('chat.inputPlaceholder')"
+              :aria-label="t('chat.inputPlaceholder')"
+              :disabled="store.isLoading"
+              rows="1"
+              :class="[
+                compactChatLayout ? 'compact-chat-input input-field w-full resize-none text-sm leading-5 py-2.5' : 'input-field w-full resize-none',
+                'disabled:opacity-50',
+              ]"
+              style="max-height: 100px"
+              :style="inputSurfaceStyle"
+              @input="adjustInputHeight"
+              @keydown="handleKeyDown"
+              @paste="handlePaste"
+            />
+          </div>
           <button
             v-if="store.isLoading"
             :class="[
@@ -6938,5 +7097,23 @@ async function handleImportData() {
 .compact-status-collapse-btn:hover {
   background: rgba(255, 255, 255, 0.08);
   color: #fff;
+}
+
+/* Slash-command overlay: smooth entrance / exit */
+.slash-menu-enter-active {
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.slash-menu-leave-active {
+  transition: opacity 80ms ease, transform 80ms ease;
+}
+.slash-menu-enter-from,
+.slash-menu-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+/* Command list item hover highlight transitions */
+.slash-menu-item {
+  transition: background-color 80ms ease, color 80ms ease;
 }
 </style>

@@ -2335,7 +2335,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/setmeter', description: 'Set affection meter', usage: '/setmeter <0-100>', category: 'system' },
   { name: '/code', description: 'Open code repository picker', usage: '/code', category: 'code' },
   { name: '/endcode', description: 'Exit coding mode', usage: '/endcode', category: 'code' },
-  { name: '/compact', description: 'Toggle compact overlay window mode', usage: '/compact', category: 'system' },
+  { name: '/compact', description: 'Compact conversation context via AI summarization', usage: '/compact', category: 'system' },
   { name: '/clear', description: 'Clear current chat history', usage: '/clear', category: 'chat' },
   { name: '/verify deletion', description: 'Confirm chat deletion', usage: '/verify deletion', category: 'chat' },
   { name: '/cmd', description: 'Run a terminal command', usage: '/cmd <command>', category: 'terminal' },
@@ -2368,7 +2368,7 @@ function applySlashCommand(cmd: SlashCommand) {
   // Commands that perform an immediate action rather than filling the textarea
   if (cmd.name === '/compact') {
     closeSlashMenu()
-    toggleOverlayWindowMode()
+    store.compactContext()
     return
   }
   store.inputValue = cmd.usage
@@ -2388,6 +2388,10 @@ function onAppRetry(e: Event) {
 function onAppMilestone(e: Event) {
   const detail = (e as CustomEvent).detail
   if (typeof detail === 'string' && detail) showToast(detail, 'success')
+}
+function onAppToast(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail && detail.message) showToast(detail.message, detail.type || 'info')
 }
 function onAppMemoryUpdated(e: Event) {
   const detail = (e as CustomEvent).detail as {
@@ -2525,6 +2529,7 @@ onMounted(() => {
   window.addEventListener('app:memory-updated', onAppMemoryUpdated as EventListener)
   window.addEventListener('app:skill-created', onAppSkillCreated as EventListener)
   window.addEventListener('app:tool-proposed', onAppToolProposed as EventListener)
+  window.addEventListener('app-toast', onAppToast as EventListener)
   on('skills:import-progress', (msg: string) => {
     if (skillImporting.value) skillImportStatus.value = msg
   })
@@ -2554,6 +2559,7 @@ onUnmounted(() => {
   window.removeEventListener('app:memory-updated', onAppMemoryUpdated as EventListener)
   window.removeEventListener('app:skill-created', onAppSkillCreated as EventListener)
   window.removeEventListener('app:tool-proposed', onAppToolProposed as EventListener)
+  window.removeEventListener('app-toast', onAppToast as EventListener)
   window.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('pointerdown', onGlobalPointerDown)
   window.removeEventListener('pointermove', updateLive2DPanelPointer)

@@ -2335,6 +2335,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/setmeter', description: 'Set affection meter', usage: '/setmeter <0-100>', category: 'system' },
   { name: '/code', description: 'Open code repository picker', usage: '/code', category: 'code' },
   { name: '/endcode', description: 'Exit coding mode', usage: '/endcode', category: 'code' },
+  { name: '/compact', description: 'Toggle compact overlay window mode', usage: '/compact', category: 'system' },
   { name: '/clear', description: 'Clear current chat history', usage: '/clear', category: 'chat' },
   { name: '/verify deletion', description: 'Confirm chat deletion', usage: '/verify deletion', category: 'chat' },
   { name: '/cmd', description: 'Run a terminal command', usage: '/cmd <command>', category: 'terminal' },
@@ -2364,6 +2365,12 @@ function closeSlashMenu() {
 }
 
 function applySlashCommand(cmd: SlashCommand) {
+  // Commands that perform an immediate action rather than filling the textarea
+  if (cmd.name === '/compact') {
+    closeSlashMenu()
+    toggleOverlayWindowMode()
+    return
+  }
   store.inputValue = cmd.usage
   closeSlashMenu()
   inputRef.value?.focus()

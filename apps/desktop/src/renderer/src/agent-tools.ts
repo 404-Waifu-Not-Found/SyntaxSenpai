@@ -48,10 +48,12 @@ export const BROWSER_SCREENSHOT_TOOL_NAME = 'browser_screenshot'
 export const BROWSER_TOOLS = new Set<string>([
   'browser_navigate',
   'browser_snapshot',
+  'browser_act',
   'browser_click',
   'browser_type',
   'browser_scroll',
   'browser_history',
+  'browser_wait',
   'browser_read_page',
   'browser_tabs',
   BROWSER_SCREENSHOT_TOOL_NAME,
@@ -475,6 +477,37 @@ export const agentTools: ToolDefinition[] = [
     parameters: { type: 'object', properties: {}, required: [] },
   },
   {
+    name: 'browser_act',
+    description:
+      'Run several browser steps in ONE call, back-to-back, returning a single snapshot of the final page. Use this whenever you can predict the next few moves from the current snapshot — it is much faster than one tool call per step because it skips the model round-trip between steps. Each step is {action, ...}: navigate {url}, click {ref}, type {ref,text,submit?,clear?}, scroll {direction,pages?,ref?}, history {direction}, wait {seconds,until_text?}. Refs come from the latest snapshot; if a step navigates to a new page, refs from before that step are stale, so only chain ref-based steps that stay on the same page (e.g. fill a form then submit). Stops at the first failing step and returns progress + a snapshot so you can recover. Max 8 steps.',
+    parameters: {
+      type: 'object',
+      properties: {
+        steps: {
+          type: 'array',
+          description: 'Ordered list of steps to execute (max 8).',
+          items: {
+            type: 'object',
+            properties: {
+              action: { type: 'string', enum: ['navigate', 'click', 'type', 'scroll', 'history', 'wait'] },
+              url: { type: 'string', description: 'For navigate: full http(s) URL.' },
+              ref: { type: 'string', description: 'For click/type/scroll: element ref from the latest snapshot.' },
+              text: { type: 'string', description: 'For type: the text to enter.' },
+              submit: { type: 'boolean', description: 'For type: press Enter afterwards.' },
+              clear: { type: 'boolean', description: 'For type: clear the field first (default true).' },
+              direction: { type: 'string', description: 'For scroll: up/down. For history: back/forward.' },
+              pages: { type: 'integer', description: 'For scroll: viewport-heights to scroll.' },
+              seconds: { type: 'number', description: 'For wait: seconds to pause (max 15).' },
+              until_text: { type: 'string', description: 'For wait: resolve early once this text appears on the page.' },
+            },
+            required: ['action'],
+          },
+        },
+      },
+      required: ['steps'],
+    },
+  },
+  {
     name: 'browser_click',
     description:
       'Click an element in the browser by its snapshot ref (e.g. "e3"). The element flashes a highlight so the user sees what you did. Returns a fresh snapshot reflecting the result (including any navigation).',
@@ -524,6 +557,19 @@ export const agentTools: ToolDefinition[] = [
         direction: { type: 'string', enum: ['back', 'forward'], description: 'History direction.' },
       },
       required: ['direction'],
+    },
+  },
+  {
+    name: 'browser_wait',
+    description:
+      'Pause before reading the page again — for content that loads after navigation (spinners, lazy lists, async results). Prefer until_text: it polls and returns as soon as that text appears, so you do not over-wait. Without until_text it sleeps for the given seconds. Returns a fresh snapshot. Max 15 seconds.',
+    parameters: {
+      type: 'object',
+      properties: {
+        seconds: { type: 'number', description: 'How long to wait (max 15). With until_text, this is the timeout.', default: 2 },
+        until_text: { type: 'string', description: 'Optional: resolve early as soon as this text appears on the page.' },
+      },
+      required: [],
     },
   },
   {
@@ -957,6 +1003,37 @@ async function executeBrowserTool(toolCall: ToolCall): Promise<string> {
 
       case 'browser_snapshot':
         return await browserController.snapshot()
+
+      case 'browser_act': {
+        browserStore.openPanel()
+        const steps = Array.isArray(args.steps) ? args.steps : []
+        if (steps.length === 0) return 'Error: browser_act needs a non-empty "steps" array.'
+        // If there is no tab yet but the first step navigates, open it first.
+        if (browserStore.tabs.length === 0) {
+          const first = steps[0] || {}
+          if (String(first.action) !== 'navigate' || !first.url) {
+            return 'Error: no browser tab is open. Make the first step a {action:"navigate", url:...}.'
+          }
+          // Open a blank tab and let the navigate step below do the single load.
+          const tab = browserStore.newTab()
+          if (!(await browserController.waitForWebview(tab.id))) {
+            return 'Error: the browser tab failed to open. Try again.'
+          }
+        }
+        const { summaries, snapshotText, stoppedAtStep } = await browserController.runSteps(steps)
+        const header = stoppedAtStep
+          ? `Ran ${stoppedAtStep} of ${steps.length} step(s):`
+          : `Ran ${summaries.length} step(s):`
+        const log = summaries.map((s, i) => `${i + 1}. ${s}`).join('\n')
+        return `${header}\n${log}${snapshotText ? `\n\n${snapshotText}` : ''}`
+      }
+
+      case 'browser_wait': {
+        const seconds = Math.max(0.1, Math.min(15, Number(args.seconds) || 2))
+        const summary = await browserController.waitFor(seconds, args.until_text ? String(args.until_text) : undefined)
+        const snap = await browserController.snapshot()
+        return `${summary}\n\n${snap}`
+      }
 
       case 'browser_click': {
         const { summary, snapshotText } = await browserController.click(String(args.ref || ''))

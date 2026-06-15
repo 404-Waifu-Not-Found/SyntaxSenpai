@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed, onBeforeUnmount, onMounted } from 'vue'
+import { ref, reactive, watch, computed, onBeforeUnmount, onMounted } from 'vue'
 import { useBrowserStore, normalizeUrlInput, type BrowserTab } from '../stores/browser'
 import {
   registerWebview,
@@ -49,12 +49,23 @@ watch(
   { deep: true },
 )
 
-// Restore saved tabs on mount
+// Restore saved tabs on first mount only. restoreSavedTabs() is idempotent per
+// launch, so re-opening the panel keeps live tabs instead of reloading them all.
 onMounted(() => {
   window.addEventListener('syntax-senpai:browser-cursor', onAgentCursor)
+  if (browser.hasRestored) return
   // Small delay to ensure the component is fully rendered before restoring webviews
   setTimeout(() => browser.restoreSavedTabs(), 100)
 })
+
+// ── lazy tab mounting ─────────────────────────────────────────────────────────
+// A <webview> is only created once its tab has been activated. A restored
+// session of N tabs therefore loads one Chromium guest (the active tab) instead
+// of N — the rest stay weightless until the user (or agent) selects them.
+const mountedTabs = reactive(new Set<string>())
+function ensureMounted(tabId: string) {
+  if (tabId) mountedTabs.add(tabId)
+}
 
 // ── webview lifecycle ────────────────────────────────────────────────────────
 // :src must stay the URL the tab was created with — rebinding it on every
@@ -114,6 +125,7 @@ watch(
       if (!ids.includes(known)) {
         wiredTabs.delete(known)
         initialSrcByTab.delete(known)
+        mountedTabs.delete(known)
         unregisterWebview(known)
       }
     }
@@ -122,7 +134,10 @@ watch(
 
 watch(
   () => browser.activeTabId,
-  (id) => setActiveTab(id),
+  (id) => {
+    ensureMounted(id)
+    setActiveTab(id)
+  },
   { immediate: true },
 )
 
@@ -301,19 +316,22 @@ function formatBytes(n: number): string {
       />
     </div>
 
-    <!-- Webviews (one per tab, kept alive) -->
+    <!-- Webviews: only mounted (ever-activated) tabs exist as guests; the rest
+         stay weightless until selected. Mounted-but-inactive tabs are hidden via
+         visibility (not display:none, which would force a reload). -->
     <div class="flex-1 relative min-h-0 bg-white">
-      <webview
-        v-for="tab in browser.tabs"
-        :key="tab.id"
-        :ref="(el: any) => onWebviewRef(tab.id, el)"
-        :data-tab-id="tab.id"
-        :src="initialSrcFor(tab)"
-        partition="persist:browser"
-        webpreferences="contextIsolation=yes,sandbox=yes"
-        class="absolute inset-0 w-full h-full"
-        :style="{ visibility: tab.id === browser.activeTabId ? 'visible' : 'hidden' }"
-      />
+      <template v-for="tab in browser.tabs" :key="tab.id">
+        <webview
+          v-if="mountedTabs.has(tab.id)"
+          :ref="(el: any) => onWebviewRef(tab.id, el)"
+          :data-tab-id="tab.id"
+          :src="initialSrcFor(tab)"
+          partition="persist:browser"
+          webpreferences="contextIsolation=yes,sandbox=yes"
+          class="absolute inset-0 w-full h-full"
+          :style="{ visibility: tab.id === browser.activeTabId ? 'visible' : 'hidden' }"
+        />
+      </template>
       <div
         class="ai-browser-cursor"
         :class="[

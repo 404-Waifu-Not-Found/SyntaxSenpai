@@ -95,31 +95,49 @@ function requireWebview(tabId?: string): WebviewElement {
 }
 
 /**
- * Resolve once the page settles after an action: either it never starts
- * loading (in-page interaction) or `did-stop-loading` fires. A short debounce
- * afterwards gives SPAs a beat to render.
+ * Resolve once the page settles after an action. Two cases:
+ *  - A navigation begins (`did-start-loading`) → wait for `did-stop-loading`,
+ *    then a short debounce so SPAs get a beat to render.
+ *  - No navigation begins (in-page interaction) → settle quickly once the probe
+ *    window passes and nothing is loading.
+ * The `did-start-loading` guard lets the in-page probe be aggressive without
+ * misfiring on slow click→navigate transitions: if a load starts during the
+ * probe window, we abandon the early settle and wait for the load to finish.
  */
-export function waitForSettle(wv: WebviewElement, timeoutMs = 6000): Promise<void> {
+export function waitForSettle(
+  wv: WebviewElement,
+  timeoutMs = 6000,
+  opts: { settleMs?: number; probeMs?: number } = {},
+): Promise<void> {
+  const settleMs = opts.settleMs ?? 250
+  const probeMs = opts.probeMs ?? 300
   return new Promise((resolve) => {
     let finished = false
+    let navigating = false
+    const cleanup = () => {
+      wv.removeEventListener('did-stop-loading', onStop)
+      wv.removeEventListener('did-start-loading', onStart)
+    }
     const done = () => {
       if (finished) return
       finished = true
-      wv.removeEventListener('did-stop-loading', onStop)
-      setTimeout(resolve, 300)
+      cleanup()
+      setTimeout(resolve, settleMs)
     }
     const onStop = () => done()
+    const onStart = () => { navigating = true }
     wv.addEventListener('did-stop-loading', onStop)
-    setTimeout(done, timeoutMs)
-    // If nothing is loading right now, give navigation a moment to start;
-    // if it still hasn't, treat the action as in-page and settle early.
+    wv.addEventListener('did-start-loading', onStart)
+    setTimeout(done, timeoutMs) // hard cap
+    // In-page probe: if no navigation has begun and nothing is loading, the
+    // action stayed on the page — settle without paying the full timeout.
     setTimeout(() => {
       try {
-        if (!finished && !wv.isLoading()) done()
+        if (!finished && !navigating && !wv.isLoading()) done()
       } catch {
         done()
       }
-    }, 700)
+    }, probeMs)
   })
 }
 
@@ -179,7 +197,12 @@ export async function navigate(url: string, tabId?: string): Promise<{ url: stri
   return { url: wv.getURL(), title: wv.getTitle() }
 }
 
-export async function click(ref: string, tabId?: string): Promise<{ summary: string; snapshotText: string }> {
+// ── action cores ──────────────────────────────────────────────────────────────
+// Each *Core performs the action and settles but does NOT snapshot. The public
+// wrappers append a snapshot for single-shot tool calls; runSteps() chains the
+// cores and snapshots once at the very end (no per-step round-trip).
+
+async function clickCore(ref: string, tabId?: string): Promise<string> {
   const wv = requireWebview(tabId)
   const before = wv.getURL()
   await pointAtRef(wv, ref, 'clicking')
@@ -197,14 +220,19 @@ export async function click(ref: string, tabId?: string): Promise<{ summary: str
   const summary = after !== before
     ? `Clicked [${ref}] — navigated to ${after}`
     : `Clicked [${ref}].`
+  return summary
+}
+
+export async function click(ref: string, tabId?: string): Promise<{ summary: string; snapshotText: string }> {
+  const summary = await clickCore(ref, tabId)
   return { summary, snapshotText: await snapshot(tabId) }
 }
 
-export async function type(
+async function typeCore(
   ref: string,
   text: string,
   opts: { submit?: boolean; clear?: boolean } = {},
-): Promise<{ summary: string; snapshotText: string }> {
+): Promise<string> {
   const wv = requireWebview()
   await pointAtRef(wv, ref, 'typing')
   const result = await executeInPage(wv, buildTypeScript(ref, text, opts.clear !== false))
@@ -230,7 +258,26 @@ export async function type(
   }
   await waitForSettle(wv)
   emitAgentCursor('moving')
+  return summary
+}
+
+export async function type(
+  ref: string,
+  text: string,
+  opts: { submit?: boolean; clear?: boolean } = {},
+): Promise<{ summary: string; snapshotText: string }> {
+  const summary = await typeCore(ref, text, opts)
   return { summary, snapshotText: await snapshot() }
+}
+
+async function scrollCore(direction: 'up' | 'down', pages = 1, ref?: string): Promise<string> {
+  const wv = requireWebview()
+  const result = await executeInPage(wv, buildScrollScript(direction, pages, ref))
+  if (result?.error === 'stale_ref') {
+    throw new Error(`Ref ${ref} is stale (the page changed). Take a new browser_snapshot and use fresh refs.`)
+  }
+  const pct = result?.scrollMax > 0 ? Math.round((result.scrollY / result.scrollMax) * 100) : 0
+  return ref ? `Scrolled [${ref}] into view.` : `Scrolled ${direction} — now at ${pct}% of page.`
 }
 
 export async function scroll(
@@ -238,29 +285,136 @@ export async function scroll(
   pages = 1,
   ref?: string,
 ): Promise<{ summary: string; snapshotText: string }> {
-  const wv = requireWebview()
-  const result = await executeInPage(wv, buildScrollScript(direction, pages, ref))
-  if (result?.error === 'stale_ref') {
-    throw new Error(`Ref ${ref} is stale (the page changed). Take a new browser_snapshot and use fresh refs.`)
-  }
-  const pct = result?.scrollMax > 0 ? Math.round((result.scrollY / result.scrollMax) * 100) : 0
-  const summary = ref
-    ? `Scrolled [${ref}] into view.`
-    : `Scrolled ${direction} — now at ${pct}% of page.`
+  const summary = await scrollCore(direction, pages, ref)
   return { summary, snapshotText: await snapshot() }
 }
 
-export async function history(direction: 'back' | 'forward'): Promise<{ summary: string; snapshotText: string }> {
+async function historyCore(direction: 'back' | 'forward'): Promise<string> {
   const wv = requireWebview()
   if (direction === 'back') {
-    if (!wv.canGoBack()) return { summary: 'Cannot go back — no earlier page in this tab.', snapshotText: '' }
+    if (!wv.canGoBack()) return 'Cannot go back — no earlier page in this tab.'
     wv.goBack()
   } else {
-    if (!wv.canGoForward()) return { summary: 'Cannot go forward — no later page in this tab.', snapshotText: '' }
+    if (!wv.canGoForward()) return 'Cannot go forward — no later page in this tab.'
     wv.goForward()
   }
   await waitForSettle(wv)
-  return { summary: `Went ${direction} to ${wv.getURL()}`, snapshotText: await snapshot() }
+  return `Went ${direction} to ${wv.getURL()}`
+}
+
+export async function history(direction: 'back' | 'forward'): Promise<{ summary: string; snapshotText: string }> {
+  const summary = await historyCore(direction)
+  // No snapshot when the navigation was a no-op (kept the old behaviour).
+  if (summary.startsWith('Cannot go')) return { summary, snapshotText: '' }
+  return { summary, snapshotText: await snapshot() }
+}
+
+/**
+ * Pause for a bounded duration. With `untilText`, poll the page and resolve as
+ * soon as that text appears (case-insensitive substring of visible text) — much
+ * better than a blind sleep for dynamic/lazy content. Returns a status line.
+ */
+export async function waitFor(seconds: number, untilText?: string): Promise<string> {
+  const wv = requireWebview()
+  const ms = Math.max(100, Math.min(15000, Math.round((Number(seconds) || 0) * 1000)))
+  const secStr = (ms / 1000).toFixed(ms % 1000 === 0 ? 0 : 1)
+  if (!untilText) {
+    await new Promise((r) => setTimeout(r, ms))
+    return `Waited ${secStr}s.`
+  }
+  const needle = String(untilText).toLowerCase()
+  const probe = `(() => { const t = (document.body && document.body.innerText) || ''; return t.toLowerCase().includes(${JSON.stringify(needle)}); })()`
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    const hit = await executeInPage(wv, probe)
+    if (hit === true) return `"${untilText}" appeared — done waiting.`
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  return `Timed out after ${secStr}s waiting for "${untilText}" (it never appeared).`
+}
+
+/** One step of a batched browser_act sequence. */
+export interface BrowserStep {
+  action: 'navigate' | 'click' | 'type' | 'scroll' | 'history' | 'wait'
+  url?: string
+  ref?: string
+  text?: string
+  submit?: boolean
+  clear?: boolean
+  direction?: 'up' | 'down' | 'back' | 'forward'
+  pages?: number
+  seconds?: number
+  until_text?: string
+}
+
+const MAX_BATCH_STEPS = 8
+
+/**
+ * Execute a planned sequence of steps back-to-back without an LLM round-trip
+ * between them — the agent "thinks ahead" once, then the renderer drives the
+ * page through every step, settling after each. Only the final page is
+ * snapshotted (intermediate snapshots would be wasted tokens the model never
+ * sees). Stops at the first failing step and returns progress + a snapshot so
+ * the model can recover from where it landed.
+ */
+export async function runSteps(
+  steps: BrowserStep[],
+): Promise<{ summaries: string[]; snapshotText: string; stoppedAtStep?: number }> {
+  if (!Array.isArray(steps) || steps.length === 0) {
+    throw new Error('browser_act needs a non-empty "steps" array.')
+  }
+  requireWebview() // fail fast if no tab is open
+  const summaries: string[] = []
+  const count = Math.min(steps.length, MAX_BATCH_STEPS)
+  for (let i = 0; i < count; i++) {
+    const step = steps[i] || ({} as BrowserStep)
+    const action = String(step.action || '')
+    try {
+      switch (action) {
+        case 'navigate': {
+          if (!isAllowedBrowserUrl(String(step.url || ''))) {
+            throw new Error(`only http(s) URLs are allowed (got "${step.url}")`)
+          }
+          const info = await navigate(String(step.url))
+          summaries.push(`Navigated to ${info.url}`)
+          break
+        }
+        case 'click':
+          summaries.push(await clickCore(String(step.ref || '')))
+          break
+        case 'type':
+          summaries.push(await typeCore(String(step.ref || ''), String(step.text ?? ''), {
+            submit: step.submit === true,
+            clear: step.clear !== false,
+          }))
+          break
+        case 'scroll':
+          summaries.push(await scrollCore(
+            step.direction === 'up' ? 'up' : 'down',
+            Math.max(1, Math.min(10, Number(step.pages) || 1)),
+            step.ref ? String(step.ref) : undefined,
+          ))
+          break
+        case 'history':
+          summaries.push(await historyCore(step.direction === 'forward' ? 'forward' : 'back'))
+          break
+        case 'wait':
+          summaries.push(await waitFor(Number(step.seconds) || 1, step.until_text ? String(step.until_text) : undefined))
+          break
+        default:
+          throw new Error(`unknown step action "${action}"`)
+      }
+    } catch (err: any) {
+      summaries.push(`✗ Step ${i + 1} (${action}) failed: ${err?.message || String(err)} — stopped here.`)
+      let snap = ''
+      try { snap = await snapshot() } catch { /* page may be gone */ }
+      return { summaries, snapshotText: snap, stoppedAtStep: i + 1 }
+    }
+  }
+  if (steps.length > MAX_BATCH_STEPS) {
+    summaries.push(`(only the first ${MAX_BATCH_STEPS} steps ran; send the rest in another browser_act)`)
+  }
+  return { summaries, snapshotText: await snapshot() }
 }
 
 export async function readPage(offset = 0): Promise<string> {

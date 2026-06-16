@@ -1,70 +1,39 @@
-# @proj-airi/ui
+# @syntax-senpai/ui
 
-A stylized UI component library built with [Reka UI](https://reka-ui.com/) and [UnoCSS](https://unocss.dev/).
+Shared Vue 3 component library for SyntaxSenpai. The package exports the small reusable pieces that the desktop app uses for forms, layouts, transitions, and polished status UI.
 
-To preview the components, refer to the [`stage-ui`](../stage-ui) package for instructions for running the Histoire UI storyboard.
+## Install
 
-## Get started
-
-Install the library:
-
-```shell
-ni @proj-airi/ui -D # from @antfu/ni, can be installed via `npm i -g @antfu/ni`
-pnpm i @proj-airi/ui -D
-yarn i @proj-airi/ui -D
-npm i @proj-airi/ui -D
-```
-
-This library requires `unocss` with Attributify Mode and a style reset.
-
-First, install `unocss` if you haven't already:
-
-```shell
-pnpm i -D unocss
-```
-
-Next, in your `uno.config.ts`, add `presetAttributify()` to your presets array:
-```ts
-import { defineConfig, presetAttributify } from 'unocss'
-
-export default defineConfig({
-  presets: [
-    presetAttributify(),
-    // ...your other presets
-  ],
-})
-```
-
-Finally, import the reset styles in your `main.ts`:
-```ts
-import '@unocss/reset/tailwind.css'
-```
+This package is consumed through the workspace, so most contributors import it from other `@syntax-senpai/*` packages rather than installing it separately.
 
 ## Usage
 
 ```vue
 <script setup lang="ts">
-import { Button } from '@proj-airi/ui'
+import { Button, Screen, TransitionVertical } from '@syntax-senpai/ui'
 </script>
 
 <template>
-  <Button>Click me</Button>
+  <Screen>
+    <Button>Save</Button>
+  </Screen>
 </template>
 ```
 
-## Components
+## Exports
 
-* [Animations](src/components/Animations)
-    * [TransitionVertical](src/components/Animations/TransitionVertical.vue)
-* [Form](src/components/Form)
-    * [Checkbox](src/components/Form/Checkbox)
-    * [Select](src/components/Form/Select)
-    * [Field](src/components/Form/Field)
-    * [Input](src/components/Form/Input)
-    * [Radio](src/components/Form/Radio)
-    * [Range](src/components/Form/Range)
-    * [ComboboxSelect](src/components/Form/Select)
-    * [Textarea](src/components/Form/Textarea)
+- `animations` - `TransitionBidirectional`, `TransitionHorizontal`, `TransitionVertical`
+- `form` - `Checkbox`, `Combobox`, `ComboboxSelect`, `Field`, `Input`, `Radio`, `Range`, `Select`, `SelectTab`, `Textarea`
+- `layouts` - `Collapsible`, `Screen`, `Skeleton`
+- `misc` - `Button`, `Callout`, `DoubleCheckButton`, `Progress`
+- `composables` - `useDeferredMount`, `useTheme`
+- `lampFlickerAnimationClass` - utility class for the ambient lamp effect
+
+## Notes
+
+- Built for UnoCSS-based Vue screens.
+- No standalone build step is required.
+- This package is shared between desktop UI surfaces and other Vue consumers in the monorepo.
 
 ## License
 

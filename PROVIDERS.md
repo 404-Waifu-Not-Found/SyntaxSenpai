@@ -4,10 +4,10 @@ This file is the provider catalog. For the broader project status, see [STATE.md
 
 ## Current Status
 
-`packages/ai-core/src/providers/index.ts` registers 20 provider IDs.
+`packages/ai-core/src/providers/index.ts` registers 21 provider IDs.
 
-- **18 live providers**: `anthropic`, `openai`, `openai-codex`, `gemini`, `mistral`, `cohere`, `groq`, `deepseek`, `perplexity`, `together`, `xai`, `xai-grok`, `huggingface`, `github-models`, `minimax-global`, `minimax-cn`, `ollama`, `lmstudio`.
-- **2 registered stubs**: `azure-openai`, `fireworks`.
+- **18 live providers**: `anthropic`, `openai`, `openai-codex`, `gemini`, `mistral`, `cohere`, `groq`, `deepseek`, `perplexity`, `together`, `xai`, `huggingface`, `github-models`, `minimax-global`, `minimax-cn`, `nvidia`, `ollama`, `lmstudio`.
+- **3 registered stubs**: `azure-openai`, `fireworks`, `xai-grok`.
 - **Removed**: Replicate and AWS Bedrock are not in the registry.
 
 The desktop picker should avoid registered stubs until their `chat()` and `stream()` implementations are complete.
@@ -27,15 +27,16 @@ The desktop picker should avoid registered stubs until their `chat()` and `strea
 | `perplexity` | Perplexity | Live | Yes | Search-oriented model calls |
 | `together` | Together AI | Live | Yes | Hosted open models |
 | `xai` | xAI | Live | Yes | xAI API |
-| `xai-grok` | xAI Grok | Live | Yes | Grok-compatible route |
 | `huggingface` | Hugging Face | Live | Yes | Hosted community models |
 | `github-models` | GitHub Models | Live | Yes | GitHub-hosted model access |
 | `minimax-global` | MiniMax Global | Live | Yes | MiniMax global endpoint |
 | `minimax-cn` | MiniMax CN | Live | Yes | MiniMax China endpoint |
+| `nvidia` | NVIDIA NIM | Live | Yes | Hosted open models via NVIDIA |
 | `ollama` | Ollama | Live | No | Local/offline models |
 | `lmstudio` | LM Studio | Live | Optional | Local OpenAI-compatible server |
 | `azure-openai` | Azure OpenAI | Stub | Yes | Registered, not implemented |
 | `fireworks` | Fireworks AI | Stub | Yes | Registered, not implemented |
+| `xai-grok` | xAI Grok | Stub | Yes | Registered, not implemented |
 
 ## Provider Notes
 
@@ -55,6 +56,10 @@ Useful when long context is the deciding factor. Requires a Google AI Studio API
 
 Good options for hosted open-model workflows. Model availability changes often, so refresh models from the desktop AI settings when switching.
 
+### NVIDIA NIM
+
+Hosted open-model inference via NVIDIA's OpenAI-compatible endpoint. Get an API key from <https://build.nvidia.com/> and use `nvidia` in **Settings -> AI**.
+
 ### Ollama
 
 Keyless local provider. Start Ollama and pull at least one model before selecting it:
@@ -68,9 +73,9 @@ ollama serve
 
 Keyless or optional-key local provider, depending on your server settings. Start LM Studio's local server before selecting `lmstudio`.
 
-### Azure OpenAI And Fireworks
+### Azure OpenAI, Fireworks, And xAI Grok
 
-Both are registered in the factory so the IDs exist, but both currently throw "not yet fully implemented" from `chat()` and `stream()`. Treat them as implementation placeholders, not usable providers.
+These are registered in the factory so the IDs exist, but they currently throw "not yet fully implemented" from `chat()` and `stream()`. Treat them as implementation placeholders, not usable providers.
 
 ## Adding A Provider
 

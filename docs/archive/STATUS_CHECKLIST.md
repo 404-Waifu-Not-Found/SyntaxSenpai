@@ -1,6 +1,8 @@
 # SyntaxSenpai - Implementation Checklist
 **As of 2026-04-07 | Phase 1: ~80% Complete (56/70 tasks)**
 
+**Archive note**: Historical snapshot only. Current state lives in [STATE.md](../../STATE.md), [PROVIDERS.md](../../PROVIDERS.md), and the root [README.md](../../README.md).
+
 ---
 
 ## 📋 COMPLETED SECTIONS ✅
@@ -158,7 +160,7 @@
 |-----------|-----------|-------|---|-------|
 | Monorepo | 11 | 15 | 73% | Core done, CI/linting pending |
 | Types | 15 | 15 | 100% | ✅ Complete |
-| AI Providers | 40 | 50 | 80% | 3 implemented, 12 stubs, testing pending |
+| AI Providers | 40 | 50 | 80% | historical snapshot: 3 implemented, 12 stubs, testing pending |
 | Waifu Core | 25 | 30 | 83% | Engine done, need 4 more waifus |
 | Storage | 0 | 30 | 0% | ⏳ Next priority |
 | Mobile UI | 0 | 25 | 0% | ⏳ After storage |

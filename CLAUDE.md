@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **[AGENT.MD](./AGENT.MD)** — short working agreement for agents: keep changes minimal and task-focused, prefer root-cause fixes, preserve public APIs in shared packages.
 - **[agents.md](./agents.md)** — waifu persona/personality reference (different file from `AGENT.MD`; the casing matters).
 - **[CHANGELOG.md](./CHANGELOG.md)** — historical log per PR; use it to trace when a subsystem was added/reworked.
-- **[PROVIDERS.md](./PROVIDERS.md)** — older marketing-oriented provider doc; treat the status claims as out of date (see "Providers" below for the current truth).
+- **[PROVIDERS.md](./PROVIDERS.md)** — provider catalog; keep it in sync with the live registry and current stub set.
 
 ## Repo layout
 
@@ -21,7 +21,7 @@ pnpm monorepo managed with Turborepo. Workspace globs (`pnpm-workspace.yaml`) on
 - `apps/desktop` — Electron + Vue 3 + UnoCSS + Pinia (primary product). Split into `src/main`, `src/preload`, `src/renderer`. Package name: `syntax-senpai-desktop` (unscoped).
 - `apps/mobile` — Expo / React Native client; pairs to desktop via QR + WebSocket. Package name: `syntax-senpai-mobile`.
 - `apps/runtime` — plain Node (no bundler, no TS) HTTP service for health, Prometheus metrics, backups, plugin discovery. Package name: `syntax-senpai-runtime`.
-- `packages/ai-core` — provider abstraction, runtime, retry, trace, planner. 20 providers under `src/providers/` (see "Providers" below).
+- `packages/ai-core` — provider abstraction, runtime, retry, trace, planner. 21 providers under `src/providers/` (see "Providers" below).
 - `packages/waifu-core` — 5 built-in waifus + prompt/memory/sentiment/voice/milestones/skills builders.
 - `packages/agent-tools` — shared tool registry + plugin loader. Desktop uses the registry + loader for plugins but re-implements the per-call tool set in the renderer (see "Agent pipeline" below).
 - `packages/storage` — chat + memory stores. Separate `index.native.ts` entry for RN (keystore + export only — no desktop SQLite).
@@ -41,7 +41,6 @@ Node 20 (`.nvmrc`) and pnpm 8 are required. Use root scripts whenever possible; 
 |---|---|
 | Install | `pnpm install` |
 | Desktop dev (full) | `pnpm dev:desktop` (electron-vite) |
-| Desktop dev (quick, no Vite) | `pnpm desktop:quick` — minimal Electron entry, useful when the electron-vite env is broken |
 | Mobile dev | `pnpm dev:mobile` (Expo) |
 | Runtime dev | `pnpm dev:runtime` (`node src/server.js`, no build step) |
 | Build everything | `pnpm build` (Turbo; `dev:desktop` and `dev:mobile` are cache=false/persistent) |
@@ -107,12 +106,12 @@ Every tool result is passed through `annotateToolResult` which appends iteration
 
 ### Providers — the accurate picture
 
-`packages/ai-core/src/providers/` contains 20 registered provider IDs (see the `case` list in `providers/index.ts`). `PROVIDERS.md` and the older STATE.md section are both out of date — here is what the source actually says:
+`packages/ai-core/src/providers/` contains 21 registered provider IDs (see the `case` list in `providers/index.ts`). `PROVIDERS.md` and `STATE.md` should stay aligned with the source — here is the current split:
 
-- **18 fully implemented** (either a direct implementation or inherits from `OpenAIProvider` / `OpenAICompatibleProvider` in `base.ts`): `anthropic`, `openai`, `gemini`, `mistral`, `cohere`, `together`, `groq`, `perplexity`, `huggingface`, `deepseek`, `minimax-global`, `minimax-cn`, `ollama`, `lmstudio`, `xai`, `xai-grok`, `openai-codex`, `github-models`.
-- **2 stubs** — `chat()` and `stream()` throw `"... provider not yet fully implemented"`: **`azure-openai`** (`providers/azure-openai.ts:38,42`) and **`fireworks`** (`providers/fireworks-ai.ts:31,35`). These are the ones to hide from the picker or avoid selecting.
+- **18 fully implemented** (either a direct implementation or inherits from `OpenAIProvider` / `OpenAICompatibleProvider` in `base.ts`): `anthropic`, `openai`, `gemini`, `mistral`, `cohere`, `together`, `groq`, `perplexity`, `huggingface`, `deepseek`, `minimax-global`, `minimax-cn`, `nvidia`, `ollama`, `lmstudio`, `xai`, `openai-codex`, `github-models`.
+- **3 stubs** — `chat()` and `stream()` throw `"... provider not yet fully implemented"`: **`azure-openai`** (`providers/azure-openai.ts:38,42`), **`fireworks`** (`providers/fireworks-ai.ts:31,35`), and **`xai-grok`** (`providers/xai-grok.ts:31,35`). These are the ones to hide from the picker or avoid selecting.
 - **Removed** (per CHANGELOG PR #12): Replicate and AWS Bedrock — no files, no registry entry. Do not reintroduce them without implementing.
-- `cohere` **is** implemented (contrary to STATE.md). Its `throw` calls in `providers/cohere.ts` are response-error handling, not "not implemented".
+- `cohere` **is** implemented. Its `throw` calls in `providers/cohere.ts` are response-error handling, not "not implemented".
 
 Ollama and LM Studio are keyless (local). Provider selection/keys are stored via `keytar` on desktop through `ipc/keystore.ts` (service: `syntax-senpai-keys`). API keys are configured in-app through Settings, not via `.env` (except for the dev-only `.env.example`).
 
@@ -125,7 +124,7 @@ Ollama and LM Studio are keyless (local). Provider selection/keys are stored via
 - `/api/v1/plugins` (GET)
 - `/api/v1/telemetry/ai` (POST)
 
-`/api/v1/*` is gated by a bearer token when `RUNTIME_AUTH_TOKEN` is set. Other env vars the server reads: `HOST`, `PORT` (default 8787), `SYNTAX_SENPAI_DATA_DIR`, `SYNTAX_SENPAI_PLUGIN_DIR`, `SYNTAX_SENPAI_BACKUP_DIR`, `BACKUP_MAX_FILES`, `BACKUP_RETENTION_DAYS`, `SERVICE_NAME`, `APP_VERSION`. Tests live under `apps/runtime/test/*.test.js` and use `node --test` (not vitest).
+Most `/api/v1/*` routes are gated by a bearer token when `RUNTIME_AUTH_TOKEN` is set. `GET /api/v1/plugins` is currently public. Other env vars the server reads: `HOST`, `PORT` (default 8787), `SYNTAX_SENPAI_DATA_DIR`, `SYNTAX_SENPAI_PLUGIN_DIR`, `SYNTAX_SENPAI_BACKUP_DIR`, `BACKUP_MAX_FILES`, `BACKUP_RETENTION_DAYS`, `SERVICE_NAME`, `APP_VERSION`. Tests live under `apps/runtime/test/*.test.js` and use `node --test` (not vitest).
 
 ### Plugin system
 

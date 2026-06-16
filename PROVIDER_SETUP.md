@@ -1,6 +1,6 @@
 # AI Provider Setup
 
-SyntaxSenpai supports 20 registered provider IDs. Eighteen work end-to-end in the current tree; `azure-openai` and `fireworks` are registered stubs whose `chat()` and `stream()` methods throw until implemented.
+SyntaxSenpai supports 21 registered provider IDs. Eighteen work end-to-end in the current tree; `azure-openai`, `fireworks`, and `xai-grok` are registered stubs whose `chat()` and `stream()` methods throw until implemented.
 
 For normal desktop use, configure providers in **Settings -> AI**. API keys are stored through the OS keychain path and are not read from a project `.env` file.
 
@@ -19,15 +19,16 @@ For normal desktop use, configure providers in **Settings -> AI**. API keys are 
 | `perplexity` | Live | API key | Perplexity API |
 | `together` | Live | API key | Together AI API |
 | `xai` | Live | API key | xAI API |
-| `xai-grok` | Live | API key | xAI Grok-compatible route |
 | `huggingface` | Live | API key | Hugging Face inference |
 | `github-models` | Live | API key | GitHub Models token |
 | `minimax-global` | Live | API key | MiniMax global endpoint |
 | `minimax-cn` | Live | API key | MiniMax China endpoint |
+| `nvidia` | Live | API key | NVIDIA NIM hosted open models |
 | `ollama` | Live | None | Local model server |
 | `lmstudio` | Live | Optional | Local model server |
 | `azure-openai` | Stub | API key + resource | Registered but not implemented |
 | `fireworks` | Stub | API key | Registered but not implemented |
+| `xai-grok` | Stub | API key | Registered but not implemented |
 
 Removed providers: Replicate and AWS Bedrock are no longer in the registry.
 
@@ -68,6 +69,7 @@ Use the provider's official dashboard to generate keys:
 | Hugging Face | <https://huggingface.co/settings/tokens> |
 | GitHub Models | <https://github.com/settings/tokens> |
 | Cohere | <https://dashboard.cohere.com/api-keys> |
+| NVIDIA | <https://build.nvidia.com/> |
 | MiniMax | Provider dashboard for your region/account |
 
 Do not commit real keys, paste them into screenshots, or share them in issues.

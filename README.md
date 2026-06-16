@@ -51,7 +51,7 @@ Developer agents are usually useful but emotionally flat. Character chatbots are
 
 - **Five built-in waifus**: Aria, Sakura, Rei, Hana, and Luna, each with trait vectors, greetings, prompt templates, voices, tags, and capability metadata.
 - **Custom waifus**: create, list, edit, and delete user-authored waifus through desktop IPC.
-- **18 live AI providers**: Anthropic, OpenAI, OpenAI Codex, Gemini, Mistral, Cohere, Groq, DeepSeek, Perplexity, Together, xAI, xAI Grok, Hugging Face, GitHub Models, MiniMax global/CN, Ollama, and LM Studio.
+- **21 registered AI providers**: 18 live providers, plus 3 registered stubs that stay out of the picker until implemented.
 - **Agent modes**: `ask`, `auto`, and `full`, with destructive shell patterns still gated by a native confirmation dialog.
 - **Tooling**: terminal, file read/write/edit, clipboard, git status/diff/commit/push, GitHub PR creation, web search, todos, Spotify controls, WeChat send/list, card rendering, skills, and plugin execution.
 - **Memory and affection**: persistent memories, per-waifu affection tiers, milestone prompts, and expression/sentiment handling.
@@ -85,12 +85,6 @@ pnpm install
 pnpm dev:desktop
 ```
 
-If the full Electron/Vite dev pipeline is broken on your machine, use the quick desktop entry:
-
-```bash
-pnpm desktop:quick
-```
-
 API keys are configured in the app: **Settings -> AI**. You do not need a root `.env` file for normal desktop chat.
 
 > [!TIP]
@@ -120,16 +114,16 @@ Runtime endpoints:
 - `GET /metrics`
 - `GET /api/v1/plugins`
 - `POST/GET /api/v1/backups/*`
+- `POST /api/v1/telemetry/ai`
 
 > [!IMPORTANT]
-> Runtime API routes can be protected with `RUNTIME_AUTH_TOKEN`; check [ops/README.md](./ops/README.md) before exposing the service outside local development.
+> Most runtime API routes can be protected with `RUNTIME_AUTH_TOKEN`; `GET /api/v1/plugins` is currently public. Check [ops/README.md](./ops/README.md) before exposing the service outside local development.
 
 ## Common Commands
 
 | Command | Purpose |
 |---|---|
 | `pnpm dev:desktop` | Start the Electron desktop app |
-| `pnpm desktop:quick` | Start the fallback desktop entry |
 | `pnpm dev:mobile` | Start Expo for the mobile companion |
 | `pnpm dev:runtime` | Start the runtime service |
 | `pnpm build` | Build workspaces through Turbo |
@@ -166,17 +160,20 @@ syntax-senpai/
 
 ## Provider Status
 
-The registry exposes 20 provider IDs. Eighteen are live end-to-end. Two are registered stubs and intentionally hidden/avoided until implemented:
+The registry exposes 21 provider IDs. Eighteen are live end-to-end. Three are registered stubs and intentionally hidden/avoided until implemented:
 
 - `azure-openai`
 - `fireworks`
+- `xai-grok`
+
+Live providers include Anthropic, OpenAI, OpenAI Codex, Gemini, Mistral, Cohere, Groq, DeepSeek, Perplexity, Together, xAI, Hugging Face, GitHub Models, MiniMax global/CN, NVIDIA NIM, Ollama, and LM Studio.
 
 Replicate and AWS Bedrock were removed and are not in the current registry.
 
 See [PROVIDERS.md](./PROVIDERS.md) for the catalog and [PROVIDER_SETUP.md](./PROVIDER_SETUP.md) for setup steps.
 
 > [!WARNING]
-> `azure-openai` and `fireworks` are registered placeholders right now. Selecting them directly will fail until their provider implementations are completed.
+> `azure-openai`, `fireworks`, and `xai-grok` are registered placeholders right now. Selecting them directly will fail until their provider implementations are completed.
 
 ## Docs
 

@@ -61,8 +61,8 @@ Destructive shell patterns are still gated by native confirmation regardless of 
 
 The provider registry exposes 20 IDs:
 
-- 18 live providers: `anthropic`, `openai`, `openai-codex`, `gemini`, `mistral`, `cohere`, `groq`, `deepseek`, `perplexity`, `together`, `xai`, `xai-grok`, `huggingface`, `github-models`, `minimax-global`, `minimax-cn`, `ollama`, and `lmstudio`.
-- 2 registered stubs: `azure-openai` and `fireworks`.
+- 18 live providers at the time: `anthropic`, `openai`, `openai-codex`, `gemini`, `mistral`, `cohere`, `groq`, `deepseek`, `perplexity`, `together`, `xai`, `xai-grok`, `huggingface`, `github-models`, `minimax-global`, `minimax-cn`, `ollama`, and `lmstudio`.
+- 2 registered stubs at the time: `azure-openai` and `fireworks`.
 
 `azure-openai` and `fireworks` currently throw "not yet fully implemented" from `chat()` and `stream()` and should be hidden or avoided until implemented.
 

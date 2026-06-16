@@ -1,6 +1,8 @@
 # SyntaxSenpai - Project Status Report
 **As of 2026-04-07**
 
+**Archive note**: Historical snapshot only. Current state lives in [STATE.md](../../STATE.md), [PROVIDERS.md](../../PROVIDERS.md), and the root [README.md](../../README.md).
+
 ---
 
 ## 📊 Overall Progress
@@ -11,7 +13,7 @@
 |-----------|--------|-------|
 | Monorepo Setup | ✅ COMPLETE | npm, Turborepo, TypeScript configured |
 | Type System | ✅ COMPLETE | All 6 packages fully typed |
-| AI Providers | ✅ COMPLETE | 15+ providers (3 implemented, 12 stubs) |
+| AI Providers | ✅ COMPLETE | historical snapshot: 15+ providers (3 implemented, 12 stubs) |
 | Waifu Core | ✅ COMPLETE | Personality engine, tests, demo waifu |
 | Agent Tools | ✅ MOSTLY DONE | Registry/types complete, tools pending |
 | Storage Layer | ⏳ IN PROGRESS | Types done, implementations pending |
@@ -200,7 +202,7 @@ Needed: 4 more (Sakura, Rei, Hana, Luna) with full personalities
 | Type Coverage | ~95% | Strict mode enabled |
 | Packages | 6 | ai-core, waifu-core, agent-tools, ws-protocol, storage, ui |
 | Apps | 2 | mobile (Expo), desktop (Electron) |
-| AI Providers | 15 | 3 fully implemented, 12 stubs |
+| AI Providers | 15 | historical snapshot: 3 fully implemented, 12 stubs |
 | UI Components | 3 | WaifuCard, WaifuList, WaifuExplorer |
 | Documentation Files | 5 | PROVIDERS.md, PROVIDER_SETUP.md, etc. |
 

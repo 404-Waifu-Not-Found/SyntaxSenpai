@@ -9,6 +9,7 @@ This repo now includes a deployable runtime service focused on production operat
 - Docker and Docker Compose support
 - Kubernetes manifests with HPA and backup CronJob
 - manifest-based tool plugins
+- request telemetry ingestion for AI turns
 
 ## Local stack
 
@@ -24,8 +25,14 @@ Endpoints:
 - Health: `http://localhost:8787/healthz`
 - Readiness: `http://localhost:8787/readyz`
 - Metrics: `http://localhost:8787/metrics`
+- Backup export: `POST http://localhost:8787/api/v1/backups/export`
+- Backup restore: `POST http://localhost:8787/api/v1/backups/restore`
+- Plugin list: `GET http://localhost:8787/api/v1/plugins`
+- AI telemetry: `POST http://localhost:8787/api/v1/telemetry/ai`
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3000` with `admin` / `admin`
+
+Most `/api/v1/*` routes are protected by `RUNTIME_AUTH_TOKEN` when it is set. `GET /api/v1/plugins` is currently public.
 
 ## Backup API
 

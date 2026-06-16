@@ -1,6 +1,8 @@
 # Modern UI Guide - SyntaxSenpai
 **Modern, Minimal Design | Dark-First | Character-Centered**
 
+**Archive note**: Historical snapshot only. Current state lives in [STATE.md](../../STATE.md), [PROVIDERS.md](../../PROVIDERS.md), and the root [README.md](../../README.md).
+
 ---
 
 ## 🎨 Design Philosophy

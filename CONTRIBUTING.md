@@ -112,7 +112,7 @@ This is a **pnpm monorepo** managed with [Turborepo](https://turbo.build/repo). 
 1. Fork the repo and create a branch from `main`.
 2. Make your changes and ensure `pnpm test` and `pnpm typecheck` pass.
 3. Open a PR with a clear title and description.
-4. Include screenshots for UI changes. Store durable README/product captures under `docs/assets/screenshots/`.
+4. Include screenshots for UI changes. Store durable README/product captures under `screenshoots/` or another tracked image folder in the repo.
 5. A maintainer will review and provide feedback.
 
 ## Reporting bugs

@@ -4,6 +4,8 @@
 **Date Completed**: April 7, 2026  
 **Work Summary**: Full working chat application for mobile and desktop with 5 waifus and 18+ AI providers
 
+**Archive note**: Historical snapshot only. Current state lives in [STATE.md](../../STATE.md), [PROVIDERS.md](../../PROVIDERS.md), and the root [README.md](../../README.md).
+
 ---
 
 ## ✅ What Was Completed

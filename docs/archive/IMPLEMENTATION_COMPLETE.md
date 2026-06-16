@@ -4,6 +4,8 @@
 **Date**: April 7, 2026  
 **Architecture**: Single-Window Unified UI (Desktop + Mobile)
 
+**Archive note**: Historical snapshot only. Current state lives in [STATE.md](../../STATE.md), [PROVIDERS.md](../../PROVIDERS.md), and the root [README.md](../../README.md).
+
 ---
 
 ## What You Have Now

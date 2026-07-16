@@ -1,9 +1,11 @@
 # SyntaxSenpai - Quick Start Guide
 
+**Archive note**: Historical snapshot only. Current state lives in [STATE.md](../../STATE.md), [PROVIDERS.md](../../PROVIDERS.md), and the root [README.md](../../README.md).
+
 ## What's Ready Now ✅
 
 All core infrastructure is complete and working:
-- ✅ **15+ AI Providers** (3 fully implemented, 12 stubs + more working)
+- ✅ **15+ AI Providers** (historical snapshot: 3 fully implemented, 12 stubs + more working)
 - ✅ **Dark-Mode UI System** (minimal, clean design)
 - ✅ **Secure Storage** (API keys + chat persistence)
 - ✅ **Waifu Core** (personality engine, system prompt builder)

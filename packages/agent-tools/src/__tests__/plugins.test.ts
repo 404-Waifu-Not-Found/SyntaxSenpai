@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
+import os from "node:os";
+import fs from "node:fs/promises";
 import { loadToolPlugins } from "../plugins";
 import { ToolRegistry } from "../registry";
 
@@ -24,6 +26,37 @@ describe("loadToolPlugins (integration against plugins/)", () => {
     expect(toolNames).toContain("gh_list_issues");
     expect(toolNames).toContain("gh_get_issue");
     expect(toolNames).toContain("gh_list_prs");
+  });
+
+  it("normalizes legacy flat tool definitions from generated plugins", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "syntax-senpai-plugin-"));
+    const pluginDir = path.join(directory, "legacy-tool");
+    await fs.mkdir(pluginDir);
+    await fs.writeFile(path.join(pluginDir, "plugin.json"), JSON.stringify({
+      name: "legacy-tool",
+      version: "1.0.0",
+      main: "index.mjs",
+    }));
+    await fs.writeFile(path.join(pluginDir, "index.mjs"), `
+      export function activate({ registerTool }) {
+        registerTool({
+          name: 'legacy_echo',
+          description: 'Echo input',
+          parameters: { type: 'object', properties: {} },
+          async execute() { return { success: true, data: 'ok' } }
+        })
+      }
+    `);
+
+    try {
+      const registry = new ToolRegistry();
+      const silentLogger = { info: () => {}, warn: () => {}, error: () => {} };
+      const loaded = await loadToolPlugins({ directory, registry, logger: silentLogger });
+      expect(loaded[0]?.registeredTools).toEqual(["legacy_echo"]);
+      expect(registry.get("legacy_echo")?.definition.name).toBe("legacy_echo");
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("http_fetch refuses private hostnames by default", async () => {

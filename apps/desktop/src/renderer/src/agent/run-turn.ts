@@ -59,10 +59,21 @@ export interface RunAgentTurnOptions {
   /** Generic tool dispatcher — the executor that actually runs read_file/etc. */
   executeTool: (tc: ToolCall) => Promise<string>
 
+  /** Maximum number of independent tool calls to execute at once. */
+  maxParallelTools?: number
+
   /** Optional UI hook fired before a generic tool runs. May return a token. */
   onToolStart?: (tc: ToolCall) => string | undefined
   /** Optional UI hook fired after a generic tool resolves. */
   onToolResult?: (tc: ToolCall, result: string, token: string | undefined) => void
+
+  /**
+   * Called after a generic tool's result message is appended. Any returned
+   * messages are appended right after it — used for multimodal payloads that
+   * can't ride in a string tool result (e.g. browser_screenshot images,
+   * which providers only accept as user-role image_url parts).
+   */
+  collectFollowupMessages?: (tc: ToolCall) => any[] | null | undefined
 
   /** Telemetry hook for each provider round-trip. */
   onApiRoundTrip?: (durationMs: number, response: any) => void
@@ -93,6 +104,22 @@ export interface RunAgentTurnResult {
   reachedMaxIterations: boolean
 }
 
+const PARALLEL_TOOL_NAMES = new Set([
+  'terminal',
+  'read_file',
+  'glob',
+  'grep',
+  'list',
+  'webfetch',
+  'web_search',
+  'lsp_diagnostics',
+  'lsp_hover',
+])
+
+export function canExecuteToolInParallel(tc: ToolCall): boolean {
+  return PARALLEL_TOOL_NAMES.has(tc.name)
+}
+
 export function annotateToolResult(result: string, iteration: number, maxIterations: number): string {
   const remaining = Math.max(0, maxIterations - iteration)
   if (remaining <= 0) {
@@ -117,8 +144,10 @@ export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<RunAgentT
     abortSignal,
     handleSideEffect,
     executeTool,
+    maxParallelTools = 8,
     onToolStart,
     onToolResult,
+    collectFollowupMessages,
     onApiRoundTrip,
     onIteration,
     onAssistantTextDelta,
@@ -176,7 +205,47 @@ export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<RunAgentT
       reasoningContent: (response as any).reasoningContent,
     })
 
-    for (const tc of response.toolCalls) {
+    const executeGenericTool = async (tc: ToolCall) => {
+      const token = onToolStart?.(tc)
+      const result = await executeTool(tc)
+      onToolResult?.(tc, result, token)
+      return { tc, result }
+    }
+
+    const appendGenericToolResult = (tc: ToolCall, result: string) => {
+      history.push({
+        id: `tool-result-${Date.now()}-${tc.id}`,
+        role: 'tool',
+        content: annotateToolResult(result, i, maxIterations),
+        toolCallId: tc.id,
+      })
+
+      const followups = collectFollowupMessages?.(tc)
+      if (followups && followups.length > 0) history.push(...followups)
+    }
+
+    for (let callIndex = 0; callIndex < response.toolCalls.length;) {
+      const tc = response.toolCalls[callIndex]
+
+      if (canExecuteToolInParallel(tc)) {
+        const parallelCalls: ToolCall[] = []
+        while (
+          callIndex < response.toolCalls.length &&
+          parallelCalls.length < Math.max(1, maxParallelTools) &&
+          canExecuteToolInParallel(response.toolCalls[callIndex])
+        ) {
+          parallelCalls.push(response.toolCalls[callIndex])
+          callIndex += 1
+        }
+
+        const results = await Promise.all(parallelCalls.map(executeGenericTool))
+        for (const completed of results) {
+          appendGenericToolResult(completed.tc, completed.result)
+        }
+        continue
+      }
+
+      callIndex += 1
       const sideEffect = handleSideEffect ? await handleSideEffect(tc) : null
       if (sideEffect) {
         history.push({
@@ -193,16 +262,8 @@ export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<RunAgentT
         continue
       }
 
-      const token = onToolStart?.(tc)
-      const result = await executeTool(tc)
-      onToolResult?.(tc, result, token)
-
-      history.push({
-        id: `tool-result-${Date.now()}-${tc.id}`,
-        role: 'tool',
-        content: annotateToolResult(result, i, maxIterations),
-        toolCallId: tc.id,
-      })
+      const completed = await executeGenericTool(tc)
+      appendGenericToolResult(completed.tc, completed.result)
     }
 
     if (stopped) break

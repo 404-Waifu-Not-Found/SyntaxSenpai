@@ -27,6 +27,7 @@ export { GitHubModelsProvider, createGitHubModelsProvider } from "./github-model
 export { XAIGrokProvider, createXAIGrokProvider } from "./xai-grok";
 export { AzureOpenAIProvider, createAzureOpenAIProvider } from "./azure-openai";
 export { FireworksProvider, createFireworksProvider } from "./fireworks-ai";
+export { NvidiaProvider, createNvidiaProvider } from "./nvidia";
 
 import type { AIProvider, CreateProviderOptions } from "../types";
 import { AnthropicProvider } from "./anthropic";
@@ -49,6 +50,7 @@ import { LMStudioProvider } from "./lmstudio";
 import { XAIGrokProvider } from "./xai-grok";
 import { AzureOpenAIProvider } from "./azure-openai";
 import { FireworksProvider } from "./fireworks-ai";
+import { NvidiaProvider } from "./nvidia";
 
 /**
  * Provider factory - creates provider instances by ID
@@ -73,7 +75,8 @@ export type ProviderConfig =
   | { type: "openai-codex"; apiKey: string }
   | { type: "github-models"; apiKey: string }
   | { type: "azure-openai"; apiKey: string; resourceName: string }
-  | { type: "fireworks"; apiKey: string };
+  | { type: "fireworks"; apiKey: string }
+  | { type: "nvidia"; apiKey: string };
 
 export function createProvider(config: ProviderConfig): AIProvider {
   switch (config.type) {
@@ -120,6 +123,8 @@ export function createProvider(config: ProviderConfig): AIProvider {
       });
     case "fireworks":
       return new FireworksProvider({ apiKey: config.apiKey });
+    case "nvidia":
+      return new NvidiaProvider({ apiKey: config.apiKey });
     default:
       throw new Error(`Unknown provider type: ${(config as any).type}`);
   }
@@ -150,6 +155,7 @@ export function getAllProviderMetadata() {
     new GitHubModelsProvider({ apiKey: "dummy" }),
     new AzureOpenAIProvider({ apiKey: "dummy", baseUrl: "https://dummy.openai.azure.com" }),
     new FireworksProvider({ apiKey: "dummy" }),
+    new NvidiaProvider({ apiKey: "dummy" }),
   ].map((p) => ({
     id: p.id,
     displayName: p.displayName,

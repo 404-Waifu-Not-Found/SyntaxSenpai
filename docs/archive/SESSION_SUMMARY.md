@@ -2,6 +2,8 @@
 **Date**: 2026-04-07  
 **Status**: Major Infrastructure Complete ✅
 
+**Archive note**: Historical snapshot only. Current state lives in [STATE.md](../../STATE.md), [PROVIDERS.md](../../PROVIDERS.md), and the root [README.md](../../README.md).
+
 ---
 
 ## What Was Accomplished
@@ -133,7 +135,7 @@ await chatStore.addMessage(conversation.id, {
 |--------|-------|--------|
 | **Total TypeScript Files** | 50+ | ✅ |
 | **Lines of Code** | ~12,000 | ✅ |
-| **AI Providers** | 15+ | ✅ 4 working, 11 stubs |
+| **AI Providers** | 15+ | historical snapshot: ✅ 4 working, 11 stubs |
 | **UI Components** | 9 | ✅ |
 | **Type Coverage** | 99%+ | ✅ |
 | **Phase 1 Completion** | 85% | ✅ |

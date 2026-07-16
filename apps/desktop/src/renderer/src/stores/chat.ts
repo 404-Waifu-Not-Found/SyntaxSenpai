@@ -6,7 +6,8 @@ import { AIChatRuntime, withRetry, classifyError, describeError, type ToolCall }
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
 import { createLogger } from '../composables/logger'
-import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, SET_EXPRESSION_TOOL_NAME, TODO_WRITE_TOOL_NAME, TODO_READ_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, CARD_MARKER_FENCE, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
+import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, SET_EXPRESSION_TOOL_NAME, TODO_WRITE_TOOL_NAME, TODO_READ_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, CARD_MARKER_FENCE, consumePendingBrowserScreenshot, modelSupportsVision, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
+import { useBrowserStore } from './browser'
 import { runAgentTurn, type SideEffectResult } from '../agent/run-turn'
 import {
   dispatchSubagents,
@@ -46,12 +47,21 @@ const MODEL_COST_PER_1K: Array<{ match: RegExp; input: number; output: number }>
   { match: /deepseek/i,               input: 0.00014, output: 0.00028 },
   { match: /llama-3\.1-70b/i,         input: 0.00059, output: 0.00079 },
   { match: /mixtral-8x7b/i,           input: 0.00024, output: 0.00024 },
+  // NVIDIA NIM hosted open models (estimates; tune as NIM pricing firms up).
+  { match: /nemotron/i,               input: 0.0009, output: 0.0009 },
+  { match: /qwen3-coder/i,            input: 0.002,  output: 0.002 },
+  { match: /gpt-oss/i,                input: 0.0002, output: 0.0006 },
+  { match: /kimi-k2/i,                input: 0.0006, output: 0.0025 },
+  { match: /llama-3\.3-70b/i,         input: 0.0009, output: 0.0009 },
+  { match: /llama-3\.1-8b/i,          input: 0.0002, output: 0.0002 },
 ]
 
 // 根据模型名称粗略估算本轮对话成本，主要给界面展示用，不追求精确计费。
-function estimateCost(model: string, promptTokens: number, completionTokens: number): number {
+// Returns null when no pricing row matches so callers can show "unpriced"
+// (—) instead of a misleading $0.00.
+function estimateCost(model: string, promptTokens: number, completionTokens: number): number | null {
   const row = MODEL_COST_PER_1K.find((r) => r.match.test(model || ''))
-  if (!row) return 0
+  if (!row) return null
   return (promptTokens / 1000) * row.input + (completionTokens / 1000) * row.output
 }
 
@@ -248,6 +258,7 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   huggingface: 'meta-llama/Llama-3.3-70B-Instruct',
   'github-models': 'openai/gpt-4o-mini',
   ollama: 'llama3.1:8b',
+  nvidia: 'meta/llama-3.3-70b-instruct',
 }
 
 const AFFECTION_STORAGE_KEY = 'syntax-senpai-affection'
@@ -443,6 +454,7 @@ Tool selection — use the dedicated tool, not a shell workaround:
 ${webSearchLine}
 - rename_chat → name the current conversation so the sidebar is useful. Call it once after the user's first message (pick a short, specific title — you are allowed personality) and again whenever the topic clearly shifts. Don't repeat-call it for the same topic.
 - render_card → display structured information as a rich inline visual card. Use ONLY for: current weather (type="weather"), tabular data with 3+ rows (type="table"), link previews with title+description+site (type="link_preview"), or before/after code diffs (type="code_comparison"). Do NOT use for prose, jokes, single values, greetings, or simple factual sentences. Call it BEFORE stop_response; the card appears alongside your final_message automatically, so don't also describe the same numbers in words.${shellLine}
+- browser_tabs → when asked to open the same page multiple times, call action="new" once with url and count (up to 20). Do not open duplicate tabs one by one.
 
 Realtime / live data — decision tree:
 1. If \`terminal\` is available → use it against a public API (see recipes below). This is the only correct way to get weather, time, stock, sports, or price data.
@@ -473,12 +485,13 @@ Anti-loop rules (CRITICAL — violating these wastes the user's tokens):
 Workflow for non-trivial tasks:
 1. If the task has more than ~2 steps, write a one-line plan in your thinking before calling any tool. Revise it if a step fails.
 2. Gather before you act. Read files / list dirs / check versions before editing or installing.
-3. Do one thing at a time. Don't batch unrelated commands in one \`&&\` chain — errors get buried.
+3. Parallelize independent work. When several terminal commands, reads, searches, or fetches do not depend on each other's results, emit all of those tool calls in the SAME reply; the runtime executes up to 8 at once. For example, opening the same requested URL in 10 tabs should be requested as 10 terminal calls in one reply, not one call per model round-trip. Keep dependent actions sequential, and don't hide unrelated commands in one \`&&\` chain.
 4. Read the tool result. If stderr is non-empty or the exit code is non-zero, DIAGNOSE before retrying. Never rerun the exact same failed command hoping it works.
 5. On failure: try once with a real fix. If it still fails, explain the blocker instead of looping.
 6. Verify before stopping. Confirm the file reads back correctly, the test passes, the process is up, etc. Only then call stop_response.
 
 Efficiency rules:
+- Prefer one parallel batch of independent tool calls over repeated model round-trips. Never parallelize actions whose order matters or that edit the same state.
 - Don't re-read a file you already have in context unless you just wrote to it.
 - Don't paste huge outputs back at the user — summarize.
 - Don't apologize in tool-calling turns; just fix the problem.
@@ -590,6 +603,35 @@ Verify before stop_response:
 - If the project also has a typecheck, lint, or test command relevant to your change and it's reasonable to run, run it. If something fails, fix it — don't report success over a broken build.
 - Read back the file you edited with read_file to confirm the change landed as intended, unless you just wrote it fresh.
 - stop_response.final_message should state what actually changed (\`file.ext:line\`) and any follow-ups the user still needs to do (e.g. install a new dep, restart the dev server).`
+}
+
+function buildBrowserSessionPromptBlock(visionCapable: boolean): string {
+  return `\n\n[Embedded Browser]
+You can drive a real browser embedded in the app via the browser_* tools. The user sees the same browser panel and can click around in it too — you share control.
+
+Workflow (snapshot → ref → act):
+- browser_navigate opens a page and returns a TEXT SNAPSHOT: interactive elements are labeled [e1], [e2], … with their role and name.
+- Act on elements by ref: browser_click for links/buttons, browser_type for inputs (submit=true presses Enter — the normal way to search).
+- Every action returns a FRESH snapshot of the resulting page state. Refs from older snapshots are dead the moment the page changes — never reuse them; take browser_snapshot if unsure.
+- The user may interact with the page between your actions. Trust only the latest snapshot.
+
+Go faster — plan ahead with browser_act:
+- When you can predict the next few moves from the CURRENT snapshot, send them together with browser_act (a list of steps). It runs them back-to-back and returns ONE final snapshot — far faster than a tool call per step, because it skips the model round-trip between steps.
+- Good batches: navigate → type a query → submit; or fill several fields on one form → submit; or navigate → wait for results → scroll.
+- A step that navigates to a NEW page invalidates refs from before it, so don't reference old refs after a navigate inside the same batch. Chain ref-based steps only while you stay on the same page.
+- browser_act stops at the first failing step and returns how far it got plus a snapshot — read it, then continue from there.
+
+Reading and finding things:
+- browser_read_page extracts the readable article text — use it to actually read long content. Do NOT loop scroll+snapshot to read.
+- browser_scroll reveals off-screen elements (snapshots mark them [offscreen]).
+- browser_wait pauses for content that loads after navigation (spinners, async results, lazy lists). Prefer until_text so you stop as soon as the expected text appears instead of over-waiting. You can also use a wait step inside browser_act.
+- If an element you expect isn't in the snapshot, scroll, wait, or re-snapshot — don't guess refs.
+- After 2 failed attempts at the same interaction, tell the user what's blocking instead of retrying.
+${visionCapable ? '- browser_screenshot is a LAST RESORT for canvas/map/image-heavy pages where the text snapshot is useless.' : ''}
+Safety (non-negotiable):
+- NEVER type passwords, payment details, or 2FA codes — the field will refuse anyway; ask the user to type them directly in the panel.
+- Don't log into accounts, make purchases, or post/submit content on the user's behalf unless they explicitly asked for that exact action.
+- Only http(s) pages work; file:// and other schemes are blocked.`
 }
 
 function buildWeChatSessionPromptBlock(binding: WeChatBinding | null): string {
@@ -1068,12 +1110,18 @@ export const useChatStore = defineStore('chat', () => {
     totalTokens: 0,
     costUsd: 0,
     turns: 0,
+    // Real prompt-token count of the most recent round-trip — drives the
+    // context meter (exact context fill incl. system prompt + tool defs).
+    lastPromptTokens: 0,
+    // True once a token-bearing turn used a model with no pricing row, so the
+    // UI shows "—" rather than a misleading $0.00.
+    costUnpriced: false,
   })
   let proactiveChatTimer: ReturnType<typeof setTimeout> | null = null
   let onlineProactiveTimer: ReturnType<typeof setTimeout> | null = null
 
   function resetUsageTotals() {
-    usageTotals.value = { promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0, turns: 0 }
+    usageTotals.value = { promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0, turns: 0, lastPromptTokens: 0, costUnpriced: false }
   }
 
   function recordUsage(model: string, usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number }) {
@@ -1081,12 +1129,15 @@ export const useChatStore = defineStore('chat', () => {
     const p = usage.promptTokens || 0
     const c = usage.completionTokens || 0
     const t = usage.totalTokens || p + c
+    const cost = estimateCost(model, p, c)
     usageTotals.value = {
       promptTokens: usageTotals.value.promptTokens + p,
       completionTokens: usageTotals.value.completionTokens + c,
       totalTokens: usageTotals.value.totalTokens + t,
-      costUsd: usageTotals.value.costUsd + estimateCost(model, p, c),
+      costUsd: usageTotals.value.costUsd + (cost ?? 0),
       turns: usageTotals.value.turns + 1,
+      lastPromptTokens: p || usageTotals.value.lastPromptTokens,
+      costUnpriced: usageTotals.value.costUnpriced || (cost === null && t > 0),
     }
   }
 
@@ -1373,6 +1424,7 @@ export const useChatStore = defineStore('chat', () => {
       let reasoningContent = ''
       const toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = []
       let synthId = 0
+      let usage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined
 
       for await (const chunk of provider.stream(finalReq) as AsyncIterable<any>) {
         if (req.signal?.aborted) break
@@ -1391,6 +1443,10 @@ export const useChatStore = defineStore('chat', () => {
               ? (tc.arguments as Record<string, unknown>)
               : {},
           })
+        } else if (chunk.type === 'done' && chunk.usage) {
+          // Providers emit the terminal usage chunk last (openai.ts / anthropic.ts).
+          // Capturing it here is what makes the cost/token meter work in tools mode.
+          usage = chunk.usage
         } else if (chunk.type === 'error') {
           throw new Error(chunk.error || 'stream error')
         }
@@ -1401,7 +1457,7 @@ export const useChatStore = defineStore('chat', () => {
         content,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         reasoningContent: reasoningContent || undefined,
-        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        usage: usage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
         finishReason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
       }
     }
@@ -1528,6 +1584,26 @@ export const useChatStore = defineStore('chat', () => {
         ? parsed.reason.trim()
         : parsed.approved ? 'Approved by Auto Mode reviewer.' : 'Denied by Auto Mode reviewer.',
     }
+  }
+
+  /**
+   * browser_screenshot results are images, which can't ride in a string tool
+   * result — the executor parks the capture and this hook (passed to
+   * runAgentTurn.collectFollowupMessages) injects it as a user-role
+   * image_url message right after the tool result.
+   */
+  function collectBrowserScreenshotFollowups(tc: ToolCall): any[] | null {
+    if (tc.name !== BROWSER_SCREENSHOT_TOOL_NAME) return null
+    const shot = consumePendingBrowserScreenshot()
+    if (!shot) return null
+    return [{
+      id: `browser-screenshot-${Date.now()}`,
+      role: 'user',
+      content: [
+        { type: 'text', text: '[Screenshot of the embedded browser page, captured by browser_screenshot]' },
+        { type: 'image_url', imageUrl: { url: shot } },
+      ],
+    }]
   }
 
   async function executeToolCallForAgentMode(provider: any, model: string, toolCall: ToolCall, userGoal: string): Promise<string> {
@@ -1768,7 +1844,9 @@ export const useChatStore = defineStore('chat', () => {
       // she can read files, run commands, search, etc. — instead of only
       // emitting a one-shot text message. In ask mode (no tools / approval
       // gated) she falls back to plain conversational streaming.
-      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value })
+      const browserStore = useBrowserStore()
+      const visionCapable = modelSupportsVision(model)
+      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value, browserEnabled: browserStore.aiControlEnabled, visionCapable })
       const hasTools = tools.length > 0
 
       if (hasTools) {
@@ -1781,6 +1859,7 @@ export const useChatStore = defineStore('chat', () => {
         }
         cachedSystemPrompt += buildAgentAccessPrompt(agentMode.value)
         cachedSystemPrompt += buildAgentBehaviorPrompt(sys?.shell, waifu?.displayName || 'your waifu persona', webSearchEnabled.value)
+        if (browserStore.aiControlEnabled) cachedSystemPrompt += buildBrowserSessionPromptBlock(visionCapable)
       }
 
       const runtime = new AIChatRuntime({
@@ -1870,6 +1949,7 @@ export const useChatStore = defineStore('chat', () => {
           cachedSystemPrompt,
           cacheBreakpointIndex: turnHistory.findIndex((m: any) => m.role === 'user'),
           maxIterations: effectiveMaxToolIterations.value,
+          maxParallelTools: agentMode.value === 'ask' ? 1 : 8,
           abortSignal: streamController.value?.signal,
           onIteration: () => { beginNextBubble() },
           onAssistantTextDelta: (delta) => {
@@ -1922,6 +2002,7 @@ export const useChatStore = defineStore('chat', () => {
             return null
           },
           executeTool: (tc) => executeToolCallForAgentMode(provider, model, tc, proactiveGoal),
+          collectFollowupMessages: collectBrowserScreenshotFollowups,
           onToolStart: (tc) => {
             const toolMsgId = `tool-${Date.now()}-${tc.id}`
             messages.value.push({
@@ -2760,7 +2841,9 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
       const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
       const waifus = activeWaifus.value
 
-      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value })
+      const groupBrowserStore = useBrowserStore()
+      const groupVisionCapable = modelSupportsVision(model)
+      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value, browserEnabled: groupBrowserStore.aiControlEnabled, visionCapable: groupVisionCapable })
       const hasTools = tools.length > 0
       let systemInfo: any = null
 
@@ -2823,6 +2906,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
             }
             cachedSystemPrompt += buildAgentAccessPrompt(agentMode.value)
             cachedSystemPrompt += buildAgentBehaviorPrompt(systemInfo?.shell, waifu.displayName || 'your waifu persona', webSearchEnabled.value)
+            if (groupBrowserStore.aiControlEnabled) cachedSystemPrompt += buildBrowserSessionPromptBlock(groupVisionCapable)
           }
 
           // Volatile suffix — changes per turn, never marked cacheable.
@@ -2893,6 +2977,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
               cachedSystemPrompt,
               cacheBreakpointIndex: aiHistory.findIndex((m: any) => m.role === 'user'),
               maxIterations,
+              maxParallelTools: agentMode.value === 'ask' ? 1 : 8,
               abortSignal: streamController.value?.signal,
               onAssistantIterationStart: () => {
                 liveText = ''
@@ -2993,6 +3078,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
                 return null
               },
               executeTool: (toolCall) => executeToolCallForAgentMode(provider, model, toolCall, trimmedText),
+              collectFollowupMessages: collectBrowserScreenshotFollowups,
               onToolStart: (toolCall) => {
                 const label = describeToolCall(toolCall)
                 const toolMsgId = `tool-${waifu.id}-${Date.now()}-${toolCall.id}`
@@ -3434,7 +3520,9 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(trimmedText)
 
-      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value })
+      const browserStore = useBrowserStore()
+      const visionCapable = modelSupportsVision(model)
+      const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value, browserEnabled: browserStore.aiControlEnabled, visionCapable })
       const hasTools = tools.length > 0
 
       // Inject system context so the AI knows the user's environment
@@ -3448,6 +3536,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
         }
         cachedSystemPrompt += buildAgentAccessPrompt(agentMode.value)
         cachedSystemPrompt += buildAgentBehaviorPrompt(sys?.shell, waifu?.displayName || 'your waifu persona', webSearchEnabled.value)
+        if (browserStore.aiControlEnabled) cachedSystemPrompt += buildBrowserSessionPromptBlock(visionCapable)
       }
 
       const runtime = new AIChatRuntime({
@@ -3600,6 +3689,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           cachedSystemPrompt,
           cacheBreakpointIndex: aiHistory.findIndex((m: any) => m.role === 'user'),
           maxIterations,
+          maxParallelTools: agentMode.value === 'ask' ? 1 : 8,
           abortSignal: streamController.value?.signal,
           onAssistantIterationStart: () => {
             finalizeLiveBubble()
@@ -3699,6 +3789,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
             return null
           },
           executeTool: (tc) => executeToolCallForAgentMode(provider, model, tc, trimmedText),
+          collectFollowupMessages: collectBrowserScreenshotFollowups,
           onToolStart: (tc) => {
             const label = describeToolCall(tc)
             const toolMsgId = `tool-${Date.now()}-${tc.id}`
@@ -4080,6 +4171,135 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     }
   }
 
+  /**
+   * Compaction: send the current conversation to the AI for summarization,
+   * then replace the chat history with the compacted summary.
+   * This reduces context window usage while preserving key decisions and state.
+   */
+  async function compactContext() {
+    if (isLoading.value) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Chat is currently loading — wait for the current response to finish first.', type: 'warning' } }))
+      return
+    }
+    if (messages.value.length < 4) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Conversation is too short to compact.', type: 'warning' } }))
+      return
+    }
+
+    const key = await keyManager.getKey(selectedProvider.value)
+    const providerConfig = getProviderConfig(selectedProvider.value, key)
+    if (providerRequiresApiKey(selectedProvider.value) && (!providerConfig.apiKey || providerConfig.apiKey === '')) {
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'No API key configured.', type: 'error' } }))
+      return
+    }
+
+    const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
+    const waifu = selectedWaifu.value
+
+    let cachedSystemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, affection.value)
+    cachedSystemPrompt += formatSkillsForPrompt(availableSkills.value)
+
+    // Build a compact summarization system prompt
+    const compactSystemPrompt = [
+      'You are a context compaction assistant. Review the entire conversation below and produce a concise structured summary.',
+      '',
+      '## Format Requirements',
+      'Write in the waifu\'s character voice if present, otherwise write in a neutral assistant tone.',
+      '',
+      '## Structure Your Summary As:',
+      '1. **Task Overview** — What the user\'s core goal / request was',
+      '2. **Progress / Key Decisions** — What was accomplished, files changed, decisions made',
+      '3. **Important Context** — Technical constraints, preferences, discoveries, errors resolved',
+      '4. **Next Steps / State** — What needs to happen next, any open questions',
+      '5. **Preserved Details** — User preferences, environment details, domain-specific info',
+      '',
+      'Be thorough enough that the conversation can continue seamlessly from this summary.',
+      'DO NOT include meta-commentary about the compaction process itself.',
+      'Wrap the summary in <summary></summary> tags.',
+    ].join('\n')
+
+    const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    isLoading.value = true
+
+    try {
+      // Build AI-compatible message history (cast to any for the summarization pass)
+      const aiMessages = messages.value
+        .filter((m: any) => (m.role === 'user' || m.role === 'assistant') && !m.isProcessStep && !m.id.startsWith('tool-'))
+        .map((m: any) => ({
+          id: m.id || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          role: m.role,
+          content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+          createdAt: m.createdAt || new Date().toISOString(),
+        })) as any
+
+      const runtime = new AIChatRuntime({
+        provider: providerConfig,
+        model,
+        systemPrompt: compactSystemPrompt,
+        cachedSystemPrompt,
+      })
+
+      const response = await runtime.chatWithRetry({
+        model,
+        messages: aiMessages,
+        systemPrompt: compactSystemPrompt,
+        cachedSystemPrompt,
+        maxTokens: 4096,
+      })
+
+      // Extract summary from response
+      let summary = response.content || ''
+      // Strip <summary> tags if present
+      const summaryMatch = summary.match(/<summary>([\s\S]*?)<\/summary>/)
+      if (summaryMatch) {
+        summary = summaryMatch[1].trim()
+      }
+
+      if (!summary) {
+        window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Compaction produced an empty summary.', type: 'error' } }))
+        return
+      }
+
+      // Replace messages with the compacted version
+      // Keep only the last user message + this compaction summary
+      const lastUserMsg = [...messages.value].reverse().find((m: any) => m.role === 'user' && !m.isProcessStep && !m.id.startsWith('tool-'))
+      const compactedId = `compacted-${Date.now()}`
+      const compactedMsg: Message = {
+        id: compactedId,
+        role: 'assistant',
+        content: `📦 **Conversation Compacted** — earlier context summarized for efficiency.\n\n${summary}`,
+        timestamp: now(),
+      }
+
+      messages.value = [
+        ...(lastUserMsg ? [lastUserMsg] : []),
+        compactedMsg,
+      ]
+      recentMessageId.value = compactedId
+
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Conversation compacted successfully! Context window freed up. 📦', type: 'success' } }))
+
+      // Save to DB if conversation exists
+      const convId = conversationId.value
+      if (convId) {
+        try {
+          // Clear old messages and save the compacted ones
+          await invoke('store:clearMessages', convId)
+          for (const msg of messages.value) {
+            await invoke('store:addMessage', convId, msg)
+          }
+        } catch (e) {
+          console.warn('Failed to save compacted messages:', e)
+        }
+      }
+    } catch (err: any) {
+      chatLog.error('compaction failed', { message: err instanceof Error ? err.message : String(err) })
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: `Compaction failed: ${err instanceof Error ? err.message : String(err)}`, type: 'error' } }))
+    } finally {
+      isLoading.value = false
+    }
+  }
+
   function stopStream() {
     const ctrl = streamController.value
     if (!ctrl || ctrl.signal.aborted) return
@@ -4182,6 +4402,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     deleteConversation,
     renameConversation,
     toggleFavorite,
+    compactContext,
     loadMemories,
     setMemory,
     deleteMemory,

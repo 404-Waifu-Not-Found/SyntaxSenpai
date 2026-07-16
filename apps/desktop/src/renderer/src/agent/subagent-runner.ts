@@ -19,6 +19,7 @@ import {
   PROPOSE_TOOL_TOOL_NAME,
   CREATE_SKILL_TOOL_NAME,
   DISPATCH_SUBAGENTS_TOOL_NAME,
+  BROWSER_TOOLS,
 } from '../agent-tools'
 import { runAgentTurn, type ProviderChatCaller, type SideEffectResult } from './run-turn'
 
@@ -44,6 +45,8 @@ export const SUBAGENT_TOOL_DENYLIST: ReadonlySet<string> = new Set<string>([
   RENDER_CARD_TOOL_NAME,
   PROPOSE_TOOL_TOOL_NAME,
   CREATE_SKILL_TOOL_NAME,
+  // One shared webview, one driver — parallel subagents would fight over it.
+  ...BROWSER_TOOLS,
 ])
 
 export interface SubagentSpec {

@@ -4,6 +4,8 @@
 **Remaining Work**: Mobile + Desktop apps (12-16 hours)  
 **Timeline**: 2-3 days of focused work
 
+**Archive note**: Historical snapshot only. Current state lives in [STATE.md](../../STATE.md), [PROVIDERS.md](../../PROVIDERS.md), and the root [README.md](../../README.md).
+
 ---
 
 ## Immediate Actions (Next 2 Hours)
@@ -61,7 +63,7 @@ console.log("✅ Storage works!");
 ### What's Already Done ✅
 - [x] Monorepo scaffold
 - [x] Type system (100%)
-- [x] AI providers (4 working + 11 stubs)
+- [x] AI providers (historical snapshot: 4 working + 11 stubs)
 - [x] Waifu core system
 - [x] Dark-mode UI components
 - [x] Storage layer

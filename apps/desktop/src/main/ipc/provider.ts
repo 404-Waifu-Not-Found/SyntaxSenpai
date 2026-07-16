@@ -23,6 +23,7 @@ const OPENAI_COMPATIBLE_BASE_URLS: Record<string, string> = {
   perplexity: 'https://api.perplexity.ai',
   huggingface: 'https://router.huggingface.co/v1',
   'github-models': 'https://models.inference.ai.azure.com',
+  nvidia: 'https://integrate.api.nvidia.com/v1',
   lmstudio: 'http://127.0.0.1:1234/v1',
 }
 
@@ -114,6 +115,14 @@ const FALLBACK_MODELS: Record<string, Array<{ id: string; displayName: string }>
   'github-models': [
     { id: 'openai/gpt-4o-mini', displayName: 'GPT-4o Mini' },
     { id: 'meta/Llama-3.3-70B-Instruct', displayName: 'Llama 3.3 70B' },
+  ],
+  nvidia: [
+    { id: 'meta/llama-3.3-70b-instruct', displayName: 'Llama 3.3 70B Instruct' },
+    { id: 'nvidia/llama-3.3-nemotron-super-49b-v1.5', displayName: 'Nemotron Super 49B v1.5' },
+    { id: 'qwen/qwen3-coder-480b-a35b-instruct', displayName: 'Qwen3 Coder 480B' },
+    { id: 'openai/gpt-oss-20b', displayName: 'GPT-OSS 20B' },
+    { id: 'moonshotai/kimi-k2.6', displayName: 'Kimi K2.6' },
+    { id: 'meta/llama-3.1-8b-instruct', displayName: 'Llama 3.1 8B (Fast)' },
   ],
   lmstudio: [{ id: 'local-model', displayName: 'Detected Local Model' }],
   ollama: [

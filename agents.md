@@ -149,7 +149,7 @@ interface Waifu {
 
 ## AI provider integration
 
-`preferredAIProvider` + `preferredModel` determine the default routing; the user can override per-session in Settings. See [PROVIDERS.md](PROVIDERS.md) for the catalog and [STATE.md](STATE.md) for the current stub/implemented split (short version: 18 providers are wired, `azure-openai` and `fireworks` currently throw "not yet fully implemented"; Replicate and AWS Bedrock were removed in PR #12).
+`preferredAIProvider` + `preferredModel` determine the default routing; the user can override per-session in Settings. See [PROVIDERS.md](PROVIDERS.md) for the catalog and [STATE.md](STATE.md) for the current stub/implemented split (short version: 18 providers are wired, `azure-openai`, `fireworks`, and `xai-grok` currently throw "not yet fully implemented"; Replicate and AWS Bedrock were removed in PR #12).
 
 ## Personality engine modules
 

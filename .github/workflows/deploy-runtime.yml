@@ -8,7 +8,6 @@ on:
 
 jobs:
   deploy:
-    if: ${{ secrets.KUBE_CONFIG_DATA != '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -17,11 +16,25 @@ jobs:
       - uses: azure/setup-kubectl@v4
         with:
           version: latest
+      - name: Check KUBE_CONFIG_DATA
+        id: check_secret
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG_DATA }}
+        run: |
+          if [ -z "$KUBE_CONFIG" ]; then
+            echo "KUBE_CONFIG_DATA secret is not set. Skipping deployment."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Configure kubeconfig
+        if: steps.check_secret.outputs.skip != 'true'
         run: |
           mkdir -p "$HOME/.kube"
           echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 --decode > "$HOME/.kube/config"
       - name: Deploy production overlay
+        if: steps.check_secret.outputs.skip != 'true'
         run: kubectl apply -k infra/k8s/overlays/production
       - name: Wait for rollout
+        if: steps.check_secret.outputs.skip != 'true'
         run: kubectl rollout status deployment/syntax-senpai-runtime -n syntax-senpai --timeout=180s

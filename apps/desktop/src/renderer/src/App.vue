@@ -18,9 +18,12 @@ import MessageSkeleton from './components/MessageSkeleton.vue'
 import QrPairModal from './components/QrPairModal.vue'
 import RepositoryPickerModal from './components/RepositoryPickerModal.vue'
 import SakuraPetals from './components/SakuraPetals.vue'
+import BrowserPanel from './components/BrowserPanel.vue'
+import { useBrowserStore } from './stores/browser'
 import type { ActiveCodingRepo } from './types/coding-session'
 
 const store = useChatStore()
+const browser = useBrowserStore()
 const { invoke, on } = useIpc()
 const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, setUI, DEFAULT_THEME } = useTheme()
 const { t, locale, setLocale, localeOptions } = useI18n()
@@ -1143,6 +1146,7 @@ const providerOrder = [
   'xai',
   'huggingface',
   'github-models',
+  'nvidia',
 ]
 const providerMetadata = [
   {
@@ -1271,6 +1275,18 @@ const providerMetadata = [
       { id: 'meta/Llama-3.3-70B-Instruct', displayName: 'Llama 3.3 70B' },
     ],
   },
+  {
+    id: 'nvidia',
+    displayName: 'NVIDIA NIM',
+    models: [
+      { id: 'meta/llama-3.3-70b-instruct', displayName: 'Llama 3.3 70B Instruct' },
+      { id: 'nvidia/llama-3.3-nemotron-super-49b-v1.5', displayName: 'Nemotron Super 49B v1.5' },
+      { id: 'qwen/qwen3-coder-480b-a35b-instruct', displayName: 'Qwen3 Coder 480B' },
+      { id: 'openai/gpt-oss-20b', displayName: 'GPT-OSS 20B' },
+      { id: 'moonshotai/kimi-k2.6', displayName: 'Kimi K2.6' },
+      { id: 'meta/llama-3.1-8b-instruct', displayName: 'Llama 3.1 8B (Fast)' },
+    ],
+  },
 ]
 const providers = providerOrder
   .map((id) => providerMetadata.find((provider) => provider.id === id))
@@ -1304,6 +1320,12 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'command-r-plus': 128000,
   'command-r': 128000,
   'command-a-03-2025': 256000,
+  'meta/llama-3.3-70b-instruct': 128000,
+  'nvidia/llama-3.3-nemotron-super-49b-v1.5': 128000,
+  'qwen/qwen3-coder-480b-a35b-instruct': 256000,
+  'openai/gpt-oss-20b': 128000,
+  'moonshotai/kimi-k2.6': 256000,
+  'meta/llama-3.1-8b-instruct': 128000,
 }
 
 const colorPresets: Array<{
@@ -2039,6 +2061,12 @@ const contextWindowSize = computed(() =>
 )
 
 const estimatedTokensUsed = computed(() => {
+  // Prefer the real prompt-token count from the last round-trip — it reflects
+  // the actual context sent (system prompt + tool defs + history). Fall back to
+  // a chars/4 estimate before the first response, or for providers that report
+  // no usage (e.g. ollama, lmstudio).
+  const real = store.usageTotals.lastPromptTokens
+  if (real > 0) return real
   const totalChars = store.messages.reduce((sum: number, m: any) => {
     const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '')
     return sum + content.length
@@ -2296,6 +2324,58 @@ const startupAccentStyle = computed(() => {
 
 const showShortcuts = ref(false)
 
+// ── Slash-command overlay ───────────────────────────────────────────────────
+interface SlashCommand {
+  name: string
+  description: string
+  usage: string
+  category: 'chat' | 'code' | 'terminal' | 'system'
+}
+const SLASH_COMMANDS: SlashCommand[] = [
+  { name: '/setmeter', description: 'Set affection meter', usage: '/setmeter <0-100>', category: 'system' },
+  { name: '/code', description: 'Open code repository picker', usage: '/code', category: 'code' },
+  { name: '/endcode', description: 'Exit coding mode', usage: '/endcode', category: 'code' },
+  { name: '/compact', description: 'Compact conversation context via AI summarization', usage: '/compact', category: 'system' },
+  { name: '/clear', description: 'Clear current chat history', usage: '/clear', category: 'chat' },
+  { name: '/verify deletion', description: 'Confirm chat deletion', usage: '/verify deletion', category: 'chat' },
+  { name: '/cmd', description: 'Run a terminal command', usage: '/cmd <command>', category: 'terminal' },
+  { name: '/terminal', description: 'Run a terminal command', usage: '/terminal <command>', category: 'terminal' },
+  { name: '$', description: 'Quick terminal command shortcut', usage: '$ <command>', category: 'terminal' },
+]
+const showSlashMenu = ref(false)
+const slashMenuIndex = ref(0)
+const slashFilter = ref('')
+const slashMenuRef = ref<HTMLElement | null>(null)
+
+const filteredSlashCommands = computed(() => {
+  const q = slashFilter.value.toLowerCase()
+  if (!q) return SLASH_COMMANDS
+  return SLASH_COMMANDS.filter((cmd) => cmd.name.toLowerCase().includes(q) || cmd.description.toLowerCase().includes(q))
+})
+
+function openSlashMenu() {
+  showSlashMenu.value = true
+  slashMenuIndex.value = 0
+  slashFilter.value = store.inputValue.slice(1) // after "/"
+}
+
+function closeSlashMenu() {
+  showSlashMenu.value = false
+  slashFilter.value = ''
+}
+
+function applySlashCommand(cmd: SlashCommand) {
+  // Commands that perform an immediate action rather than filling the textarea
+  if (cmd.name === '/compact') {
+    closeSlashMenu()
+    store.compactContext()
+    return
+  }
+  store.inputValue = cmd.usage
+  closeSlashMenu()
+  inputRef.value?.focus()
+}
+
 function onAppError(e: Event) {
   const detail = (e as CustomEvent).detail
   const msg = typeof detail === 'string' ? detail : 'Unexpected error'
@@ -2308,6 +2388,10 @@ function onAppRetry(e: Event) {
 function onAppMilestone(e: Event) {
   const detail = (e as CustomEvent).detail
   if (typeof detail === 'string' && detail) showToast(detail, 'success')
+}
+function onAppToast(e: Event) {
+  const detail = (e as CustomEvent).detail
+  if (detail && detail.message) showToast(detail.message, detail.type || 'info')
 }
 function onAppMemoryUpdated(e: Event) {
   const detail = (e as CustomEvent).detail as {
@@ -2445,6 +2529,7 @@ onMounted(() => {
   window.addEventListener('app:memory-updated', onAppMemoryUpdated as EventListener)
   window.addEventListener('app:skill-created', onAppSkillCreated as EventListener)
   window.addEventListener('app:tool-proposed', onAppToolProposed as EventListener)
+  window.addEventListener('app-toast', onAppToast as EventListener)
   on('skills:import-progress', (msg: string) => {
     if (skillImporting.value) skillImportStatus.value = msg
   })
@@ -2474,6 +2559,7 @@ onUnmounted(() => {
   window.removeEventListener('app:memory-updated', onAppMemoryUpdated as EventListener)
   window.removeEventListener('app:skill-created', onAppSkillCreated as EventListener)
   window.removeEventListener('app:tool-proposed', onAppToolProposed as EventListener)
+  window.removeEventListener('app-toast', onAppToast as EventListener)
   window.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('pointerdown', onGlobalPointerDown)
   window.removeEventListener('pointermove', updateLive2DPanelPointer)
@@ -2489,6 +2575,30 @@ watch(() => store.messages.length, () => {
   nextTick(() => {
     messagesEndRef.value?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   })
+})
+
+// Watch input value for slash-command overlay — show when "/" is at position 0
+// and the previous non-empty word wasn't part of a command already.
+watch(() => store.inputValue, (val) => {
+  const trimmed = val.trimStart()
+  if (trimmed.startsWith('/') && !showSlashMenu.value) {
+    // Only show if "/" is at absolute position 0 or preceded only by whitespace
+    const firstCharIdx = val.indexOf(val.trimStart())
+    if (firstCharIdx === 0) {
+      openSlashMenu()
+    }
+  }
+  // Update filter as user types more after "/"
+  if (showSlashMenu.value) {
+    const afterSlash = store.inputValue.slice(1).split(/\s+/)[0] || ''
+    slashFilter.value = afterSlash
+    // Reset selection index when filter changes
+    slashMenuIndex.value = 0
+    // Close if input no longer starts with "/"
+    if (!store.inputValue.trimStart().startsWith('/')) {
+      closeSlashMenu()
+    }
+  }
 })
 
 watch(
@@ -2581,8 +2691,43 @@ function adjustInputHeight() {
 }
 
 function handleKeyDown(e: KeyboardEvent) {
+  // Slash menu active — keyboard navigation
+  if (showSlashMenu.value) {
+    if (e.key === 'Escape') {
+      closeSlashMenu()
+      e.preventDefault()
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      slashMenuIndex.value = (slashMenuIndex.value + 1) % filteredSlashCommands.value.length
+      e.preventDefault()
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      slashMenuIndex.value = (slashMenuIndex.value - 1 + filteredSlashCommands.value.length) % filteredSlashCommands.value.length
+      e.preventDefault()
+      return
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault()
+      const cmd = filteredSlashCommands.value[slashMenuIndex.value]
+      if (cmd) applySlashCommand(cmd)
+      return
+    }
+    // Close on backspace when filter is empty (only "/" left)
+    if (e.key === 'Backspace' && !slashFilter.value) {
+      closeSlashMenu()
+      return
+    }
+  }
+
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
+    if (showSlashMenu.value) {
+      const cmd = filteredSlashCommands.value[slashMenuIndex.value]
+      if (cmd) applySlashCommand(cmd)
+      return
+    }
     store.sendMessage(store.inputValue)
   }
 }
@@ -3781,6 +3926,28 @@ async function handleImportData() {
                 <p v-if="tavilyKeyStatus" class="mt-1 text-[11px]" :class="tavilyKeyStatusOk ? 'text-emerald-400' : 'text-red-400'">
                   {{ tavilyKeyStatus }}
                 </p>
+              </div>
+            </div>
+
+            <div class="settings-card mb-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-sm font-semibold text-neutral-200">AI browser control</div>
+                  <p class="mt-1 text-xs text-neutral-400">
+                    Lets the waifu drive the embedded browser panel (🌐) — navigate, click, type, and read pages. You share the same browser and can take over anytime. Passwords are never typed by the AI.
+                  </p>
+                </div>
+                <button
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :style="{ background: browser.aiControlEnabled ? 'linear-gradient(90deg,#22c55e,#14b8a6)' : '#404040' }"
+                  :aria-label="`${browser.aiControlEnabled ? 'Disable' : 'Enable'} AI browser control`"
+                  @click="browser.setAiControlEnabled(!browser.aiControlEnabled)"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: browser.aiControlEnabled ? 'translateX(20px)' : 'translateX(0)' }"
+                  />
+                </button>
               </div>
             </div>
 
@@ -5916,6 +6083,15 @@ async function handleImportData() {
             🤖
           </button>
           <button
+            :class="['btn-ghost p-2', browser.panelOpen ? 'bg-white/10' : '']"
+            :style="ghostButtonStyle"
+            :title="browser.panelOpen ? 'Close browser' : 'Open browser'"
+            :aria-label="browser.panelOpen ? 'Close browser' : 'Open browser'"
+            @click="browser.togglePanel()"
+          >
+            🌐
+          </button>
+          <button
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             title="AI Memory"
@@ -5939,7 +6115,7 @@ async function handleImportData() {
 
       <!-- Usage + todo status strip (only when there's something to show) -->
       <div
-        v-if="hasStatusStrip && !compactChatLayout"
+        v-if="hasStatusStrip"
         :class="[
           compactChatLayout
             ? 'px-3 py-1.5 border-b border-white/5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-neutral-400'
@@ -5966,7 +6142,9 @@ async function handleImportData() {
             ↓ {{ store.usageTotals.completionTokens.toLocaleString(bcp47Locale(locale)) }}
           </span>
           <span :title="t('usage.estCost', { currency: currencyCodeForLocale(locale) })">
-            ≈ {{ formatLocalizedCost(store.usageTotals.costUsd, locale) }}
+            ≈ {{ store.usageTotals.costUnpriced && store.usageTotals.costUsd === 0
+                   ? '—'
+                   : formatLocalizedCost(store.usageTotals.costUsd, locale) }}
           </span>
         </div>
         <div
@@ -6325,24 +6503,79 @@ async function handleImportData() {
           >
             📎
           </button>
-          <textarea
-            id="chat-input"
-            ref="inputRef"
-            v-model="store.inputValue"
-            :placeholder="t('chat.inputPlaceholder')"
-            :aria-label="t('chat.inputPlaceholder')"
-            :disabled="store.isLoading"
-            rows="1"
-            :class="[
-              compactChatLayout ? 'compact-chat-input input-field flex-1 min-w-[12rem] resize-none text-sm leading-5 py-2.5' : 'input-field flex-1 resize-none',
-              'disabled:opacity-50',
-            ]"
-            style="max-height: 100px"
-            :style="inputSurfaceStyle"
-            @input="adjustInputHeight"
-            @keydown="handleKeyDown"
-            @paste="handlePaste"
-          />
+          <div class="relative flex-1 min-w-[12rem]">
+            <!-- Slash-command overlay -->
+            <div
+              v-if="showSlashMenu && filteredSlashCommands.length > 0"
+              ref="slashMenuRef"
+              class="absolute bottom-full left-0 right-0 mb-1 z-30 overflow-hidden rounded-xl border border-white/10 bg-neutral-900/95 backdrop-blur-xl shadow-2xl"
+            >
+              <!-- Header -->
+              <div class="flex items-center gap-2 px-3 py-2 border-b border-white/5">
+                <span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-500">Commands</span>
+                <span v-if="slashFilter" class="text-[10px] font-mono text-primary-400">filter: /{{ slashFilter }}</span>
+                <span class="ml-auto text-[10px] text-neutral-500">
+                  <kbd class="px-1 py-0.5 rounded bg-white/10 text-[9px] font-mono">↑↓</kbd> navigate
+                  <kbd class="px-1 py-0.5 rounded bg-white/10 text-[9px] font-mono">⏎</kbd> select
+                  <kbd class="px-1 py-0.5 rounded bg-white/10 text-[9px] font-mono">Esc</kbd> close
+                </span>
+              </div>
+              <!-- Command list -->
+              <div class="max-h-48 overflow-y-auto py-1">
+                <button
+                  v-for="(cmd, idx) in filteredSlashCommands"
+                  :key="cmd.name"
+                  :class="[
+                    'w-full flex items-start gap-3 px-3 py-2 text-left transition-colors duration-100',
+                    idx === slashMenuIndex
+                      ? 'bg-primary-500/15 text-white'
+                      : 'text-neutral-300 hover:bg-white/5',
+                  ]"
+                  @click="applySlashCommand(cmd)"
+                  @mouseenter="slashMenuIndex = idx"
+                >
+                  <!-- Category badge -->
+                  <span
+                    class="mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+                    :class="{
+                      'bg-amber-500/20 text-amber-300': cmd.category === 'chat',
+                      'bg-emerald-500/20 text-emerald-300': cmd.category === 'code',
+                      'bg-cyan-500/20 text-cyan-300': cmd.category === 'terminal',
+                      'bg-violet-500/20 text-violet-300': cmd.category === 'system',
+                    }"
+                  >
+                    {{ cmd.category }}
+                  </span>
+                  <div class="min-w-0 flex-1">
+                    <div class="text-sm font-semibold font-mono">{{ cmd.name }}</div>
+                    <div class="text-[11px] text-neutral-400">{{ cmd.description }}</div>
+                    <div class="text-[10px] text-neutral-500 font-mono mt-0.5">{{ cmd.usage }}</div>
+                  </div>
+                </button>
+              </div>
+              <div v-if="filteredSlashCommands.length === 0" class="px-3 py-4 text-center text-xs text-neutral-500">
+                No matching commands for <span class="font-mono text-neutral-400">/{{ slashFilter }}</span>
+              </div>
+            </div>
+            <textarea
+              id="chat-input"
+              ref="inputRef"
+              v-model="store.inputValue"
+              :placeholder="t('chat.inputPlaceholder')"
+              :aria-label="t('chat.inputPlaceholder')"
+              :disabled="store.isLoading"
+              rows="1"
+              :class="[
+                compactChatLayout ? 'compact-chat-input input-field w-full resize-none text-sm leading-5 py-2.5' : 'input-field w-full resize-none',
+                'disabled:opacity-50',
+              ]"
+              style="max-height: 100px"
+              :style="inputSurfaceStyle"
+              @input="adjustInputHeight"
+              @keydown="handleKeyDown"
+              @paste="handlePaste"
+            />
+          </div>
           <button
             v-if="store.isLoading"
             :class="[
@@ -6377,6 +6610,9 @@ async function handleImportData() {
         </p>
       </div>
     </div>
+
+    <!-- Embedded browser panel (shared between the user and the waifu agent) -->
+    <BrowserPanel v-if="browser.panelOpen && !compactChatLayout" />
 
     <!-- Floating Live2D avatar panel -->
     <Teleport to="body">
@@ -6874,5 +7110,23 @@ async function handleImportData() {
 .compact-status-collapse-btn:hover {
   background: rgba(255, 255, 255, 0.08);
   color: #fff;
+}
+
+/* Slash-command overlay: smooth entrance / exit */
+.slash-menu-enter-active {
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+.slash-menu-leave-active {
+  transition: opacity 80ms ease, transform 80ms ease;
+}
+.slash-menu-enter-from,
+.slash-menu-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+/* Command list item hover highlight transitions */
+.slash-menu-item {
+  transition: background-color 80ms ease, color 80ms ease;
 }
 </style>

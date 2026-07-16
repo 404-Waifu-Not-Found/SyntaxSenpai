@@ -16,7 +16,7 @@ SyntaxSenpai is an Electron desktop app ("waifu"-themed AI chatbot) with:
 ## Apps & packages
 
 - `apps/desktop` — Electron + Vue 3 + UnoCSS (primary product)
-- `apps/mobile` — React Native client (pairs via QR to desktop)
+- `apps/mobile` — Expo / React Native client (pairs via QR to desktop)
 - `packages/ai-core` — provider abstraction, runtime, retry, trace, planner
 - `packages/storage` — JSON-backed chat store + memory store
 - `packages/agent-tools` — shared agent-tool built-ins (currently unused by the desktop renderer, which re-implements its own in `apps/desktop/src/renderer/src/agent-tools.ts`)
@@ -27,7 +27,7 @@ SyntaxSenpai is an Electron desktop app ("waifu"-themed AI chatbot) with:
 
 ## Providers
 
-The registry in `packages/ai-core/src/providers/index.ts` exposes 20 IDs.
+The registry in `packages/ai-core/src/providers/index.ts` exposes 21 IDs.
 
 ### Fully implemented (work end-to-end)
 
@@ -38,15 +38,17 @@ The registry in `packages/ai-core/src/providers/index.ts` exposes 20 IDs.
 | `openai-codex` | providers/openai-codex.ts |
 | `gemini` | providers/google-gemini.ts |
 | `mistral` | providers/mistral.ts |
+| `cohere` | providers/cohere.ts |
 | `groq` | providers/groq.ts |
 | `deepseek` | providers/deepseek.ts |
 | `perplexity` | providers/perplexity.ts |
 | `together` | providers/together-ai.ts |
-| `xai` / `xai-grok` | providers/xai.ts, xai-grok.ts |
+| `xai` | providers/xai.ts |
 | `huggingface` | providers/huggingface.ts |
 | `github-models` | providers/github-models.ts |
-| `minimax-global` / `minimax-cn` | providers/minimax-*.ts |
-| `cohere` | providers/cohere.ts |
+| `minimax-global` | providers/minimax-global.ts |
+| `minimax-cn` | providers/minimax-cn.ts |
+| `nvidia` | providers/nvidia.ts |
 | `ollama` (keyless) | providers/ollama.ts |
 | `lmstudio` (keyless) | providers/lmstudio.ts |
 
@@ -54,6 +56,7 @@ The registry in `packages/ai-core/src/providers/index.ts` exposes 20 IDs.
 
 - `azure-openai` — providers/azure-openai.ts (`chat()` / `stream()` throw)
 - `fireworks` — providers/fireworks-ai.ts (`chat()` / `stream()` throw)
+- `xai-grok` — providers/xai-grok.ts (`chat()` / `stream()` throw)
 
 Hide these from the desktop provider picker unless/until implemented.
 

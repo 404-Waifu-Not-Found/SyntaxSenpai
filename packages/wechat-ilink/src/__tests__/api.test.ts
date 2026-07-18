@@ -32,7 +32,7 @@ describe("ilinkPost envelope", () => {
       const headers = new Headers(init.headers as HeadersInit);
       expect(headers.get("authorizationtype")).toBe("ilink_bot_token");
       expect(headers.get("authorization")).toBe("Bearer tok-abc");
-      expect(headers.get("x-wechat-uin")).toBe("AAECAw==");
+      expect(headers.get("x-wechat-uin")).toMatch(/^[A-Za-z0-9+/]+=*$/);
       expect(headers.get("content-type")).toBe("application/json");
       return jsonResponse({ ret: 0 });
     });

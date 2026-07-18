@@ -119,6 +119,10 @@ describe("sendText", () => {
     expect(seenUrl).toContain(Endpoint.SEND_MESSAGE);
     expect(seenBody.msg.to_user_id).toBe("peer-1");
     expect(seenBody.msg.context_token).toBe("ctx-9");
+    expect(seenBody.msg.from_user_id).toBe("");
+    expect(seenBody.msg.message_type).toBe(2);
+    expect(seenBody.msg.message_state).toBe(2);
+    expect(typeof seenBody.msg.client_id).toBe("string");
     expect(seenBody.msg.item_list[0]).toEqual({ type: 1, text_item: { text: "hello" } });
     expect(out.message_id).toBe(99);
   });

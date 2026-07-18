@@ -1,7 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "baseUrl": ".",
     "target": "ES2020",
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "module": "ESNext",
@@ -17,6 +16,14 @@
     "allowSyntheticDefaultImports": true,
     "paths": {
       "@/*": ["./src/renderer/src/*"],
+      "@syntax-senpai/ai-core": ["../../packages/ai-core/src"],
+      "@syntax-senpai/ai-core/*": ["../../packages/ai-core/src/*"],
+      "@syntax-senpai/agent-tools": ["../../packages/agent-tools/src"],
+      "@syntax-senpai/agent-tools/*": ["../../packages/agent-tools/src/*"],
+      "@syntax-senpai/storage": ["../../packages/storage/src"],
+      "@syntax-senpai/storage/*": ["../../packages/storage/src/*"],
+      "@syntax-senpai/waifu-core": ["../../packages/waifu-core/src"],
+      "@syntax-senpai/waifu-core/*": ["../../packages/waifu-core/src/*"],
       "@syntax-senpai/ws-protocol": ["../../packages/ws-protocol/src"],
       "@syntax-senpai/ws-protocol/*": ["../../packages/ws-protocol/src/*"],
       "@syntax-senpai/wechat-ilink": ["../../packages/wechat-ilink/src"],

@@ -25,28 +25,27 @@
     "types": ["vitest/globals", "node"],
 
     /* Path aliases */
-    "baseUrl": ".",
     "paths": {
-      "@syntax-senpai/ai-core": ["packages/ai-core/src"],
-      "@syntax-senpai/ai-core/*": ["packages/ai-core/src/*"],
-      "@syntax-senpai/agent-tools": ["packages/agent-tools/src"],
-      "@syntax-senpai/agent-tools/*": ["packages/agent-tools/src/*"],
-      "@syntax-senpai/waifu-core": ["packages/waifu-core/src"],
-      "@syntax-senpai/waifu-core/*": ["packages/waifu-core/src/*"],
-      "@syntax-senpai/ui": ["packages/ui/src"],
-      "@syntax-senpai/ui/*": ["packages/ui/src/*"],
-      "@syntax-senpai/ws-protocol": ["packages/ws-protocol/src"],
-      "@syntax-senpai/ws-protocol/*": ["packages/ws-protocol/src/*"],
-      "@syntax-senpai/storage": ["packages/storage/src"],
-      "@syntax-senpai/storage/*": ["packages/storage/src/*"],
-      "@syntax-senpai/wechat-ilink": ["packages/wechat-ilink/src"],
-      "@syntax-senpai/wechat-ilink/*": ["packages/wechat-ilink/src/*"],
+      "@syntax-senpai/ai-core": ["./packages/ai-core/src"],
+      "@syntax-senpai/ai-core/*": ["./packages/ai-core/src/*"],
+      "@syntax-senpai/agent-tools": ["./packages/agent-tools/src"],
+      "@syntax-senpai/agent-tools/*": ["./packages/agent-tools/src/*"],
+      "@syntax-senpai/waifu-core": ["./packages/waifu-core/src"],
+      "@syntax-senpai/waifu-core/*": ["./packages/waifu-core/src/*"],
+      "@syntax-senpai/ui": ["./packages/ui/src"],
+      "@syntax-senpai/ui/*": ["./packages/ui/src/*"],
+      "@syntax-senpai/ws-protocol": ["./packages/ws-protocol/src"],
+      "@syntax-senpai/ws-protocol/*": ["./packages/ws-protocol/src/*"],
+      "@syntax-senpai/storage": ["./packages/storage/src"],
+      "@syntax-senpai/storage/*": ["./packages/storage/src/*"],
+      "@syntax-senpai/wechat-ilink": ["./packages/wechat-ilink/src"],
+      "@syntax-senpai/wechat-ilink/*": ["./packages/wechat-ilink/src/*"],
 
       "@proj-airi/*": [
-        "packages/ui/packages/*/src",
-        "packages/ui/apps/*/src",
-        "packages/ui/src/*",
-        "packages/*/src"
+        "./packages/ui/packages/*/src",
+        "./packages/ui/apps/*/src",
+        "./packages/ui/src/*",
+        "./packages/*/src"
       ]
     }
   },

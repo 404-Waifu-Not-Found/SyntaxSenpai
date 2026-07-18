@@ -1261,7 +1261,13 @@ export const useChatStore = defineStore('chat', () => {
         if (conversationId.value !== next.convId) {
           await selectConversation(next.convId)
         }
-        await sendMessage(next.text, { source: 'wechat', sourceLabel: next.sourceLabel })
+        try {
+          await sendMessage(next.text, { source: 'wechat', sourceLabel: next.sourceLabel })
+        } catch (err) {
+          // One failed model turn must not strand all later WeChat messages in
+          // the queue; the next inbound message should still receive a reply.
+          console.warn('WeChat inbound turn failed', err)
+        }
       }
     } finally {
       drainingWeChatQueue = false
@@ -1273,14 +1279,24 @@ export const useChatStore = defineStore('chat', () => {
     const binding = wechatBindings.value[convId]
     if (!binding || !binding.peerId) return
     const text = (content ?? '').toString().trim()
-    if (!text) return
+    if (!text || text.startsWith('Error: ')) return
     try {
-      await invoke('wechat:send', {
+      const result = await invoke('wechat:send', {
         toUserId: binding.peerId,
         kind: 'text',
         content: text,
+        // iLink requires the inbound conversation token on replies. The main
+        // process prefers its fresher in-memory token, and falls back to this
+        // persisted binding after a process restart.
         contextToken: binding.contextToken,
       })
+      if (!result?.success) {
+        console.warn(
+          'relayAssistantToWeChat failed',
+          result?.error || 'unknown WeChat send error',
+          result?.failedPart ? `(part ${result.failedPart}/${result.totalParts || '?'})` : '',
+        )
+      }
     } catch (err) {
       console.warn('relayAssistantToWeChat failed', err)
     }
@@ -2086,6 +2102,8 @@ export const useChatStore = defineStore('chat', () => {
         } catch (e) {
           console.warn('Failed to save proactive assistant message:', e)
         }
+
+        await relayAssistantToWeChat(convId, cleanContent)
       }
     } catch (err) {
       chatLog.warn('proactive message failed', {
@@ -3222,6 +3240,12 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
             }
           }
 
+          // A bound WeChat conversation must receive every completed waifu
+          // reply. Doing this here is deterministic for group chat; relying
+          // on a UI isLoading watcher only forwarded the final reply of a
+          // multi-waifu turn and could miss fast/cancelled state transitions.
+          if (convId) await relayAssistantToWeChat(convId, cleanContent)
+
           for (const task of tasks) {
             if (!waifus.some((candidate) => candidate.id === task.targetWaifuId)) {
               continue
@@ -3439,6 +3463,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
         if (convId) {
           try { await invoke('store:addMessage', convId, assistantMsg) } catch (e) { console.warn('Failed to save assistant message:', e) }
           if (isNewConversation) autoNameConversation(convId, trimmedText)
+          await relayAssistantToWeChat(convId, assistantContent)
         }
       } catch (err: any) {
         chatLog.error('explicit terminal command failed', {
@@ -3571,11 +3596,10 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           }))
 
         const maxIterations = effectiveMaxToolIterations.value
-        // Tracks every bubble produced inside this turn that is NOT the final
-        // assistant reply — tool execution bubbles plus intermediate live
-        // bubbles from earlier iterations. After the turn settles we mark
-        // each of these with `isProcessStep: true` so the UI folds them into
-        // the collapsible "process" panel above the final reply.
+        // Tracks tool-execution bubbles emitted during this turn. Only these
+        // operational records belong in the collapsible process panel: an
+        // assistant's natural-language output must always remain visible,
+        // even when it is followed by another agent iteration.
         const processStepIds: string[] = []
         const apiRoundTrips: number[] = []
         const pendingCards: RenderCardPayload[] = []
@@ -3620,12 +3644,6 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
         }
 
         const beginNextLiveBubble = () => {
-          // The bubble that was just finalized is by definition not the final
-          // reply (a new iteration is starting), so record it for the
-          // post-turn process-step marking pass.
-          if (liveBubbleAdded && liveAssistantId) {
-            processStepIds.push(liveAssistantId)
-          }
           liveAssistantId = `assistant-${Date.now()}-${++liveBubbleSequence}`
           liveBubbleAdded = false
           liveText = ''
@@ -3860,9 +3878,8 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
             queueLiveBubbleSave(finalMessage)
           }
 
-          // Mark every bubble produced earlier in this turn as a process step
-          // so the UI folds them behind the collapsible panel. Skip the final
-          // reply itself (which has the just-written `cleanContent`).
+          // Fold tool records into the process panel, while keeping every
+          // assistant text bubble—including pre-tool narration—visible.
           if (processStepIds.length > 0) {
             const stepIds = new Set(processStepIds.filter((id) => id !== liveAssistantId))
             if (stepIds.size > 0) {
@@ -3873,6 +3890,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           }
 
           await Promise.allSettled(liveBubbleSaveTasks)
+          if (convId) await relayAssistantToWeChat(convId, cleanContent)
           // Auto-name after first exchange (runs in background, doesn't block UI)
           if (isNewConversation && convId) autoNameConversation(convId, text)
         } else if (liveBubbleAdded) {
@@ -3939,6 +3957,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
               })
             } catch (e) { console.warn('Failed to save assistant message:', e) }
             if (isNewConversation) autoNameConversation(convId, text)
+            await relayAssistantToWeChat(convId, cleanContent)
           }
         }
       }

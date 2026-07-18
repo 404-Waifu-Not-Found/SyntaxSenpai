@@ -12,7 +12,7 @@
 export interface Credentials {
   /** Bearer token returned by the QR-login exchange. */
   token: string;
-  /** Base64-encoded random uint32 (`X-WECHAT-UIN` header). */
+  /** Legacy login value retained for already-persisted credentials. */
   uin: string;
   /** Logged-in user id (own WeChat account, used as a stable identifier). */
   userId: string;
@@ -94,7 +94,15 @@ export interface GetUpdatesResponse {
 
 export interface SendMessageRequest {
   msg: {
+    /** iLink bot messages identify the bot sender with an empty id. */
+    from_user_id?: string;
     to_user_id: string;
+    /** Idempotency/client correlation identifier for this outbound message. */
+    client_id?: string;
+    /** BOT = 2 in the official OpenClaw iLink client. */
+    message_type?: 2;
+    /** FINISH = 2 for a complete, non-streaming response. */
+    message_state?: 2;
     context_token?: string;
     item_list: MessageItem[];
   };

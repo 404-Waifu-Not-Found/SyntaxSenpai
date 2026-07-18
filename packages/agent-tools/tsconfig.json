@@ -7,10 +7,10 @@
     "declarationMap": true,
     "paths": {
       "@syntax-senpai/ai-core": [
-        "packages/ai-core/dist"
+        "../ai-core/dist"
       ],
       "@syntax-senpai/ai-core/*": [
-        "packages/ai-core/dist/*"
+        "../ai-core/dist/*"
       ]
     },
     "noEmit": false,

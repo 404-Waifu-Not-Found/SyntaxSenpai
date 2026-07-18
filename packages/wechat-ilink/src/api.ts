@@ -6,6 +6,8 @@
  * paths inside `auth.ts`).
  */
 
+import { randomBytes } from "node:crypto";
+
 import {
   Credentials,
   GetConfigResponse,
@@ -46,12 +48,17 @@ export interface ApiOptions {
   timeoutMs?: number;
 }
 
+/** iLink requires a fresh base64-encoded random uint32 on every request. */
+function createRequestUin(): string {
+  return Buffer.from(String(randomBytes(4).readUInt32BE(0)), "utf-8").toString("base64");
+}
+
 function authHeaders(creds: Credentials): Record<string, string> {
   return {
     "Content-Type": "application/json",
     AuthorizationType: "ilink_bot_token",
     Authorization: `Bearer ${creds.token}`,
-    "X-WECHAT-UIN": creds.uin,
+    "X-WECHAT-UIN": createRequestUin(),
   };
 }
 

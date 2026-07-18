@@ -2507,6 +2507,7 @@ onMounted(() => {
   // Hydrate WeChat status on boot — surfaces auto-resumed sessions in the UI.
   ;(async () => {
     try {
+      await invoke('wechat:resume')
       const res = await invoke('wechat:getStatus')
       if (res?.success) {
         wechatStatus.value = {
@@ -2636,35 +2637,6 @@ watch(
   },
   { immediate: true },
 )
-
-// Auto-relay the final assistant message back to WeChat when the active
-// conversation is bound to a WeChat peer. Fires on the isLoading true→false
-// transition so we catch the post-tool-loop finalization regardless of which
-// code path produced the message. Skips process-step bubbles (tool calls,
-// intermediate reasoning) which now linger in messages.value behind the
-// collapsible panel.
-watch(() => store.isLoading, (now, prev) => {
-  if (!(prev === true && now === false)) return
-  const binding = store.currentWeChatBinding
-  if (!binding) return
-  const convId = store.conversationId
-  if (!convId) return
-  let last: any = null
-  for (let i = store.messages.length - 1; i >= 0; i--) {
-    const m: any = store.messages[i]
-    if (m.role !== 'assistant') break
-    if (m.isProcessStep) continue
-    if (typeof m.id === 'string' && m.id.startsWith('tool-')) continue
-    last = m
-    break
-  }
-  if (!last) return
-  const content = (last.content ?? '').toString()
-  if (!content.trim()) return
-  // Skip echoing back error bubbles produced by the chat store's catch block.
-  if (content.startsWith('Error: ')) return
-  store.relayAssistantToWeChat(convId, content).catch(() => { /* best effort */ })
-})
 
 watch(() => store.apiTelemetryAlert, (alert, previous) => {
   if (!alert.active) return

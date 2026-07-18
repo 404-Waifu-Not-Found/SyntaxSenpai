@@ -2497,11 +2497,14 @@ onMounted(() => {
   })
 
   removeWechatStatusListener = on('wechat:status-changed', (payload: any) => {
+    const wasConnected = wechatStatus.value.connected
+    const connected = !!payload?.connected
     wechatStatus.value = {
-      connected: !!payload?.connected,
+      connected,
       account: payload?.account ?? null,
       lastError: payload?.lastError ?? null,
     }
+    if (connected && !wasConnected) store.requestOnlineGreeting()
   })
 
   // Hydrate WeChat status on boot — surfaces auto-resumed sessions in the UI.
@@ -2510,12 +2513,15 @@ onMounted(() => {
       await invoke('wechat:resume')
       const res = await invoke('wechat:getStatus')
       if (res?.success) {
+        const wasConnected = wechatStatus.value.connected
+        const connected = !!res.connected
         wechatStatus.value = {
-          connected: !!res.connected,
+          connected,
           account: res.account ?? null,
           lastError: res.lastError ?? null,
           pairing: !!res.pairing,
         }
+        if (connected && !wasConnected) store.requestOnlineGreeting()
       }
     } catch { /* optional */ }
   })()

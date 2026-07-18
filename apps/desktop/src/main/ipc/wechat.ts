@@ -41,6 +41,7 @@ const WECHAT_MAX_CHUNKS = 12
 // Cap on how many distinct messages a single `wechat:sendMulti` call may send.
 const WECHAT_MAX_MULTI_MESSAGES = 10
 const WECHAT_RECONNECT_DELAY_MS = 3_000
+const WECHAT_INBOUND_DEDUP_MAX_ENTRIES = 2_048
 
 interface Peer {
   userId: string
@@ -62,6 +63,8 @@ interface State {
   lastError: string | null
   // Token bucket: max 20 sends per peer per minute.
   rateBuckets: Map<string, number[]>
+  // Persists across bot recreation so a reconnect cannot replay an inbound turn.
+  seenInboundMessageKeys: Set<string>
 }
 
 const state: State = {
@@ -72,6 +75,7 @@ const state: State = {
   peerContextTokens: new Map(),
   lastError: null,
   rateBuckets: new Map(),
+  seenInboundMessageKeys: new Set(),
 }
 
 let registered = false
@@ -126,6 +130,18 @@ function rememberPeer(msg: WeixinMessage) {
   }
 }
 
+function isDuplicateInboundMessage(msg: WeixinMessage): boolean {
+  if (msg.message_id == null) return false
+  const key = String(msg.message_id)
+  if (state.seenInboundMessageKeys.has(key)) return true
+  state.seenInboundMessageKeys.add(key)
+  if (state.seenInboundMessageKeys.size > WECHAT_INBOUND_DEDUP_MAX_ENTRIES) {
+    const oldest = state.seenInboundMessageKeys.values().next().value
+    if (oldest) state.seenInboundMessageKeys.delete(oldest)
+  }
+  return false
+}
+
 function allowSend(toUserId: string): boolean {
   const now = Date.now()
   const windowMs = 60_000
@@ -174,6 +190,7 @@ function startBot(creds: Credentials) {
   const bot = new WeChatIlinkBot(creds)
   state.bot = bot
   bot.on('message', (msg: WeixinMessage) => {
+    if (isDuplicateInboundMessage(msg)) return
     rememberPeer(msg)
     const text = getMessageText(msg)
     if (!text) return // non-text payloads ignored in v1
@@ -343,6 +360,7 @@ export function registerWechatIpc() {
       state.peers.clear()
       state.peerContextTokens.clear()
       state.rateBuckets.clear()
+      state.seenInboundMessageKeys.clear()
       await persistCreds(null)
       emitStatus()
       return { success: true }

@@ -45,6 +45,7 @@ export class WeChatIlinkBot extends EventEmitter {
   private running = false;
   private loopAbort: AbortController | null = null;
   private cursor = "";
+  private readonly seenInboundMessageIds = new Set<number>();
 
   constructor(creds: Credentials, opts: BotOptions = {}) {
     super();
@@ -118,6 +119,12 @@ export class WeChatIlinkBot extends EventEmitter {
         for (const msg of msgs) {
           // Ignore our own outgoing messages echoed back (message_type 2 = BOT).
           if (msg.message_type === 2) continue;
+          // iLink may replay an already-acknowledged update while advancing its
+          // cursor. Never let one inbound message create multiple AI turns.
+          if (msg.message_id != null) {
+            if (this.seenInboundMessageIds.has(msg.message_id)) continue;
+            this.seenInboundMessageIds.add(msg.message_id);
+          }
           this.emit("message", msg);
         }
         backoff = this.opts.minRetryMs;

@@ -1807,7 +1807,9 @@ export const useChatStore = defineStore('chat', () => {
       else scheduleProactiveChat()
       return
     }
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+    // A WeChat reconnect is an explicit remote-presence event. It must be
+    // deliverable while the desktop window is minimized or hidden to tray.
+    if (trigger !== 'online' && typeof document !== 'undefined' && document.visibilityState === 'hidden') {
       scheduleProactiveChat()
       return
     }
@@ -2116,7 +2118,24 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function scheduleOnlineProactiveChat() {
+  /**
+   * Route a connection greeting through the latest WeChat-bound chat so its
+   * completed assistant message is relayed to the corresponding peer.
+   */
+  async function requestOnlineGreeting() {
+    await loadConversations()
+    const boundConversation = conversations.value
+      .filter((conversation) => !!wechatBindings.value[conversation.id])
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0]
+    if (!boundConversation) return
+
+    if (conversationId.value !== boundConversation.id) {
+      await selectConversation(boundConversation.id)
+    }
+    scheduleOnlineProactiveChat(true)
+  }
+
+  function scheduleOnlineProactiveChat(force = false) {
     clearOnlineProactiveTimer()
     if (!shouldScheduleProactiveChat('online')) return
     const scheduleWindow = getProactiveScheduleWindow()
@@ -2133,7 +2152,7 @@ export const useChatStore = defineStore('chat', () => {
     const lastProactiveAt = readStoredTimestamp(PROACTIVE_CHAT_LAST_PROACTIVE_MESSAGE_AT_STORAGE_KEY)
     writeStoredTimestamp(PROACTIVE_CHAT_LAST_ONLINE_AT_STORAGE_KEY, now)
 
-    const hasMeaningfulReconnect = !lastOnlineAt || (now - lastOnlineAt) >= PROACTIVE_CHAT_ONLINE_REENGAGE_MS
+    const hasMeaningfulReconnect = force || !lastOnlineAt || (now - lastOnlineAt) >= PROACTIVE_CHAT_ONLINE_REENGAGE_MS
     const isNotDuplicateNudge = !lastProactiveAt || (now - lastProactiveAt) >= PROACTIVE_CHAT_ONLINE_DEDUP_MS
     if (!hasMeaningfulReconnect || !isNotDuplicateNudge) {
       scheduleProactiveChat()
@@ -4407,6 +4426,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     setProactiveChatIntervalMinutes,
     setProactiveChatTemperature,
     setProactiveChatLongGapHours,
+    requestOnlineGreeting,
     deleteMessage,
     regenerateFromMessage,
     addAttachment,

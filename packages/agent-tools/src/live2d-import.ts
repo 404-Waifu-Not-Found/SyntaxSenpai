@@ -57,6 +57,54 @@ export function findLive2DModelJson(root: string): string | null {
 }
 
 /**
+ * Build a flat file map from a model directory. This mirrors what the
+ * pixi-live2d-display FileLoader expects from a webkitdirectory upload:
+ * - every file in the tree becomes a relative path keyed record
+ * - the model settings file is returned separately so the caller can seed the runtime
+ * - expression / motion resource names that ship in a folder are retained in the map
+ */
+export function buildLive2DResourceMap(root: string): {
+  modelJsonPath: string | null;
+  resources: Record<string, string>;
+} | null {
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return null;
+
+  const queue: string[] = [root];
+  const resources: Record<string, string> = {};
+  let modelJsonPath: string | null = null;
+
+  while (queue.length > 0) {
+    const dir = queue.shift()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        queue.push(full);
+        continue;
+      }
+
+      if (!entry.isFile()) continue;
+      const rel = path.relative(root, full).replace(/\\/g, '/');
+      resources[rel] = full;
+      if (LIVE2D_MODEL_JSON_RE.test(entry.name)) {
+        modelJsonPath = full;
+      }
+    }
+  }
+
+  return {
+    modelJsonPath,
+    resources,
+  };
+}
+
+/**
  * Reduce a model/folder name to a filesystem-safe slug:
  * - lowercase
  * - keep [a-z0-9_-]

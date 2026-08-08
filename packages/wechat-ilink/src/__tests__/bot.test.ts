@@ -71,6 +71,29 @@ describe("WeChatIlinkBot.loop", () => {
     expect(getMessageText(inbound)).toBe("yo");
   });
 
+  it("emits a repeated inbound message only once when iLink replays it", async () => {
+    const inbound: WeixinMessage = {
+      message_id: 7,
+      from_user_id: "peer",
+      message_type: 1,
+      item_list: [{ type: 1, text_item: { text: "only once" } }],
+    };
+    let call = 0;
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      call++;
+      if (call <= 2) return rawResponse({ ret: 0, msgs: [inbound], get_updates_buf: `c${call}` });
+      return parkUntilAbort(init?.signal);
+    });
+    const bot = new WeChatIlinkBot(CREDS, { fetchImpl });
+    const received: WeixinMessage[] = [];
+    bot.on("message", (message) => received.push(message));
+    bot.start();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    bot.stop();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(received).toEqual([inbound]);
+  });
   it("emits 'expired' on errcode -14 and stops the loop", async () => {
     const fetchImpl = vi.fn(async () => rawResponse({ ret: 0, errcode: -14, errmsg: "x" }));
     const bot = new WeChatIlinkBot(CREDS, { fetchImpl, minRetryMs: 5 });
@@ -119,6 +142,10 @@ describe("sendText", () => {
     expect(seenUrl).toContain(Endpoint.SEND_MESSAGE);
     expect(seenBody.msg.to_user_id).toBe("peer-1");
     expect(seenBody.msg.context_token).toBe("ctx-9");
+    expect(seenBody.msg.from_user_id).toBe("");
+    expect(seenBody.msg.message_type).toBe(2);
+    expect(seenBody.msg.message_state).toBe(2);
+    expect(typeof seenBody.msg.client_id).toBe("string");
     expect(seenBody.msg.item_list[0]).toEqual({ type: 1, text_item: { text: "hello" } });
     expect(out.message_id).toBe(99);
   });

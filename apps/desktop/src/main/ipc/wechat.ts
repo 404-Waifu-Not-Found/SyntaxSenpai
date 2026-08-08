@@ -32,13 +32,16 @@ try {
 const SERVICE = 'syntax-senpai-wechat'
 const ACCOUNT_DEFAULT = 'default'
 
-// WeChat drops/truncates very long single messages, so outbound text is split
-// into conversational-length bubbles before sending.
-const WECHAT_MAX_MESSAGE_CHARS = 600
+// Tencent's official OpenClaw channel declares a 4,000 character text limit.
+// Keeping replies intact below that limit avoids consuming a context token on
+// artificial 600-character sub-messages.
+const WECHAT_MAX_MESSAGE_CHARS = 4_000
 const WECHAT_INTER_MESSAGE_DELAY_MS = 450
 const WECHAT_MAX_CHUNKS = 12
 // Cap on how many distinct messages a single `wechat:sendMulti` call may send.
 const WECHAT_MAX_MULTI_MESSAGES = 10
+const WECHAT_RECONNECT_DELAY_MS = 3_000
+const WECHAT_INBOUND_DEDUP_MAX_ENTRIES = 2_048
 
 interface Peer {
   userId: string
@@ -60,6 +63,8 @@ interface State {
   lastError: string | null
   // Token bucket: max 20 sends per peer per minute.
   rateBuckets: Map<string, number[]>
+  // Persists across bot recreation so a reconnect cannot replay an inbound turn.
+  seenInboundMessageKeys: Set<string>
 }
 
 const state: State = {
@@ -70,9 +75,25 @@ const state: State = {
   peerContextTokens: new Map(),
   lastError: null,
   rateBuckets: new Map(),
+  seenInboundMessageKeys: new Set(),
 }
 
 let registered = false
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearReconnectTimer() {
+  if (!reconnectTimer) return
+  clearTimeout(reconnectTimer)
+  reconnectTimer = null
+}
+
+function scheduleReconnect(creds: Credentials) {
+  if (reconnectTimer || state.bot?.isRunning()) return
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    if (!state.bot && state.creds === creds) startBot(creds)
+  }, WECHAT_RECONNECT_DELAY_MS)
+}
 
 function broadcast(channel: string, payload: unknown) {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -90,6 +111,11 @@ function emitStatus() {
   })
 }
 
+function recordDeliveryFailure(error: string) {
+  state.lastError = error
+  emitStatus()
+}
+
 function rememberPeer(msg: WeixinMessage) {
   const fromId = msg.from_user_id
   if (!fromId) return
@@ -102,6 +128,18 @@ function rememberPeer(msg: WeixinMessage) {
   if (msg.context_token) {
     state.peerContextTokens.set(fromId, msg.context_token)
   }
+}
+
+function isDuplicateInboundMessage(msg: WeixinMessage): boolean {
+  if (msg.message_id == null) return false
+  const key = String(msg.message_id)
+  if (state.seenInboundMessageKeys.has(key)) return true
+  state.seenInboundMessageKeys.add(key)
+  if (state.seenInboundMessageKeys.size > WECHAT_INBOUND_DEDUP_MAX_ENTRIES) {
+    const oldest = state.seenInboundMessageKeys.values().next().value
+    if (oldest) state.seenInboundMessageKeys.delete(oldest)
+  }
+  return false
 }
 
 function allowSend(toUserId: string): boolean {
@@ -142,6 +180,7 @@ async function loadCreds(): Promise<Credentials | null> {
 }
 
 function startBot(creds: Credentials) {
+  clearReconnectTimer()
   if (state.bot) {
     try { state.bot.stop() } catch { /* ignore */ }
     state.bot = null
@@ -151,6 +190,7 @@ function startBot(creds: Credentials) {
   const bot = new WeChatIlinkBot(creds)
   state.bot = bot
   bot.on('message', (msg: WeixinMessage) => {
+    if (isDuplicateInboundMessage(msg)) return
     rememberPeer(msg)
     const text = getMessageText(msg)
     if (!text) return // non-text payloads ignored in v1
@@ -176,7 +216,13 @@ function startBot(creds: Credentials) {
     emitStatus()
   })
   bot.on('closed', () => {
-    if (state.bot === bot) state.bot = null
+    if (state.bot === bot) {
+      state.bot = null
+      // Unexpected long-poll termination used to leave a paired account
+      // permanently offline after its first session. Keep the persisted
+      // credentials and reconnect unless the user explicitly disconnected.
+      if (state.creds === creds) scheduleReconnect(creds)
+    }
     emitStatus()
   })
   bot.start()
@@ -184,6 +230,7 @@ function startBot(creds: Credentials) {
 }
 
 export async function autoResumeBot(): Promise<void> {
+  if (state.bot?.isRunning()) return
   const creds = await loadCreds()
   if (!creds) return
   startBot(creds)
@@ -287,8 +334,23 @@ export function registerWechatIpc() {
     }
   })
 
+  ipcMain.handle('wechat:resume', async () => {
+    try {
+      await autoResumeBot()
+      return {
+        success: true,
+        connected: !!state.bot && state.bot.isRunning(),
+      }
+    } catch (err: any) {
+      state.lastError = err instanceof Error ? err.message : String(err)
+      emitStatus()
+      return { success: false, error: state.lastError }
+    }
+  })
+
   ipcMain.handle('wechat:disconnect', async () => {
     try {
+      clearReconnectTimer()
       state.pairing?.cancel()
       state.pairing = null
       state.bot?.stop()
@@ -298,6 +360,7 @@ export function registerWechatIpc() {
       state.peers.clear()
       state.peerContextTokens.clear()
       state.rateBuckets.clear()
+      state.seenInboundMessageKeys.clear()
       await persistCreds(null)
       emitStatus()
       return { success: true }
@@ -328,37 +391,74 @@ export function registerWechatIpc() {
       try {
         const bot = state.bot
         if (!bot || !bot.isRunning()) {
-          return { success: false, error: 'WeChat is not connected' }
+          const error = 'WeChat is not connected'
+          recordDeliveryFailure(error)
+          return { success: false, error }
         }
         if (!payload?.toUserId) {
-          return { success: false, error: 'toUserId is required' }
+          const error = 'toUserId is required'
+          recordDeliveryFailure(error)
+          return { success: false, error }
         }
         if (!allowSend(payload.toUserId)) {
-          return { success: false, error: 'Rate limited: too many sends to this peer (20/min)' }
+          const error = 'Rate limited: too many sends to this peer (20/min)'
+          recordDeliveryFailure(error)
+          return { success: false, error }
         }
+        // A reply must carry the inbound iLink context token. Prefer the
+        // latest token observed by the running bot, but fall back to the
+        // renderer's persisted conversation binding after an app restart.
         const ctx =
-          payload.contextToken ??
           state.peerContextTokens.get(payload.toUserId) ??
+          payload.contextToken ??
           undefined
         if (payload.kind === 'text') {
           const text = (payload.content ?? '').toString()
-          if (!text.trim()) return { success: false, error: 'content is required' }
-          // A long reply is broken into natural, conversational-length bubbles
-          // so WeChat actually delivers it (and it reads like real texting).
+          if (!text.trim()) {
+            const error = 'content is required'
+            recordDeliveryFailure(error)
+            return { success: false, error }
+          }
+          // Only text exceeding iLink's 4,000 character limit is split.
           const { messageId, parts } = await sendTextChunked(bot, payload.toUserId, text, ctx)
-          if (parts === 0) return { success: false, error: 'content is required' }
+          if (parts === 0) {
+            const error = 'content is required'
+            recordDeliveryFailure(error)
+            return { success: false, error }
+          }
+          state.lastError = null
+          emitStatus()
           return { success: true, messageId, parts }
         }
         if (payload.kind === 'image') {
-          if (!payload.imageBase64) return { success: false, error: 'imageBase64 is required' }
+          if (!payload.imageBase64) {
+            const error = 'imageBase64 is required'
+            recordDeliveryFailure(error)
+            return { success: false, error }
+          }
           const buf = Buffer.from(stripDataUrlPrefix(payload.imageBase64), 'base64')
           const res = await bot.sendImage(payload.toUserId, buf, ctx)
+          state.lastError = null
+          emitStatus()
           return { success: true, messageId: res.message_id ?? null }
         }
-        return { success: false, error: `Unknown kind: ${payload.kind}` }
+        const error = `Unknown kind: ${payload.kind}`
+        recordDeliveryFailure(error)
+        return { success: false, error }
       } catch (err: any) {
         mainLogger.warn({ err }, 'wechat:send failed')
-        return { success: false, error: err instanceof Error ? err.message : String(err) }
+        const error = err instanceof Error ? err.message : String(err)
+        recordDeliveryFailure(error)
+        if (err instanceof WeChatChunkDeliveryError) {
+          return {
+            success: false,
+            error,
+            sentParts: err.sentParts,
+            failedPart: err.failedPart,
+            totalParts: err.totalParts,
+          }
+        }
+        return { success: false, error }
       }
     },
   )
@@ -378,10 +478,14 @@ export function registerWechatIpc() {
       try {
         const bot = state.bot
         if (!bot || !bot.isRunning()) {
-          return { success: false, error: 'WeChat is not connected' }
+          const error = 'WeChat is not connected'
+          recordDeliveryFailure(error)
+          return { success: false, error }
         }
         if (!payload?.toUserId) {
-          return { success: false, error: 'toUserId is required' }
+          const error = 'toUserId is required'
+          recordDeliveryFailure(error)
+          return { success: false, error }
         }
         const rawMessages = Array.isArray(payload?.messages) ? payload.messages : []
         const messages = rawMessages
@@ -389,14 +493,18 @@ export function registerWechatIpc() {
           .filter(Boolean)
           .slice(0, WECHAT_MAX_MULTI_MESSAGES)
         if (messages.length === 0) {
-          return { success: false, error: 'messages must be a non-empty array of strings' }
+          const error = 'messages must be a non-empty array of strings'
+          recordDeliveryFailure(error)
+          return { success: false, error }
         }
         if (!allowSend(payload.toUserId)) {
-          return { success: false, error: 'Rate limited: too many sends to this peer (20/min)' }
+          const error = 'Rate limited: too many sends to this peer (20/min)'
+          recordDeliveryFailure(error)
+          return { success: false, error }
         }
         const ctx =
-          payload.contextToken ??
           state.peerContextTokens.get(payload.toUserId) ??
+          payload.contextToken ??
           undefined
 
         let lastMessageId: number | null = null
@@ -413,13 +521,26 @@ export function registerWechatIpc() {
               { err, message: i + 1, total: messages.length },
               'wechat:sendMulti message failed',
             )
-            if (sentMessages === 0) throw err
-            break // partial delivery — report what got through
+            const error = err instanceof Error ? err.message : String(err)
+            recordDeliveryFailure(error)
+            return {
+              success: false,
+              error,
+              messageId: lastMessageId,
+              messages: sentMessages,
+              sentParts,
+              failedMessage: i + 1,
+              ...(err instanceof WeChatChunkDeliveryError
+                ? { failedPart: err.failedPart, totalParts: err.totalParts }
+                : {}),
+            }
           }
           if (i < messages.length - 1) {
             await new Promise((r) => setTimeout(r, WECHAT_INTER_MESSAGE_DELAY_MS))
           }
         }
+        state.lastError = null
+        emitStatus()
         return {
           success: true,
           messageId: lastMessageId,
@@ -428,7 +549,9 @@ export function registerWechatIpc() {
         }
       } catch (err: any) {
         mainLogger.warn({ err }, 'wechat:sendMulti failed')
-        return { success: false, error: err instanceof Error ? err.message : String(err) }
+        const error = err instanceof Error ? err.message : String(err)
+        recordDeliveryFailure(error)
+        return { success: false, error }
       }
     },
   )
@@ -443,10 +566,21 @@ function stripDataUrlPrefix(b64: string): string {
 
 /**
  * Send one logical text message to a peer, split into natural,
- * conversational-length bubbles and delivered in order. Throws if not a
- * single chunk could be sent; otherwise returns the last message id and how
- * many bubbles actually went out (partial delivery is reported, not thrown).
+ * iLink-sized messages and delivered in order. A partial delivery is an error:
+ * callers must never report success when a later portion was dropped.
  */
+class WeChatChunkDeliveryError extends Error {
+  constructor(
+    readonly sentParts: number,
+    readonly failedPart: number,
+    readonly totalParts: number,
+    cause: unknown,
+  ) {
+    super(`WeChat delivered ${sentParts}/${totalParts} text parts; part ${failedPart} failed: ${cause instanceof Error ? cause.message : String(cause)}`)
+    this.name = 'WeChatChunkDeliveryError'
+  }
+}
+
 async function sendTextChunked(
   bot: WeChatIlinkBot,
   toUserId: string,
@@ -463,8 +597,7 @@ async function sendTextChunked(
       sent++
     } catch (err: any) {
       mainLogger.warn({ err, part: i + 1, total: chunks.length }, 'wechat send chunk failed')
-      if (sent === 0) throw err
-      break // partial delivery — return what made it through
+      throw new WeChatChunkDeliveryError(sent, i + 1, chunks.length, err)
     }
     if (i < chunks.length - 1) {
       await new Promise((r) => setTimeout(r, WECHAT_INTER_MESSAGE_DELAY_MS))

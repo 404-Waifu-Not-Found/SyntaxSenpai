@@ -68,7 +68,7 @@ export async function loadToolPlugins({
   logger = console,
   isDisabled
 }: LoadToolPluginsOptions): Promise<LoadedToolPlugin[]> {
-  let entries: Awaited<ReturnType<typeof fs.readdir>>
+  let entries: Array<{ name: string; isDirectory(): boolean }>
 
   try {
     entries = await fs.readdir(directory, { withFileTypes: true })

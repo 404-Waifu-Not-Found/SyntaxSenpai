@@ -10,6 +10,7 @@
  *  - `closed`                            — loop has terminated
  */
 
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 
 import {
@@ -44,6 +45,7 @@ export class WeChatIlinkBot extends EventEmitter {
   private running = false;
   private loopAbort: AbortController | null = null;
   private cursor = "";
+  private readonly seenInboundMessageIds = new Set<number>();
 
   constructor(creds: Credentials, opts: BotOptions = {}) {
     super();
@@ -95,6 +97,18 @@ export class WeChatIlinkBot extends EventEmitter {
     };
   }
 
+  /**
+   * Outbound sends must not share the long-poll abort signal. Stopping or
+   * reconnecting the receive loop must never cancel a reply already accepted
+   * for delivery by the desktop process.
+   */
+  private outboundApiOpts(): ApiOptions {
+    return {
+      baseUrl: this.opts.baseUrl,
+      fetchImpl: this.opts.fetchImpl,
+    };
+  }
+
   private async loop(): Promise<void> {
     let backoff = this.opts.minRetryMs;
     while (this.running && !this.loopAbort?.signal.aborted) {
@@ -105,6 +119,12 @@ export class WeChatIlinkBot extends EventEmitter {
         for (const msg of msgs) {
           // Ignore our own outgoing messages echoed back (message_type 2 = BOT).
           if (msg.message_type === 2) continue;
+          // iLink may replay an already-acknowledged update while advancing its
+          // cursor. Never let one inbound message create multiple AI turns.
+          if (msg.message_id != null) {
+            if (this.seenInboundMessageIds.has(msg.message_id)) continue;
+            this.seenInboundMessageIds.add(msg.message_id);
+          }
           this.emit("message", msg);
         }
         backoff = this.opts.minRetryMs;
@@ -128,12 +148,16 @@ export class WeChatIlinkBot extends EventEmitter {
       this.creds,
       {
         msg: {
+          from_user_id: "",
           to_user_id: toUserId,
+          client_id: randomUUID(),
+          message_type: 2,
+          message_state: 2,
           context_token: contextToken,
           item_list: [buildTextItem(text)],
         },
       },
-      this.apiOpts(),
+      this.outboundApiOpts(),
     );
   }
 
@@ -143,12 +167,16 @@ export class WeChatIlinkBot extends EventEmitter {
       this.creds,
       {
         msg: {
+          from_user_id: "",
           to_user_id: toUserId,
+          client_id: randomUUID(),
+          message_type: 2,
+          message_state: 2,
           context_token: contextToken,
           item_list: [item],
         },
       },
-      this.apiOpts(),
+      this.outboundApiOpts(),
     );
   }
 
@@ -156,9 +184,17 @@ export class WeChatIlinkBot extends EventEmitter {
     return ilinkSendMessage(
       this.creds,
       {
-        msg: { to_user_id: toUserId, context_token: contextToken, item_list: items },
+        msg: {
+          from_user_id: "",
+          to_user_id: toUserId,
+          client_id: randomUUID(),
+          message_type: 2,
+          message_state: 2,
+          context_token: contextToken,
+          item_list: items,
+        },
       },
-      this.apiOpts(),
+      this.outboundApiOpts(),
     );
   }
 

@@ -24,6 +24,10 @@ type RenderedPart =
 const copied = ref(false)
 const containerRef = ref<HTMLDivElement>()
 
+function sanitizeForBubble(value: string): string {
+  return String(value || '').replace(/\[emotion:\s*[a-z]+\]/gi, '').replace(/\s{2,}/g, ' ').trim()
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -164,7 +168,7 @@ function renderMarkdown(value: string): string {
 
 async function handleCopy() {
   try {
-    const text = props.content || containerRef.value?.innerText || ''
+    const text = displayContent.value || containerRef.value?.innerText || ''
     if (!text) return
     await navigator.clipboard.writeText(text)
     copied.value = true
@@ -175,6 +179,7 @@ async function handleCopy() {
 }
 
 const hasCard = computed(() => renderedParts.value.some((p) => p.kind === 'card'))
+const displayContent = computed(() => sanitizeForBubble(props.content ?? ''))
 
 const bubbleClasses = computed(() => [
   'relative px-4 py-3 rounded-xl',
@@ -217,7 +222,7 @@ function splitOnCardFences(raw: string): RenderedPart[] {
 }
 
 const renderedParts = computed<RenderedPart[]>(() => {
-  const raw = props.content || ''
+  const raw = displayContent.value || ''
   if (!raw) return []
   if (!raw.includes(CARD_FENCE)) {
     return [{ kind: 'html', html: renderMarkdown(raw) }]

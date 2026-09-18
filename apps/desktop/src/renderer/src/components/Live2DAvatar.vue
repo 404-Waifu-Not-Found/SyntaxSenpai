@@ -9,6 +9,8 @@ type Live2DModelType = any // pixi-live2d-display types vary by cubism version
 const props = withDefaults(defineProps<{
   /** Absolute file:// path (or URL) to the .model3.json / .model.json */
   modelPath: string
+  /** Optional directory upload FileList generated from <input webkitdirectory>. */
+  folderFiles?: File[] | FileList | null
   /** WaifuExpression name; component maps it to a motion group */
   expression?: string
   /** Bump to force reapplying an unchanged expression value. */
@@ -71,6 +73,8 @@ const DEFAULT_MOTION_MAP: Record<string, string> = {
   embarrassed: 'TapBody',
   determined:  'TapBody',
   sad:         'FlickHead',
+  angry:       'FlickHead',
+  surprised:   'TapBody',
 }
 
 // Expression name → Cubism named-expression ID map.
@@ -78,12 +82,14 @@ const DEFAULT_MOTION_MAP: Record<string, string> = {
 // We try these IDs first before falling back to raw parameter blending.
 const EXPRESSION_NAME_MAP: Record<string, string[]> = {
   happy:       ['Happy', 'Smile', 'Joy', 'fun'],
-  excited:     ['Excited', 'Surprised', 'Energetic', 'fun'],
-  thinking:    ['Thinking', 'Ponder', 'Worry', 'angry'],
-  confused:    ['Confused', 'Puzzle', 'Question', 'angry'],
+  excited:     ['Excited', 'Energetic', 'fun'],
+  thinking:    ['Thinking', 'Ponder', 'Worry'],
+  confused:    ['Confused', 'Puzzle', 'Question'],
   embarrassed: ['Embarrassed', 'Shy', 'Blush', 'sad'],
   determined:  ['Determined', 'Serious', 'Confident', 'angry', 'fun'],
   sad:         ['Sad', 'Cry', 'Sorrow', 'sad'],
+  angry:       ['Angry', 'Mad', 'angry'],
+  surprised:   ['Surprised', 'Surprise', 'Amazed', 'excited'],
   neutral:     ['Neutral', 'Default', 'Idle', 'base'],
 }
 
@@ -158,6 +164,24 @@ const EXPRESSION_PARAMS: Record<string, ParamDef[]> = {
     { id: ['ParamBrowRY', 'PARAM_BROW_R_Y'], value: 0.15 },
     { id: ['ParamBrowLAngle', 'PARAM_BROW_L_ANGLE'], value: 0.3 },
     { id: ['ParamBrowRAngle', 'PARAM_BROW_R_ANGLE'], value: -0.3 },
+  ],
+  angry: [
+    { id: ['ParamMouthForm', 'PARAM_MOUTH_FORM'], value: -0.2 },
+    { id: ['ParamMouthOpenY', 'PARAM_MOUTH_OPEN_Y'], value: 0.2 },
+    { id: ['ParamEyeLOpen', 'PARAM_EYE_L_OPEN'], value: 0.42 },
+    { id: ['ParamEyeROpen', 'PARAM_EYE_R_OPEN'], value: 0.42 },
+    { id: ['ParamBrowLY', 'PARAM_BROW_L_Y'], value: 0.24 },
+    { id: ['ParamBrowRY', 'PARAM_BROW_R_Y'], value: 0.24 },
+    { id: ['ParamBrowLAngle', 'PARAM_BROW_L_ANGLE'], value: -0.4 },
+    { id: ['ParamBrowRAngle', 'PARAM_BROW_R_ANGLE'], value: -0.4 },
+  ],
+  surprised: [
+    { id: ['ParamMouthForm', 'PARAM_MOUTH_FORM'], value: 0.20 },
+    { id: ['ParamMouthOpenY', 'PARAM_MOUTH_OPEN_Y'], value: 0.70 },
+    { id: ['ParamEyeLOpen', 'PARAM_EYE_L_OPEN'], value: 1.00 },
+    { id: ['ParamEyeROpen', 'PARAM_EYE_R_OPEN'], value: 1.00 },
+    { id: ['ParamBrowLY', 'PARAM_BROW_L_Y'], value: -0.1 },
+    { id: ['ParamBrowRY', 'PARAM_BROW_R_Y'], value: -0.1 },
   ],
   neutral: [
     { id: ['ParamMouthForm', 'PARAM_MOUTH_FORM'], value: 0.0 },
@@ -247,6 +271,9 @@ async function initModel() {
     const modelUrl = props.modelPath
     const isCubism4 = modelUrl.includes('.model3.json')
 
+    const folderFiles = props.folderFiles
+    const hasDirectoryFileList = !!folderFiles && Array.from(folderFiles as FileList).length > 0
+
     // Load the runtime that this model needs BEFORE importing the
     // pixi-live2d-display submodule — the submodule's module-level
     // initialization probes for the runtime as it loads.
@@ -288,7 +315,14 @@ async function initModel() {
       autoDensity: true,
     })
 
-    live2dModel = await Live2DModel.from(modelUrl, { autoInteract: false })
+    if (hasDirectoryFileList && typeof (live2dModule as any).FileLoader?.createSettings === 'function') {
+      const files = Array.from(folderFiles as File[] | FileList)
+      const settings = await (live2dModule as any).FileLoader.createSettings(files)
+      await (live2dModule as any).FileLoader.upload(files, settings)
+      live2dModel = await Live2DModel.from(settings, { autoInteract: false })
+    } else {
+      live2dModel = await Live2DModel.from(modelUrl, { autoInteract: false })
+    }
 
     layoutModel()
     pixiApp.ticker.add(applyCursorFocus)
@@ -325,6 +359,47 @@ function layoutModel() {
   live2dModel.scale.set(scale)
   live2dModel.x = (props.width - modelWidth * scale) / 2 + props.offsetX
   live2dModel.y = props.offsetY
+}
+
+async function setLive2DExpression(live2dModelTarget: Live2DModelType | null, emotion: string | null | undefined) {
+  if (!live2dModelTarget || !emotion) return
+  const normalized = String(emotion || '').trim().toLowerCase()
+  if (!normalized) return
+
+  const exprMgr = live2dModelTarget.internalModel?.motionManager?.expressionManager
+  const candidates = EXPRESSION_NAME_MAP[normalized]
+  let namedExpressionSet = false
+
+  if (exprMgr?.definitions?.length && candidates) {
+    for (const name of candidates) {
+      const index = exprMgr.getExpressionIndex(name)
+      if (index >= 0 && index < exprMgr.definitions.length) {
+        try {
+          await live2dModelTarget.expression(name)
+          namedExpressionSet = true
+          break
+        } catch {
+          /* try next expression id */
+        }
+      }
+    }
+  }
+
+  if (!namedExpressionSet) {
+    const params = EXPRESSION_PARAMS[normalized]
+    if (params) {
+      for (const p of params) {
+        setCoreParameter(p.id, p.value)
+      }
+    }
+  }
+
+  try {
+    const motionName = resolveMotion(normalized)
+    live2dModelTarget.motion(motionName)
+  } catch {
+    /* motion optional */
+  }
 }
 
 async function setExpression(expression: string) {

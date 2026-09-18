@@ -394,6 +394,27 @@ function extractExplicitTerminalCommand(text: string): string | null {
   return null
 }
 
+const EMOTION_TAG_RE = /\[emotion:\s*([a-z]+)\]/i
+const EMOTION_LABELS = new Set(['happy', 'sad', 'angry', 'surprised', 'neutral', 'excited', 'thinking', 'confused', 'embarrassed', 'determined'])
+
+function buildEmotionPromptBlock(): string {
+  return `
+
+[Emotion Tags]
+When you answer in chat, you MUST emit a single final emotion tag somewhere in your visible reply body using the exact format [emotion: <value>], where <value> is one of: happy, sad, angry, surprised, neutral, excited, thinking, confused, embarrassed, determined.
+Keep the tag as runtime metadata for the avatar; do not explain it. Strip it from the live rendered text before the user sees it.`
+}
+
+function parseEmotionTag(content: string): { emotion: string | null; content: string } {
+  const raw = String(content || '')
+  const match = raw.match(EMOTION_TAG_RE)
+  if (!match?.[1]) return { emotion: null, content: raw }
+  const emotion = match[1].toLowerCase()
+  if (!EMOTION_LABELS.has(emotion)) return { emotion: null, content: raw }
+  const stripped = raw.replace(EMOTION_TAG_RE, '').replace(/\s{2,}/g, ' ').trim()
+  return { emotion, content: stripped }
+}
+
 function createWaifuSystemPrompt(waifu: any, provider: string, model: string, affection: number) {
   return buildSystemPrompt(
     waifu,
@@ -1841,6 +1862,7 @@ export const useChatStore = defineStore('chat', () => {
       let cachedSystemPrompt = createWaifuSystemPrompt(waifu, selectedProvider.value, model, affection.value)
       cachedSystemPrompt += buildMasterContextBlock()
       cachedSystemPrompt += buildLanguagePromptBlock()
+      cachedSystemPrompt += buildEmotionPromptBlock()
       cachedSystemPrompt += buildSkillsAuthoringPromptBlock()
       cachedSystemPrompt += formatSkillsForPrompt(availableSkills.value)
       cachedSystemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
@@ -1852,6 +1874,7 @@ export const useChatStore = defineStore('chat', () => {
       systemPrompt += buildAffectionPrompt(affection.value, waifu.displayName || 'Waifu')
       systemPrompt += buildMilestoneSidecarBlock(waifu.id)
       systemPrompt += buildApiTelemetryPrompt()
+      systemPrompt += buildEmotionPromptBlock()
       systemPrompt += buildCurrentTimePrompt()
       systemPrompt += activeCodingRepo.value
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
@@ -2041,6 +2064,11 @@ export const useChatStore = defineStore('chat', () => {
         }
         let finalText = extractMemoryFromAIResponse(finalRaw)
         if (pendingCards.length > 0) finalText = prependCardMarkers(pendingCards, finalText)
+        const parsed = parseEmotionTag(finalText)
+        if (parsed.emotion) {
+          applyLive2DExpression(parsed.emotion, 'agent')
+          finalText = parsed.content
+        }
         ensureBubble()
         assistantContent = finalText
         updateBubble()
@@ -2074,7 +2102,11 @@ export const useChatStore = defineStore('chat', () => {
         assistantContent = extractMemoryFromAIResponse(assistantContent)
       }
 
-      const cleanContent = assistantContent
+      const parsed = parseEmotionTag(assistantContent)
+      if (parsed.emotion) {
+        applyLive2DExpression(parsed.emotion, 'agent')
+      }
+      const cleanContent = parsed.content
       const savedMessage = messages.value.find((m) => m.id === assistantId)
       if (savedMessage) {
         savedMessage.content = cleanContent

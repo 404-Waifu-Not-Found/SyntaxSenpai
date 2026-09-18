@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useChatStore } from '../../stores/chat'
+import { checkWinAt, chooseAiMove, createEmptyBoard, hasEmptyCell, type Cell, type Stone } from './gomoku-engine'
 
-type Stone = 'black' | 'white'
-type Cell = Stone | null
 type SpeakerEvent = 'start' | 'user_move' | 'ai_move' | 'user_win' | 'ai_win' | 'draw'
 
 const props = defineProps<{
@@ -26,23 +25,36 @@ const boardSize = computed(() => {
   return Math.max(10, Math.min(19, Math.floor(raw)))
 })
 
+function normalizeStone(value: unknown): Stone | null {
+  return value === 'black' || value === 'white' ? value : null
+}
+
 const userStone = computed<Stone>(() => {
-  if (props.data.user_stone === 'white') return 'white'
-  if (props.data.ai_stone === 'black') return 'white'
+  const explicitUser = normalizeStone(props.data.user_stone)
+  const explicitAi = normalizeStone(props.data.ai_stone)
+  if (explicitUser && explicitAi && explicitUser !== explicitAi) return explicitUser
+  if (explicitUser) return explicitUser
+  if (explicitAi) return explicitAi === 'black' ? 'white' : 'black'
   return 'black'
 })
 
-const aiStone = computed<Stone>(() => (userStone.value === 'black' ? 'white' : 'black'))
+const aiStone = computed<Stone>(() => {
+  const explicitAi = normalizeStone(props.data.ai_stone)
+  if (explicitAi && explicitAi !== userStone.value) return explicitAi
+  return userStone.value === 'black' ? 'white' : 'black'
+})
 const board = ref<Cell[]>([])
 const currentTurn = ref<'user' | 'ai'>('user')
 const gameOver = ref(false)
 const winner = ref<'user' | 'ai' | 'draw' | null>(null)
 const aiThinking = ref(false)
 const dialogue = ref<string[]>([])
+let aiMoveTimer: ReturnType<typeof setTimeout> | null = null
 
 const aiName = computed(() => String(props.data.ai_name || activeWaifu.value?.displayName || 'AI').trim() || 'AI')
 const title = computed(() => props.data.title || '五子棋 · Gomoku')
 const boardStyle = computed(() => ({ gridTemplateColumns: `repeat(${boardSize.value}, minmax(0, 1fr))` }))
+const aiStarts = computed(() => userStone.value === 'white')
 
 const statusText = computed(() => {
   if (winner.value === 'user') return '你赢啦！'
@@ -60,115 +72,27 @@ function coordLabel(index: number): string {
   return `${letter}${row + 1}`
 }
 
-function inBounds(r: number, c: number): boolean {
-  const size = boardSize.value
-  return r >= 0 && r < size && c >= 0 && c < size
+function rowIndex(index: number): number {
+  return Math.floor(index / boardSize.value) + 1
 }
 
-function checkWinAt(cells: Cell[], index: number, stone: Stone): boolean {
-  const size = boardSize.value
-  const row = Math.floor(index / size)
-  const col = index % size
-  const dirs = [
-    [1, 0],
-    [0, 1],
-    [1, 1],
-    [1, -1],
-  ] as const
-  for (const [dr, dc] of dirs) {
-    let count = 1
-    for (const step of [1, -1]) {
-      let r = row + dr * step
-      let c = col + dc * step
-      while (inBounds(r, c) && cells[r * size + c] === stone) {
-        count += 1
-        r += dr * step
-        c += dc * step
-      }
-    }
-    if (count >= 5) return true
-  }
-  return false
+function colIndex(index: number): number {
+  return (index % boardSize.value) + 1
 }
 
-function hasEmptyCell(cells: Cell[]): boolean {
-  return cells.some((cell) => cell == null)
+function clearAiTimer(): void {
+  if (aiMoveTimer == null) return
+  clearTimeout(aiMoveTimer)
+  aiMoveTimer = null
 }
 
-function simulateWinningMove(cells: Cell[], stone: Stone): number {
-  for (let i = 0; i < cells.length; i++) {
-    if (cells[i] != null) continue
-    cells[i] = stone
-    const isWin = checkWinAt(cells, i, stone)
-    cells[i] = null
-    if (isWin) return i
-  }
-  return -1
-}
-
-function getCandidateMoves(cells: Cell[]): number[] {
-  const size = boardSize.value
-  const result = new Set<number>()
-  let occupied = 0
-  for (let i = 0; i < cells.length; i++) {
-    if (cells[i] == null) continue
-    occupied += 1
-    const row = Math.floor(i / size)
-    const col = i % size
-    for (let dr = -1; dr <= 1; dr++) {
-      for (let dc = -1; dc <= 1; dc++) {
-        const nr = row + dr
-        const nc = col + dc
-        if (!inBounds(nr, nc)) continue
-        const idx = nr * size + nc
-        if (cells[idx] == null) result.add(idx)
-      }
-    }
-  }
-  if (occupied === 0) return []
-  return Array.from(result)
-}
-
-function evaluateMove(cells: Cell[], index: number, stone: Stone, opponent: Stone): number {
-  const size = boardSize.value
-  const row = Math.floor(index / size)
-  const col = index % size
-  const center = (size - 1) / 2
-  const centerScore = 10 - (Math.abs(row - center) + Math.abs(col - center))
-  let allyAdj = 0
-  let enemyAdj = 0
-  for (let dr = -1; dr <= 1; dr++) {
-    for (let dc = -1; dc <= 1; dc++) {
-      if (dr === 0 && dc === 0) continue
-      const nr = row + dr
-      const nc = col + dc
-      if (!inBounds(nr, nc)) continue
-      const cell = cells[nr * size + nc]
-      if (cell === stone) allyAdj += 1
-      if (cell === opponent) enemyAdj += 1
-    }
-  }
-  return centerScore + allyAdj * 4 + enemyAdj * 2 + Math.random() * 0.25
-}
-
-function chooseAiMove(cells: Cell[]): number {
-  const win = simulateWinningMove(cells, aiStone.value)
-  if (win >= 0) return win
-  const block = simulateWinningMove(cells, userStone.value)
-  if (block >= 0) return block
-
-  const candidates = getCandidateMoves(cells)
-  const empties = candidates.length ? candidates : cells.map((cell, idx) => ({ cell, idx })).filter((x) => x.cell == null).map((x) => x.idx)
-  let best = empties[0] ?? -1
-  let bestScore = -Infinity
-  for (const idx of empties) {
-    const score = evaluateMove(cells, idx, aiStone.value, userStone.value)
-    if (score > bestScore) {
-      best = idx
-      bestScore = score
-    }
-  }
-  return best
+function scheduleAiTurn(delayMs: number): void {
+  clearAiTimer()
+  aiThinking.value = true
+  aiMoveTimer = setTimeout(() => {
+    aiMoveTimer = null
+    runAiTurn()
+  }, delayMs)
 }
 
 function personaLine(event: SpeakerEvent, coord?: string): string {
@@ -213,7 +137,8 @@ function addLine(line: string): void {
 }
 
 function resetBoard(startWithAi = false): void {
-  board.value = Array.from({ length: boardSize.value * boardSize.value }, () => null)
+  clearAiTimer()
+  board.value = createEmptyBoard(boardSize.value)
   currentTurn.value = startWithAi ? 'ai' : 'user'
   aiThinking.value = false
   gameOver.value = false
@@ -221,8 +146,7 @@ function resetBoard(startWithAi = false): void {
   dialogue.value = []
   addLine(personaLine('start'))
   if (startWithAi) {
-    aiThinking.value = true
-    setTimeout(() => runAiTurn(), 280)
+    scheduleAiTurn(280)
   }
 }
 
@@ -236,19 +160,21 @@ function finishAs(result: 'user' | 'ai' | 'draw'): void {
 }
 
 function runAiTurn(): void {
-  if (gameOver.value) return
-  const idx = chooseAiMove(board.value)
+  if (gameOver.value || currentTurn.value !== 'ai') return
+  const idx = chooseAiMove(board.value, boardSize.value, aiStone.value, userStone.value)
   if (idx < 0) {
     finishAs('draw')
     return
   }
-  board.value[idx] = aiStone.value
+  const nextBoard = [...board.value]
+  nextBoard[idx] = aiStone.value
+  board.value = nextBoard
   addLine(personaLine('ai_move', coordLabel(idx)))
-  if (checkWinAt(board.value, idx, aiStone.value)) {
+  if (checkWinAt(nextBoard, boardSize.value, idx, aiStone.value)) {
     finishAs('ai')
     return
   }
-  if (!hasEmptyCell(board.value)) {
+  if (!hasEmptyCell(nextBoard)) {
     finishAs('draw')
     return
   }
@@ -259,39 +185,65 @@ function runAiTurn(): void {
 function placeStone(index: number): void {
   if (gameOver.value || aiThinking.value || currentTurn.value !== 'user') return
   if (board.value[index] != null) return
-  board.value[index] = userStone.value
+  const nextBoard = [...board.value]
+  nextBoard[index] = userStone.value
+  board.value = nextBoard
   addLine(personaLine('user_move', coordLabel(index)))
-  if (checkWinAt(board.value, index, userStone.value)) {
+  if (checkWinAt(nextBoard, boardSize.value, index, userStone.value)) {
     finishAs('user')
     return
   }
-  if (!hasEmptyCell(board.value)) {
+  if (!hasEmptyCell(nextBoard)) {
     finishAs('draw')
     return
   }
   currentTurn.value = 'ai'
-  aiThinking.value = true
-  setTimeout(() => runAiTurn(), 260)
+  scheduleAiTurn(260)
 }
 
-resetBoard(false)
+function cellAriaLabel(index: number, cell: Cell): string {
+  const coord = coordLabel(index)
+  if (cell === 'black') return `${coord}，黑子`
+  if (cell === 'white') return `${coord}，白子`
+  return `${coord}，空位`
+}
+
+onMounted(() => {
+  resetBoard(aiStarts.value)
+})
+
+onBeforeUnmount(() => {
+  clearAiTimer()
+})
 </script>
 
 <template>
   <div class="gomoku-card">
     <div class="gomoku-header">
       <div class="gomoku-title">{{ title }}</div>
-      <button class="gomoku-restart" @click="resetBoard(false)">重新开局</button>
+      <button class="gomoku-restart" @click="resetBoard(aiStarts)">重新开局</button>
     </div>
-    <div class="gomoku-status">{{ statusText }}</div>
+    <div class="gomoku-status" aria-live="polite" aria-atomic="true">{{ statusText }}</div>
 
-    <div class="gomoku-board" :style="boardStyle">
+    <div
+      class="gomoku-board"
+      :style="boardStyle"
+      role="grid"
+      aria-label="五子棋棋盘"
+      :aria-rowcount="boardSize"
+      :aria-colcount="boardSize"
+    >
       <button
         v-for="(cell, index) in board"
         :key="index"
         class="gomoku-cell"
         :class="{ filled: !!cell }"
+        role="gridcell"
+        :aria-rowindex="rowIndex(index)"
+        :aria-colindex="colIndex(index)"
         :disabled="!!cell || gameOver || aiThinking"
+        :aria-label="cellAriaLabel(index, cell)"
+        :title="cellAriaLabel(index, cell)"
         @click="placeStone(index)"
       >
         <span v-if="cell" class="gomoku-stone" :class="cell" />

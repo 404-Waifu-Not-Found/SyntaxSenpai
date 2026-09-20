@@ -171,7 +171,7 @@ watch(
     if (last.isProcessStep || (typeof last.id === 'string' && last.id.startsWith('tool-'))) return
     const content = String(last.content)
     last.sentiment = classifySentiment(content)
-    voice.speak(content, store.selectedWaifuId)
+    voice.speak(content, store.selectedWaifuId, store.selectedWaifu, last.sentiment?.expression)
   },
 )
 const rainbowToggleBg = computed(() => {

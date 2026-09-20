@@ -77,6 +77,24 @@ export interface WaifuCapabilities {
   remoteDesktopControl: boolean; // only true if desktop agent connected
 }
 
+export type WaifuTtsProvider = "web-speech" | "indextts";
+export type WaifuTtsFallback = "web-speech" | "silent";
+export type WaifuTtsEmotion = "neutral" | "cheerful" | "excited" | "calm" | "hesitant" | "shy" | "firm" | "sad";
+
+export interface WaifuTtsEmotionConfig {
+  mode: "auto" | "manual";
+  manual?: WaifuTtsEmotion;
+}
+
+export interface WaifuTtsConfig {
+  provider?: WaifuTtsProvider;
+  enabled?: boolean;
+  voicePresetId?: string;
+  referenceWavId?: string;
+  emotion?: WaifuTtsEmotionConfig;
+  fallback?: WaifuTtsFallback;
+}
+
 /**
  * Core waifu definition
  */
@@ -90,6 +108,7 @@ export interface Waifu {
   communicationStyle: WaifuCommunicationStyle;
   avatar: WaifuAvatar;
   capabilities: WaifuCapabilities;
+  tts?: WaifuTtsConfig;
   systemPromptTemplate: string; // Handlebars template, filled at runtime
   preferredAIProvider?: string; // provider id hint
   preferredModel?: string;

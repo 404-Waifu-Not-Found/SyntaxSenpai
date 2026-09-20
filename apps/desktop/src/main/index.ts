@@ -63,6 +63,7 @@ import { registerLogIpc } from './ipc/log'
 import { registerRepositoryIpc } from './ipc/repository'
 import { registerSkillsIpc } from './ipc/skills'
 import { registerPendingPluginsIpc } from './ipc/pending-plugins'
+import { registerTtsIpc } from './ipc/tts'
 import { registerWechatIpc, autoResumeBot as autoResumeWechatBot } from './ipc/wechat'
 import { registerBrowserIpc, isAllowedBrowserUrl, BROWSER_PARTITION } from './ipc/browser'
 import { startWsServer } from './ws-server'
@@ -643,6 +644,7 @@ app.whenReady().then(() => {
   registerRepositoryIpc()
   registerSkillsIpc()
   registerPendingPluginsIpc()
+  registerTtsIpc()
   registerWechatIpc()
   registerBrowserIpc()
   startWsServer().catch((err) => mainLogger.error({ err }, 'ws-server failed to start'))

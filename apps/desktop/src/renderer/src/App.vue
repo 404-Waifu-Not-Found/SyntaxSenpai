@@ -19,6 +19,7 @@ import QrPairModal from './components/QrPairModal.vue'
 import RepositoryPickerModal from './components/RepositoryPickerModal.vue'
 import SakuraPetals from './components/SakuraPetals.vue'
 import BrowserPanel from './components/BrowserPanel.vue'
+import GomokuGame from './components/GomokuGame.vue'
 import { useBrowserStore } from './stores/browser'
 import type { ActiveCodingRepo } from './types/coding-session'
 
@@ -1456,6 +1457,20 @@ function applyPreset(preset: typeof colorPresets[0]) {
 const sidebarOpen = ref(true)
 const showSettings = ref(false)
 const showLive2DPanel = ref(false)
+const showGomokuPanel = ref(false)
+
+function shouldOpenGomokuForMessage(message: string): boolean {
+  const normalized = message.trim().toLowerCase()
+  if (!normalized) return false
+  if (/(关闭|关掉|不要|别|不想|stop|close).{0,8}(五子棋|棋盘|下棋|gomoku)/i.test(normalized)) return false
+  return /(五子棋|棋盘|下棋|对弈|来一局|陪我下|陪.*下棋|玩.*棋|gomoku)/i.test(normalized)
+}
+
+function submitChatMessage() {
+  const message = store.inputValue
+  if (shouldOpenGomokuForMessage(message)) showGomokuPanel.value = true
+  store.sendMessage(message)
+}
 
 const currentWaifuLive2D = computed(() => (store.selectedWaifu?.avatar as any)?.live2dModel ?? null)
 
@@ -2442,6 +2457,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
     if (showCompactStatusDetails.value) { showCompactStatusDetails.value = false; e.preventDefault(); return }
     if (showRenameConversationModal.value) { closeRenameConversationModal(); e.preventDefault(); return }
     if (showShortcuts.value) { showShortcuts.value = false; e.preventDefault(); return }
+    if (showGomokuPanel.value) { showGomokuPanel.value = false; e.preventDefault(); return }
     if (showSettings.value) { showSettings.value = false; e.preventDefault(); return }
     if (showAgent.value) { showAgent.value = false; e.preventDefault(); return }
     if (showModelPicker.value) { showModelPicker.value = false; e.preventDefault(); return }
@@ -2706,7 +2722,7 @@ function handleKeyDown(e: KeyboardEvent) {
       if (cmd) applySlashCommand(cmd)
       return
     }
-    store.sendMessage(store.inputValue)
+    submitChatMessage()
   }
 }
 
@@ -6070,6 +6086,15 @@ async function handleImportData() {
             🌐
           </button>
           <button
+            :class="['btn-ghost p-2', showGomokuPanel ? 'bg-white/10' : '']"
+            :style="ghostButtonStyle"
+            :title="showGomokuPanel ? 'Close Gomoku' : 'Open Gomoku'"
+            :aria-label="showGomokuPanel ? 'Close Gomoku' : 'Open Gomoku'"
+            @click="showGomokuPanel = !showGomokuPanel"
+          >
+            ⚫
+          </button>
+          <button
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             title="AI Memory"
@@ -6419,6 +6444,19 @@ async function handleImportData() {
           {{ t('input.dropHint') }}
         </div>
 
+        <GomokuGame
+          v-if="showGomokuPanel"
+          :class="compactChatLayout ? 'mb-2' : 'mb-3'"
+          :waifu-display-name="store.selectedWaifu?.displayName"
+          :backstory="store.selectedWaifu?.backstory"
+          :system-prompt-template="store.selectedWaifu?.systemPromptTemplate"
+          :catchphrases="store.selectedWaifu?.catchphrases"
+          :tags="store.selectedWaifu?.tags"
+          :personality="store.selectedWaifu?.personalityTraits"
+          :communication-style="store.selectedWaifu?.communicationStyle"
+          @close="showGomokuPanel = false"
+        />
+
         <!-- Coding-mode pill -->
         <div v-if="store.activeCodingRepo && !compactChatLayout" :class="[compactChatLayout ? 'flex flex-wrap items-center gap-1.5 mb-2' : 'flex items-center gap-2 mb-2']">
           <button
@@ -6578,7 +6616,7 @@ async function handleImportData() {
             :style="primaryButtonStyle"
             :aria-label="t('chat.send')"
             :disabled="!store.inputValue.trim() && store.pendingAttachments.length === 0"
-            @click="store.sendMessage(store.inputValue)"
+            @click="submitChatMessage"
           >
             {{ t('chat.send') }}
           </button>

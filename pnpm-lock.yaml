@@ -41,6 +41,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@phosphor-icons/vue':
+        specifier: ^2.2.0
+        version: 2.2.1(vue@3.5.32)
       '@syntax-senpai/agent-tools':
         specifier: workspace:*
         version: link:../../packages/agent-tools
@@ -2829,6 +2832,15 @@ packages:
   /@oxc-project/types@0.122.0:
     resolution: {integrity: sha512-oLAl5kBpV4w69UtFZ9xqcmTi+GENWOcPF7FCrczTiBbmC0ibXxCwyvZGbO39rCVEuLGAZM84DH0pUIyyv/YJzA==}
     dev: true
+
+  /@phosphor-icons/vue@2.2.1(vue@3.5.32):
+    resolution: {integrity: sha512-3RNg1utc2Z5RwPKWFkW3eXI/0BfQAwXgtFxPUPeSzi55jGYUq16b+UqcgbKLazWFlwg5R92OCLKjDiJjeiJcnA==}
+    engines: {node: '>=14'}
+    peerDependencies:
+      vue: '>=3.2.39'
+    dependencies:
+      vue: 3.5.32(typescript@5.9.3)
+    dev: false
 
   /@pixi/accessibility@6.5.10(@pixi/core@6.5.10)(@pixi/display@6.5.10)(@pixi/utils@6.5.10):
     resolution: {integrity: sha512-URrI1H+1kjjHSyhY1QXcUZ8S3omdVTrXg5y0gndtpOhIelErBTC9NWjJfw6s0Rlmv5+x5VAitQTgw9mRiatDgw==}

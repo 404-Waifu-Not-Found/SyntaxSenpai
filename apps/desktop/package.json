@@ -18,6 +18,7 @@
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "@phosphor-icons/vue": "^2.2.0",
     "@syntax-senpai/agent-tools": "workspace:*",
     "@syntax-senpai/ai-core": "workspace:*",
     "@syntax-senpai/logger": "workspace:*",

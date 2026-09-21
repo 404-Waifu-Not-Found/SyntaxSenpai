@@ -47,7 +47,7 @@ export default defineConfig({
     'btn-ghost': 'bg-transparent hover:bg-neutral-800/50 text-neutral-400 focus:ring-2 focus:ring-neutral-600/30 px-3 py-2 text-sm rounded-lg transition-all duration-200 outline-none',
     'input-field': 'w-full rounded-lg px-3 py-2 text-sm outline-none bg-neutral-950 focus:bg-neutral-900 focus:border-primary-400/50 border-2 border-solid border-neutral-900 text-neutral-100 shadow-sm transition-all duration-200 ease-in-out',
     'settings-nav-btn': 'flex items-center gap-2.5 px-3 py-2 rounded-lg w-full text-left text-[13px] font-medium text-neutral-300 hover:bg-white/5 hover:text-white transition-colors duration-150 cursor-pointer',
-    'settings-nav-btn-active': '!bg-primary-500/20 !text-white shadow-[inset_2px_0_0_0_rgb(var(--primary-rgb))]',
+    'settings-nav-btn-active': '!bg-transparent !text-white',
     'settings-card': 'mb-4 p-3 rounded-lg border border-neutral-700/30 bg-neutral-800/25',
     'settings-section-title': 'text-xs font-semibold uppercase tracking-wide text-neutral-300',
   },
@@ -154,8 +154,8 @@ export default defineConfig({
         }
 
         /* Panel enter/leave, driven by the parent backdrop's enter/leave classes.
-           Short travel + scale + spring-feeling bezier feels lighter than a full
-           100% slide — important now that the settings panel is near-fullscreen. */
+           Short travel + scale + spring-feeling bezier keeps the fixed-size panel
+           feeling light without changing its dimensions. */
         .modal-backdrop-enter-active .modal-glass,
         .modal-backdrop-enter-active .settings-glass {
           transition:
@@ -257,6 +257,33 @@ export default defineConfig({
             0 8px 24px -12px rgba(0, 0, 0, 0.5),
             0 0 0 1px rgba(var(--primary-rgb), 0.05),
             inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+        }
+
+        /* Settings is a fixed desktop panel. The backdrop can scroll when the
+           host window is smaller, but the panel itself never changes size. */
+        .settings-modal {
+          width: 1100px;
+          height: 700px;
+          max-width: none;
+          max-height: none;
+          flex: 0 0 auto;
+        }
+
+        /* One shared selection surface slides between the fixed-height nav rows,
+           keeping the active state spatially continuous as tabs change. */
+        .settings-nav-indicator {
+          position: absolute;
+          top: 0.75rem;
+          right: 0.5rem;
+          left: 0.5rem;
+          height: 2.25rem;
+          border-radius: 0.5rem;
+          background: rgba(var(--primary-rgb), 0.2);
+          box-shadow: inset 2px 0 0 0 rgb(var(--primary-rgb));
+          pointer-events: none;
+          transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+          will-change: transform;
+          z-index: 0;
         }
 
         /* Settings tab strip — theme-aware pill and active state */
@@ -394,6 +421,7 @@ export default defineConfig({
         [data-motion="reduced"] .modal-backdrop-leave-active .settings-glass,
         [data-motion="reduced"] .tab-slide-enter-active,
         [data-motion="reduced"] .tab-slide-leave-active,
+        [data-motion="reduced"] .settings-nav-indicator,
         [data-motion="reduced"] .tab-wrapper {
           transition: none !important;
         }

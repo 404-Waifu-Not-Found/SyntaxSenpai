@@ -1,5 +1,25 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, type Component } from 'vue'
+import {
+  PhBookOpen,
+  PhBrain,
+  PhChatCircle,
+  PhChartBar,
+  PhDeviceMobile,
+  PhFloppyDisk,
+  PhGear,
+  PhGlobe,
+  PhHeart,
+  PhMagnifyingGlass,
+  PhMaskHappy,
+  PhPalette,
+  PhPencilSimple,
+  PhPuzzlePiece,
+  PhRobot,
+  PhSparkle,
+  PhUserCircle,
+  PhWechatLogo,
+} from '@phosphor-icons/vue'
 import { builtInWaifus, classifySentiment, EXPRESSION_EMOJI } from '@syntax-senpai/waifu-core'
 import type { Expression } from '@syntax-senpai/waifu-core'
 import { unwrapExport, SchemaError } from '@syntax-senpai/storage'
@@ -186,20 +206,24 @@ const rainbowToggleBg = computed(() => {
 })
 type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'plugins' | 'skills' | 'waifus' | 'live2d' | 'mobile' | 'wechat'
 const settingsTab = ref<SettingsTabId>('general')
-const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: string }> = [
-  { id: 'general', label: 'General', icon: '⚙️' },
-  { id: 'ai', label: 'AI', icon: '🤖' },
-  { id: 'data', label: 'Data', icon: '💾' },
-  { id: 'metrics', label: 'Metrics', icon: '📊' },
-  { id: 'theme', label: 'Theme', icon: '🎨' },
-  { id: 'interface', label: 'Interface', icon: '✨' },
-  { id: 'plugins', label: 'Plugins', icon: '🧩' },
-  { id: 'skills', label: 'Skills', icon: '📘' },
-  { id: 'waifus', label: 'Waifus', icon: '💗' },
-  { id: 'live2d', label: 'Live2D', icon: '🎭' },
-  { id: 'mobile', label: 'Mobile', icon: '📱' },
-  { id: 'wechat', label: 'WeChat', icon: '💬' },
+const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: Component }> = [
+  { id: 'general', label: 'General', icon: PhGear },
+  { id: 'ai', label: 'AI', icon: PhRobot },
+  { id: 'data', label: 'Data', icon: PhFloppyDisk },
+  { id: 'metrics', label: 'Metrics', icon: PhChartBar },
+  { id: 'theme', label: 'Theme', icon: PhPalette },
+  { id: 'interface', label: 'Interface', icon: PhSparkle },
+  { id: 'plugins', label: 'Plugins', icon: PhPuzzlePiece },
+  { id: 'skills', label: 'Skills', icon: PhBookOpen },
+  { id: 'waifus', label: 'Waifus', icon: PhHeart },
+  { id: 'live2d', label: 'Live2D', icon: PhMaskHappy },
+  { id: 'mobile', label: 'Mobile', icon: PhDeviceMobile },
+  { id: 'wechat', label: 'WeChat', icon: PhWechatLogo },
 ]
+const SETTINGS_NAV_ROW_HEIGHT = 38
+const settingsNavIndicatorStyle = computed(() => ({
+  transform: `translateY(${Math.max(settingsTabs.findIndex((tab) => tab.id === settingsTab.value), 0) * SETTINGS_NAV_ROW_HEIGHT}px)`,
+}))
 
 // Ollama base URL (per-provider preference)
 const ollamaBaseUrl = ref('')
@@ -757,7 +781,7 @@ async function fixGrammarAI() {
     })
     if (result?.success && result.text) {
       newWaifuBackstory.value = result.text
-      showToast('Grammar & typos fixed! ✨', 'success')
+      showToast('Grammar & typos fixed!', 'success')
     } else {
       aiEnhanceError.value = result?.error || 'Failed to fix grammar'
     }
@@ -3346,7 +3370,7 @@ async function handleImportData() {
             class="flex h-24 w-24 items-center justify-center rounded-[2rem] border border-white/15 bg-black/35 text-4xl backdrop-blur-xl animate-[startup-float_1.4s_ease-in-out_infinite]"
             :style="startupAccentStyle"
           >
-            ✨
+            <PhSparkle :size="40" weight="duotone" aria-hidden="true" />
           </div>
           <div class="space-y-2">
             <h1 class="font-display text-4xl font-bold tracking-[0.12em] text-white drop-shadow-[0_0_24px_rgba(255,255,255,0.12)]">
@@ -3371,7 +3395,7 @@ async function handleImportData() {
   >
     <div class="text-center max-w-md px-6">
       <div class="text-6xl mb-6">
-        ✨
+        <PhSparkle :size="56" weight="duotone" aria-hidden="true" />
       </div>
       <h1 class="text-4xl font-bold text-white mb-3 font-display">
         SyntaxSenpai
@@ -3401,32 +3425,39 @@ async function handleImportData() {
     <Transition name="modal-backdrop">
       <div
         v-if="showSettings"
-        class="fixed inset-0 bg-black/50 backdrop-blur-md flex items-end sm:items-center justify-center z-50"
+        class="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center overflow-auto p-4 z-50"
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-dialog-title"
         @click.self="showSettings = false"
       >
           <div
-            class="settings-glass relative rounded-t-3xl sm:rounded-3xl max-w-6xl w-full mx-0 sm:mx-4 max-h-[92vh] overflow-hidden flex"
+            class="settings-glass settings-modal relative rounded-3xl overflow-hidden flex"
           >
             <h2 id="settings-dialog-title" class="sr-only">Settings</h2>
             <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/25 to-transparent z-10" />
-            <div class="pointer-events-none absolute inset-0 rounded-t-3xl sm:rounded-3xl ring-1 ring-inset ring-white/5 z-10" />
+            <div class="pointer-events-none absolute inset-0 rounded-3xl ring-1 ring-inset ring-white/5 z-10" />
 
             <!-- Sidebar nav -->
             <aside class="w-56 shrink-0 border-r border-white/6 bg-black/20 flex flex-col relative">
               <div class="px-5 pt-5 pb-3 border-b border-white/5">
                 <h2 class="text-base font-bold text-white">{{ t('settings.title') }}</h2>
               </div>
-              <nav class="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
+              <nav class="relative flex flex-col flex-1 overflow-y-auto px-2 py-3 gap-0.5">
+                <div
+                  class="settings-nav-indicator"
+                  :style="settingsNavIndicatorStyle"
+                  aria-hidden="true"
+                />
                 <button
                   v-for="tab in settingsTabs"
                   :key="tab.id"
-                  :class="['settings-nav-btn', settingsTab === tab.id && 'settings-nav-btn-active']"
+                  :class="['settings-nav-btn relative z-[1] h-9', settingsTab === tab.id && 'settings-nav-btn-active']"
                   @click="settingsTab = tab.id; if (tab.id === 'mobile') checkMobilePairingStatus(); if (tab.id === 'live2d') refreshCubismCoreStatus()"
                 >
-                  <span class="text-base leading-none shrink-0">{{ tab.icon }}</span>
+                  <span class="text-base leading-none shrink-0">
+                    <component :is="tab.icon" :size="20" weight="regular" aria-hidden="true" />
+                  </span>
                   <span class="truncate">{{ tab.label }}</span>
                 </button>
               </nav>
@@ -3912,7 +3943,7 @@ async function handleImportData() {
                 <div>
                   <div class="text-sm font-semibold text-neutral-200">AI browser control</div>
                   <p class="mt-1 text-xs text-neutral-400">
-                    Lets the waifu drive the embedded browser panel (🌐) — navigate, click, type, and read pages. You share the same browser and can take over anytime. Passwords are never typed by the AI.
+                    Lets the waifu drive the embedded browser panel (<PhGlobe :size="14" weight="regular" class="inline-block align-[-2px]" aria-hidden="true" />) — navigate, click, type, and read pages. You share the same browser and can take over anytime. Passwords are never typed by the AI.
                   </p>
                 </div>
                 <button
@@ -4923,7 +4954,8 @@ async function handleImportData() {
                   class="btn-primary shrink-0"
                   @click="showWaifuCreator = !showWaifuCreator; if (showWaifuCreator) resetWaifuForm()"
                 >
-                  {{ showWaifuCreator ? 'Cancel' : '✏️ Create New' }}
+                  <template v-if="showWaifuCreator">Cancel</template>
+                  <template v-else><PhPencilSimple :size="14" weight="regular" aria-hidden="true" /> Create New</template>
                 </button>
               </div>
 
@@ -4967,7 +4999,7 @@ async function handleImportData() {
                       @click="fixGrammarAI"
                     >
                       <span v-if="aiEnhancing === 'grammar'" class="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                      <span v-else>🔍</span>
+                      <PhMagnifyingGlass v-else :size="14" weight="regular" aria-hidden="true" />
                       <span>{{ aiEnhancing === 'grammar' ? 'Fixing…' : 'Fix Grammar & Typos' }}</span>
                     </button>
                     <button
@@ -4978,7 +5010,7 @@ async function handleImportData() {
                       @click="enhancePersonalityAI"
                     >
                       <span v-if="aiEnhancing === 'personality'" class="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                      <span v-else>✨</span>
+                      <PhSparkle v-else :size="14" weight="regular" aria-hidden="true" />
                       <span>{{ aiEnhancing === 'personality' ? 'Enhancing…' : 'Enhance Personality' }}</span>
                     </button>
                   </div>
@@ -5165,7 +5197,8 @@ async function handleImportData() {
                       :disabled="newWaifuCreating || !newWaifuName.trim() || !newWaifuDisplayName.trim() || !newWaifuBackstory.trim()"
                       @click="createCustomWaifu"
                     >
-                      {{ newWaifuCreating ? 'Creating…' : '💗 Create Waifu' }}
+                      <template v-if="newWaifuCreating">Creating…</template>
+                      <template v-else><PhHeart :size="14" weight="regular" aria-hidden="true" /> Create Waifu</template>
                     </button>
                   </div>
                 </div>
@@ -5294,7 +5327,7 @@ async function handleImportData() {
             </div>
 
             <div class="settings-card mb-3">
-              <h3 class="text-sm font-bold text-white mb-1">🎭 Import Live2D Model</h3>
+              <h3 class="text-sm font-bold text-white mb-1 flex items-center gap-1.5"><PhMaskHappy :size="16" weight="regular" aria-hidden="true" /> Import Live2D Model</h3>
               <p class="text-xs text-neutral-400 mb-4">
                 Import a Live2D Cubism 4 model to use as your waifu's avatar. Pick the
                 <code class="bg-neutral-700/60 px-0.5 rounded">.model3.json</code> directly,
@@ -5305,7 +5338,8 @@ async function handleImportData() {
 
               <!-- Current waifu info -->
               <div class="flex items-center gap-2 mb-4 rounded bg-neutral-700/40 px-3 py-2">
-                <span class="text-lg">{{ currentWaifuLive2D ? '🎭' : '💗' }}</span>
+                <PhMaskHappy v-if="currentWaifuLive2D" :size="20" weight="regular" aria-hidden="true" />
+                <PhHeart v-else :size="20" weight="regular" aria-hidden="true" />
                 <div class="flex-1 min-w-0">
                   <p class="text-xs font-semibold text-white truncate">{{ store.selectedWaifu?.name ?? 'No waifu selected' }}</p>
                   <p class="text-[10px] text-neutral-400 truncate">
@@ -5407,7 +5441,7 @@ async function handleImportData() {
                 <li>You can import either the <code class="bg-neutral-700/60 px-0.5 rounded">.model3.json</code> file directly or a <code class="bg-neutral-700/60 px-0.5 rounded">.zip</code> archive of the model folder.</li>
                 <li>The model contents are copied into the app's data directory.</li>
                 <li>The Cubism Core SDK is auto-installed when you import the first model — no extra setup needed.</li>
-                <li>After assigning, toggle the avatar panel with the 🎭 button in the toolbar.</li>
+                <li class="flex items-center gap-1.5">After assigning, toggle the avatar panel with the <PhMaskHappy :size="14" weight="regular" aria-hidden="true" /> button in the toolbar.</li>
                 <li>To switch waifus, go to <strong class="text-neutral-300">Settings → General</strong> first, then come back here.</li>
               </ul>
             </div>
@@ -5527,7 +5561,7 @@ async function handleImportData() {
             <div class="settings-card">
               <h4 class="text-xs font-bold text-neutral-300 mb-2">How it works</h4>
               <ul class="text-xs text-neutral-400 list-disc pl-5 space-y-1">
-                <li>Inbound WeChat DMs land as new conversations tagged <span class="text-white">💬 WeChat · &lt;name&gt;</span>.</li>
+                <li>Inbound WeChat DMs land as new conversations tagged <span class="text-white inline-flex items-center gap-1"><PhWechatLogo :size="14" weight="regular" aria-hidden="true" /> WeChat · &lt;name&gt;</span>.</li>
                 <li>The waifu's reply is auto-relayed back to the WeChat peer.</li>
                 <li>For tables, comparisons or long code: the waifu calls <code>wechat_send</code> with <code>as_image: true</code>; the panel is rendered to a PNG and sent as a WeChat image.</li>
                 <li>Credentials are stored in your OS keychain under <code>syntax-senpai-wechat</code>.</li>
@@ -6031,7 +6065,7 @@ async function handleImportData() {
             :aria-label="showLive2DPanel ? 'Hide avatar' : 'Show Live2D avatar'"
             @click="showLive2DPanel = !showLive2DPanel"
           >
-            🪆
+            <PhUserCircle :size="18" weight="regular" aria-hidden="true" />
           </button>
           <button
             class="btn-ghost p-2"
@@ -6040,7 +6074,7 @@ async function handleImportData() {
             :aria-label="t('sidebar.agent')"
             @click="openAgentPanel"
           >
-            🤖
+            <PhRobot :size="18" weight="regular" aria-hidden="true" />
           </button>
           <button
             :class="['btn-ghost p-2', browser.panelOpen ? 'bg-white/10' : '']"
@@ -6049,7 +6083,7 @@ async function handleImportData() {
             :aria-label="browser.panelOpen ? 'Close browser' : 'Open browser'"
             @click="browser.togglePanel()"
           >
-            🌐
+            <PhGlobe :size="18" weight="regular" aria-hidden="true" />
           </button>
           <button
             class="btn-ghost p-2"
@@ -6058,7 +6092,7 @@ async function handleImportData() {
             aria-label="Open AI memory"
             @click="openMemoryPanel"
           >
-            🧠
+            <PhBrain :size="18" weight="regular" aria-hidden="true" />
           </button>
           <button
             class="btn-ghost p-2"
@@ -6067,7 +6101,7 @@ async function handleImportData() {
             :aria-label="t('sidebar.settings')"
             @click="openSettingsPanel"
           >
-            ⚙️
+            <PhGear :size="18" weight="regular" aria-hidden="true" />
           </button>
           </template>
         </div>
@@ -6162,7 +6196,7 @@ async function handleImportData() {
           :class="['flex flex-col items-center justify-center h-full text-center text-neutral-400', compactChatLayout ? 'px-4' : '']"
         >
           <div :class="[compactChatLayout ? 'text-3xl mb-3' : 'text-4xl mb-4']" :style="emptyStateGlowStyle">
-            💬
+            <PhChatCircle :size="36" weight="regular" aria-hidden="true" />
           </div>
           <h3 :class="[compactChatLayout ? 'compact-chat-empty-title text-base font-semibold text-white mb-1.5 font-display' : 'text-lg font-semibold text-white mb-2 font-display']" :style="emptyStateGlowStyle">
             {{ store.isGroupChat
@@ -6235,7 +6269,7 @@ async function handleImportData() {
                 :class="[compactChatLayout ? 'text-[10px] text-emerald-400/80 mb-0.5 mr-0.5 font-semibold self-end flex items-center gap-1' : 'text-[11px] text-emerald-400/80 mb-0.5 mr-1 font-semibold self-end flex items-center gap-1']"
                 :title="group.msg.sourceLabel ? `From WeChat contact: ${group.msg.sourceLabel}` : 'Received from WeChat'"
               >
-                <span aria-hidden="true">💬</span>
+                <PhWechatLogo :size="14" weight="regular" aria-hidden="true" />
                 <span>via WeChat{{ group.msg.sourceLabel ? ` · ${group.msg.sourceLabel}` : '' }}</span>
               </span>
 
@@ -6257,7 +6291,7 @@ async function handleImportData() {
                   @click="toggleProcessExpanded(group.msg.id)"
                 >
                   <span class="process-panel-chevron inline-block w-3 text-neutral-500 transition-transform" :class="isProcessExpanded(group.msg.id) ? 'rotate-90' : ''">▸</span>
-                  <span>🧠</span>
+                  <PhBrain :size="14" weight="regular" aria-hidden="true" />
                   <span class="font-semibold">{{ isProcessExpanded(group.msg.id) ? 'Hide' : 'Show' }} thinking &amp; process</span>
                   <span class="text-neutral-500">·</span>
                   <span class="text-neutral-500">{{ group.processSteps.length }} step{{ group.processSteps.length === 1 ? '' : 's' }}</span>

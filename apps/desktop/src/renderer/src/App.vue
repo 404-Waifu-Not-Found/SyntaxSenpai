@@ -6022,24 +6022,6 @@ async function handleImportData() {
           </div>
         </div>
         <div ref="compactHeaderMenuRef" :class="['flex items-center relative', compactChatLayout ? 'gap-1.5 overlay-no-drag' : 'gap-1']">
-          <button
-            :class="['window-mode-btn', compactChatLayout ? 'overlay-no-drag' : '', overlayWindow.enabled ? 'window-mode-btn-active' : '']"
-            :style="overlayWindow.enabled ? primaryButtonStyle : ghostButtonStyle"
-            :title="t('settings.overlayWindow')"
-            :aria-label="t('settings.overlayWindow')"
-            @click="toggleOverlayWindowMode"
-          >
-            浮
-          </button>
-          <button
-            :class="['window-mode-btn', compactChatLayout ? 'overlay-no-drag' : '', fullscreenWindow.enabled ? 'window-mode-btn-active' : '']"
-            :style="fullscreenWindow.enabled ? primaryButtonStyle : ghostButtonStyle"
-            title="Fullscreen"
-            aria-label="Toggle fullscreen"
-            @click="toggleFullscreenWindowMode"
-          >
-            满
-          </button>
           <template v-if="!compactChatLayout">
           <button
             v-if="currentWaifuLive2D"

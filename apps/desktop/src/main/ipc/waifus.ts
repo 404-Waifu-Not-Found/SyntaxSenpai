@@ -292,7 +292,7 @@ export function registerWaifusIpc() {
       const force = Boolean(opts && opts.force)
       const result = force
         ? await downloadCubismCore(userData)
-        : await ensureCubismCore(userData)
+        : await ensureCubismCore(userData, { cacheOnly: Boolean(opts && opts.cacheOnly) })
       if (!result.success) {
         return { success: false, error: result.error || 'Cubism Core install failed' }
       }

@@ -40,7 +40,6 @@ import QrPairModal from './components/QrPairModal.vue'
 import RepositoryPickerModal from './components/RepositoryPickerModal.vue'
 import SakuraPetals from './components/SakuraPetals.vue'
 import BrowserPanel from './components/BrowserPanel.vue'
-import MiniGamePanel from './components/MiniGamePanel.vue'
 import { useBrowserStore } from './stores/browser'
 import type { ActiveCodingRepo } from './types/coding-session'
 import { gameSession, applyGameSessionMove, closeGameSession } from './game/session'
@@ -2014,6 +2013,8 @@ let removeMobileChatListener: (() => void) | null = null
 let removeWechatInboundListener: (() => void) | null = null
 let removeWechatStatusListener: (() => void) | null = null
 let removeTrayNewChatListener: (() => void) | null = null
+let removeGameMoveListener: (() => void) | null = null
+let removeGameWindowClosedListener: (() => void) | null = null
 const wechatStatus = ref<{ connected: boolean; account: { userId: string; displayName: string | null } | null; lastError: string | null; pairing?: boolean }>({ connected: false, account: null, lastError: null })
 const THEME_STORAGE_KEY = 'syntax-senpai-theme'
 const API_TELEMETRY_HISTORY_STORAGE_KEY = 'syntax-senpai-api-telemetry-history'
@@ -2578,6 +2579,13 @@ onMounted(() => {
     store.newChat()
   })
 
+  removeGameMoveListener = on('game:move', (move: string) => {
+    void handleGameUserMove(move)
+  })
+  removeGameWindowClosedListener = on('game:window-closed', () => {
+    if (gameSession.open) closeGameSession()
+  })
+
   window.addEventListener('app:error', onAppError as EventListener)
   window.addEventListener('app:retry', onAppRetry as EventListener)
   window.addEventListener('app:milestone', onAppMilestone as EventListener)
@@ -2608,6 +2616,8 @@ onUnmounted(() => {
   removeWechatInboundListener?.()
   removeWechatStatusListener?.()
   removeTrayNewChatListener?.()
+  removeGameMoveListener?.()
+  removeGameWindowClosedListener?.()
   window.removeEventListener('app:error', onAppError as EventListener)
   window.removeEventListener('app:retry', onAppRetry as EventListener)
   window.removeEventListener('app:milestone', onAppMilestone as EventListener)
@@ -6638,16 +6648,6 @@ async function handleImportData() {
 
     <!-- Embedded browser panel (shared between the user and the waifu agent) -->
     <BrowserPanel v-if="browser.panelOpen && !compactChatLayout" />
-
-    <!-- Agent-launched minigame panel. The board is backed by the same
-         authoritative engine that handles game_start/game_move tool calls. -->
-    <MiniGamePanel
-      v-if="gameSession.open"
-      :snapshot="gameSession.snapshot"
-      :busy="gameSession.busy"
-      @move="handleGameUserMove"
-      @close="closeGameSession"
-    />
 
     <!-- Floating Live2D avatar panel -->
     <Teleport to="body">

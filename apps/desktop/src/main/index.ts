@@ -19,7 +19,7 @@ if (typeof electronModule === 'string') {
 }
 
 const { app, BrowserWindow, ipcMain, clipboard, globalShortcut, Tray, Menu, nativeImage, screen, protocol: earlyProtocol } = electronModule
-const { join } = require('path')
+const { join, resolve, sep } = require('path')
 const fs = require('fs')
 
 // Register `userdata://` as a standard, fetch-capable, secure scheme BEFORE
@@ -72,6 +72,8 @@ import { mainLogger } from './logger'
 const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow: any = null
+let gameWindow: any = null
+let pendingGameSnapshot: any = null
 let tray: any = null
 let currentWindowFrameless = false
 
@@ -385,6 +387,58 @@ function registerGlobalShortcuts() {
   }
 }
 
+function sendGameSnapshot(snapshot: any) {
+  pendingGameSnapshot = snapshot ?? null
+  if (!gameWindow || gameWindow.isDestroyed()) return
+  if (gameWindow.webContents.isLoadingMainFrame()) return
+  gameWindow.webContents.send('game:session', pendingGameSnapshot)
+}
+
+function createGameWindow(snapshot?: any) {
+  if (snapshot) pendingGameSnapshot = snapshot
+
+  if (gameWindow && !gameWindow.isDestroyed()) {
+    gameWindow.show()
+    gameWindow.focus()
+    sendGameSnapshot(pendingGameSnapshot)
+    return
+  }
+
+  gameWindow = new BrowserWindow({
+    width: 960,
+    height: 800,
+    minWidth: 680,
+    minHeight: 600,
+    title: 'SyntaxSenpai Games',
+    backgroundColor: '#071511',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+
+  gameWindow.webContents.on('did-finish-load', () => {
+    if (pendingGameSnapshot) gameWindow?.webContents.send('game:session', pendingGameSnapshot)
+  })
+
+  gameWindow.on('closed', () => {
+    gameWindow = null
+    pendingGameSnapshot = null
+    mainWindow?.webContents.send('game:window-closed')
+  })
+
+  if (isDev) {
+    gameWindow.loadURL('http://localhost:5173/game.html')
+  } else {
+    gameWindow.loadFile(join(__dirname, '../renderer/game.html'))
+  }
+  gameWindow.show()
+  gameWindow.focus()
+}
+
 function createWindow(forcedMode?: WindowMode): void {
   if (!windowState) windowState = loadWindowState()
   const mode = forcedMode
@@ -600,6 +654,37 @@ ipcMain.handle('window:setOverlayMode', (_e: any, enabled: boolean) => {
   }
 })
 
+// Game sessions are authoritative in the main renderer because the agent
+// tools run there. The dedicated game window is a view/controller surface:
+// snapshots flow out to it and human moves flow back to the main renderer.
+ipcMain.handle('game:openWindow', (_e: any, snapshot: any) => {
+  try {
+    createGameWindow(snapshot)
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+ipcMain.handle('game:closeWindow', () => {
+  try {
+    if (gameWindow && !gameWindow.isDestroyed()) gameWindow.close()
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+ipcMain.on('game:session:update', (_e: any, snapshot: any) => {
+  sendGameSnapshot(snapshot)
+})
+
+ipcMain.on('game:move', (_e: any, move: string) => {
+  if (typeof move === 'string' && move.trim()) {
+    mainWindow?.webContents.send('game:move', move)
+  }
+})
+
 app.whenReady().then(() => {
   windowState = loadWindowState()
 
@@ -610,8 +695,14 @@ app.whenReady().then(() => {
   const { protocol, net } = electronModule
   const { pathToFileURL: ptfu } = require('node:url')
   protocol.handle('userdata', (request: any) => {
-    const relPath = decodeURIComponent(request.url.replace(/^userdata:\/\//, ''))
-    const absPath = join(app.getPath('userData'), relPath)
+    const relPath = decodeURIComponent(
+      request.url.replace(/^userdata:\/\//, '').split(/[?#]/, 1)[0],
+    ).replace(/^\/+/, '')
+    const userDataRoot = resolve(app.getPath('userData'))
+    const absPath = resolve(userDataRoot, relPath)
+    if (absPath !== userDataRoot && !absPath.startsWith(`${userDataRoot}${sep}`)) {
+      return new Response('Not found', { status: 404 })
+    }
     return net.fetch(ptfu(absPath).toString())
   })
 

@@ -94,6 +94,10 @@ export default defineConfig({
       reportCompressedSize: false,
       cssCodeSplit: true,
       rollupOptions: {
+        input: {
+          index: path.resolve(__dirname, 'src/renderer/index.html'),
+          game: path.resolve(__dirname, 'src/renderer/game.html'),
+        },
         external: ['expo-secure-store', 'expo', 'keytar', 'better-sqlite3']
       },
       outDir: 'dist/renderer'

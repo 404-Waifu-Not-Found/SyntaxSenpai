@@ -220,6 +220,14 @@ async function loadCubismCore(modelUrl: string): Promise<boolean> {
   // Check if already loaded from a previous model
   if ((window as any).Live2DCubismCore) return true
 
+  // Seed the user-data cache from the copy shipped with the app before trying
+  // any URL. This keeps first launch and offline use independent of the CDN.
+  try {
+    await (window as any).electron?.ipcRenderer?.invoke('waifus:installCubismCore', { cacheOnly: true })
+  } catch {
+    // The URL candidates below still provide the normal imported-model path.
+  }
+
   // Try the model folder's own copy first (auto-installed during import for
   // every model), then the shared <userData>/live2d-sdk fallback the desktop
   // main process maintains via waifus:installCubismCore. Either path is
@@ -233,6 +241,17 @@ async function loadCubismCore(modelUrl: string): Promise<boolean> {
     if (await tryLoadCoreScript(url)) return true
   }
   return false
+}
+
+function describeModelLoadError(err: unknown, modelUrl: string): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  if (/network error|failed to fetch|err_failed|load failed/i.test(raw)) {
+    if (modelUrl.startsWith('userdata://')) {
+      return 'Could not read this local Live2D model. Re-import the model folder or verify that its model JSON, textures, and motion files are present.'
+    }
+    return 'Could not load this Live2D model. Check the model files and try again.'
+  }
+  return raw
 }
 
 async function loadCubism2Runtime(modelUrl: string): Promise<boolean> {
@@ -335,7 +354,7 @@ async function initModel() {
     playMotion(props.expression)
     emit('ready')
   } catch (err: any) {
-    error.value = err?.message || String(err)
+    error.value = describeModelLoadError(err, props.modelPath)
     emit('error', error.value)
   }
 }

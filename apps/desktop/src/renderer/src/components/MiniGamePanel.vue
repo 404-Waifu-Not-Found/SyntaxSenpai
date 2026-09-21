@@ -6,8 +6,10 @@ import type { GameSnapshot } from '@syntax-senpai/game-engine'
 const props = withDefaults(defineProps<{
   snapshot: GameSnapshot | null
   busy?: boolean
+  windowMode?: boolean
 }>(), {
   busy: false,
+  windowMode: false,
 })
 
 const emit = defineEmits<{
@@ -89,7 +91,10 @@ watch(() => props.snapshot?.lastMove, () => {
   <Transition name="game-panel">
     <section
       v-if="snapshot"
-      class="fixed bottom-5 right-5 z-[70] w-[min(92vw,28rem)] overflow-hidden rounded-2xl border border-cyan-400/20 bg-slate-950/95 text-white shadow-2xl shadow-cyan-950/30 backdrop-blur-xl"
+      class="overflow-hidden text-white"
+      :class="windowMode
+        ? 'mx-auto min-h-[100dvh] w-full max-w-5xl bg-slate-950'
+        : 'fixed bottom-5 right-5 z-[70] w-[min(92vw,28rem)] rounded-2xl border border-cyan-400/20 bg-slate-950/95 shadow-2xl shadow-cyan-950/30 backdrop-blur-xl'"
       aria-label="Minigame panel"
     >
       <header class="flex items-center justify-between border-b border-white/10 px-4 py-3">
@@ -111,7 +116,7 @@ watch(() => props.snapshot?.lastMove, () => {
         </button>
       </header>
 
-      <div class="space-y-3 p-4">
+      <div class="space-y-5 p-4 sm:p-6">
         <div class="flex items-center justify-between text-xs">
           <span class="flex items-center gap-1.5 text-slate-300">
             <PhUser v-if="snapshot.turn === 'human'" :size="15" aria-hidden="true" />
@@ -121,12 +126,12 @@ watch(() => props.snapshot?.lastMove, () => {
           <span class="text-slate-500">Move {{ snapshot.moveCount }}</span>
         </div>
 
-        <div v-if="snapshot.kind === 'tictactoe'" class="mx-auto grid w-56 grid-cols-3 gap-2">
+        <div v-if="snapshot.kind === 'tictactoe'" class="mx-auto grid w-[min(70vw,24rem)] grid-cols-3 gap-3">
           <button
             v-for="(cell, index) in ticTacToeCells"
             :key="index"
             type="button"
-            class="aspect-square rounded-xl border border-white/10 bg-white/[0.04] text-3xl font-semibold transition hover:border-cyan-300/60 hover:bg-cyan-300/10 disabled:cursor-default disabled:hover:border-white/10 disabled:hover:bg-white/[0.04]"
+            class="aspect-square rounded-2xl border border-white/10 bg-white/[0.04] text-4xl font-semibold transition hover:border-cyan-300/60 hover:bg-cyan-300/10 disabled:cursor-default disabled:hover:border-white/10 disabled:hover:bg-white/[0.04] sm:text-5xl"
             :class="cell === 'human' ? 'text-cyan-300' : cell === 'agent' ? 'text-fuchsia-300' : 'text-transparent'"
             :disabled="cell !== 'empty' || !canMove()"
             :aria-label="`Tic-Tac-Toe square ${index + 1}${cell !== 'empty' ? `, ${cell}` : ''}`"
@@ -136,7 +141,7 @@ watch(() => props.snapshot?.lastMove, () => {
           </button>
         </div>
 
-        <div v-else-if="snapshot.kind === 'connect4'" class="mx-auto max-w-[19rem]">
+        <div v-else-if="snapshot.kind === 'connect4'" class="mx-auto w-full max-w-[34rem]">
           <div class="mb-2 grid grid-cols-7 gap-1">
             <button
               v-for="column in 7"
@@ -150,7 +155,7 @@ watch(() => props.snapshot?.lastMove, () => {
               {{ column }}
             </button>
           </div>
-          <div class="grid grid-cols-7 gap-1 rounded-xl border border-cyan-300/20 bg-blue-950/70 p-2">
+          <div class="grid grid-cols-7 gap-2 rounded-2xl border border-cyan-300/20 bg-blue-950/70 p-3 sm:gap-3 sm:p-4">
             <template v-for="(row, rowIndex) in connectBoard" :key="rowIndex">
               <span
                 v-for="(cell, columnIndex) in row"
@@ -163,13 +168,13 @@ watch(() => props.snapshot?.lastMove, () => {
           </div>
         </div>
 
-        <div v-else class="mx-auto w-full max-w-[22rem] overflow-hidden rounded-xl border border-white/10">
+        <div v-else class="mx-auto w-full max-w-[34rem] overflow-hidden rounded-2xl border border-white/10">
           <div class="grid grid-cols-8">
             <button
               v-for="cell in chessCells"
               :key="cell.square"
               type="button"
-              class="relative flex aspect-square items-center justify-center text-lg font-bold transition-colors sm:text-xl"
+              class="relative flex aspect-square items-center justify-center text-2xl font-bold transition-colors sm:text-3xl"
               :class="[
                 cell.dark ? 'bg-emerald-950/80' : 'bg-emerald-100/90 text-slate-900',
                 selectedSquare === cell.square ? 'ring-2 ring-inset ring-cyan-300' : '',

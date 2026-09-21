@@ -186,6 +186,52 @@ export default defineConfig({
           opacity: 1;
         }
 
+        /* Settings uses a solid, fully opaque panel that rises from below.
+           Only this backdrop darkens and blurs during the flight. */
+        .settings-backdrop {
+          background-color: rgba(0, 0, 0, 0.5);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+        }
+        .settings-backdrop.modal-backdrop-enter-active,
+        .settings-backdrop.modal-backdrop-leave-active {
+          opacity: 1;
+          transition:
+            background-color 320ms ease-out,
+            backdrop-filter 320ms ease-out;
+        }
+        .settings-backdrop.modal-backdrop-leave-active {
+          transition-delay: 80ms;
+          transition-duration: 220ms;
+          transition-timing-function: ease-in;
+        }
+        .settings-backdrop.modal-backdrop-enter-from,
+        .settings-backdrop.modal-backdrop-leave-to {
+          opacity: 1;
+          background-color: rgba(0, 0, 0, 0);
+          backdrop-filter: blur(0);
+          -webkit-backdrop-filter: blur(0);
+        }
+        .settings-backdrop.modal-backdrop-enter-active .settings-glass,
+        .settings-backdrop.modal-backdrop-leave-active .settings-glass {
+          opacity: 1;
+          transition: transform 480ms cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .settings-backdrop.modal-backdrop-leave-active .settings-glass {
+          transition-duration: 280ms;
+          transition-timing-function: cubic-bezier(0.4, 0, 0.85, 0.35);
+        }
+        .settings-backdrop.modal-backdrop-enter-from .settings-glass,
+        .settings-backdrop.modal-backdrop-leave-to .settings-glass {
+          transform: translate3d(0, 100vh, 0);
+          opacity: 1;
+        }
+        .settings-backdrop.modal-backdrop-enter-to .settings-glass,
+        .settings-backdrop.modal-backdrop-leave-from .settings-glass {
+          transform: translate3d(0, 0, 0);
+          opacity: 1;
+        }
+
         /* Tab-switch transition inside the settings modal. Uses <Transition
            name="tab-slide" mode="out-in">. Leave is faster than enter so the
            new content feels like it's pushing the old content off stage. A

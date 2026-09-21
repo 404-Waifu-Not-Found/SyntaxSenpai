@@ -3425,7 +3425,7 @@ async function handleImportData() {
     <Transition name="modal-backdrop">
       <div
         v-if="showSettings"
-        class="fixed inset-0 bg-black/50 backdrop-blur-md flex items-center justify-center overflow-auto p-4 z-50"
+        class="settings-backdrop fixed inset-0 flex items-center justify-center overflow-auto p-4 z-50"
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-dialog-title"

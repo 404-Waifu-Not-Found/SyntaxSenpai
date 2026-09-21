@@ -14,6 +14,13 @@ import type { ToolDefinition, ToolCall } from '@syntax-senpai/ai-core'
 import { renderContentToPng } from './services/render-to-image'
 import * as browserController from './browser/controller'
 import { useBrowserStore } from './stores/browser'
+import {
+  applyBestAgentMove,
+  applyGameSessionMove,
+  getGameSessionSnapshot,
+  startGameSession,
+} from './game/session'
+import type { GameDifficulty, GameKind } from '@syntax-senpai/game-engine'
 
 export type AgentMode = 'ask' | 'auto' | 'full'
 
@@ -24,6 +31,9 @@ export const TODO_WRITE_TOOL_NAME = 'todo_write'
 export const TODO_READ_TOOL_NAME = 'todoread'
 export const RENAME_CHAT_TOOL_NAME = 'rename_chat'
 export const RENDER_CARD_TOOL_NAME = 'render_card'
+export const GAME_START_TOOL_NAME = 'game_start'
+export const GAME_MOVE_TOOL_NAME = 'game_move'
+export const GAME_STATE_TOOL_NAME = 'game_state'
 export const GIT_COMMIT_TOOL_NAME = 'git_commit'
 export const GIT_PUSH_TOOL_NAME = 'git_push'
 export const GITHUB_PR_CREATE_TOOL_NAME = 'github_pr_create'
@@ -758,6 +768,65 @@ export const agentTools: ToolDefinition[] = [
     },
   },
   {
+    name: GAME_START_TOOL_NAME,
+    description:
+      'Open a playable desktop minigame when the user asks to play Tic-Tac-Toe, Connect Four, or chess. ' +
+      'The game panel is controlled by the user and you through game_move. Rules, legal moves, and engine search are enforced by the app. ' +
+      'Choose a difficulty that matches the user request, then make a short in-character remark explaining the opening position. ' +
+      'If human_starts is false, the engine opens automatically and the result includes that move.',
+    parameters: {
+      type: 'object',
+      properties: {
+        kind: {
+          type: 'string',
+          enum: ['tictactoe', 'connect4', 'chess'],
+          description: 'The game to open: tictactoe, connect4, or chess.',
+        },
+        difficulty: {
+          type: 'string',
+          enum: ['casual', 'balanced', 'strong'],
+          description: 'Engine strength. Use strong when the user asks for a serious challenge.',
+        },
+        human_side: {
+          type: 'string',
+          enum: ['w', 'b'],
+          description: 'Chess side for the user. Ignored for Tic-Tac-Toe and Connect Four.',
+        },
+        human_starts: {
+          type: 'boolean',
+          description: 'Whether the user moves first. Defaults to true.',
+        },
+      },
+      required: ['kind'],
+    },
+  },
+  {
+    name: GAME_MOVE_TOOL_NAME,
+    description:
+      'Make one move in the active minigame as the agent. Use move="best" to ask the built-in game engine to choose the strongest legal move for the current position. ' +
+      'You may also pass an exact legal move: Tic-Tac-Toe square 0-8, Connect Four column 0-6, or chess SAN/LAN such as Nf3 or e2e4. ' +
+      'Only call this when the tool result says it is the agent turn. After the result, make a brief remark about the move or position.',
+    parameters: {
+      type: 'object',
+      properties: {
+        move: {
+          type: 'string',
+          description: 'Use "best" for engine selection, or an exact legal move for the active game.',
+        },
+      },
+      required: ['move'],
+    },
+  },
+  {
+    name: GAME_STATE_TOOL_NAME,
+    description:
+      'Read the current minigame state, including board, turn, legal move count, result, and engine. Use this when you need to comment on or reason about the position before moving.',
+    parameters: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
     name: CREATE_SKILL_TOOL_NAME,
     description:
       'Save a reusable skill to your personal skill library. Use this when you discover a recipe / procedure / style you want to remember across sessions — e.g. "how this user prefers Python code formatted", "debug ritual for their test suite", "the tone they like for PR descriptions". ' +
@@ -1132,6 +1201,45 @@ async function executeBrowserTool(toolCall: ToolCall): Promise<string> {
  * so it should never reach the executor — but we handle it gracefully.
  */
 export async function executeToolCall(toolCall: ToolCall): Promise<string> {
+  if (toolCall.name === GAME_START_TOOL_NAME) {
+    const args = (toolCall.arguments ?? {}) as Record<string, unknown>
+    const allowedKinds: GameKind[] = ['tictactoe', 'connect4', 'chess']
+    const allowedDifficulties: GameDifficulty[] = ['casual', 'balanced', 'strong']
+    const kind = String(args.kind || '') as GameKind
+    const difficulty = String(args.difficulty || 'balanced') as GameDifficulty
+    if (!allowedKinds.includes(kind)) return 'Error: game_start requires kind=tictactoe, connect4, or chess.'
+    if (!allowedDifficulties.includes(difficulty)) return 'Error: game_start difficulty must be casual, balanced, or strong.'
+    try {
+      const snapshot = startGameSession(kind, {
+        difficulty,
+        humanSide: args.human_side === 'b' ? 'b' : 'w',
+        humanStarts: args.human_starts !== false && String(args.human_starts) !== 'false',
+      })
+      return `Opened ${snapshot.kind}. Engine: ${snapshot.engine}. It is ${snapshot.turn === 'human' ? 'the user' : 'the agent'} turn.\nCurrent state:\n${JSON.stringify(snapshot)}`
+    } catch (err: any) {
+      return `Error: could not start game: ${err?.message || String(err)}`
+    }
+  }
+
+  if (toolCall.name === GAME_MOVE_TOOL_NAME) {
+    const args = (toolCall.arguments ?? {}) as Record<string, unknown>
+    const requestedMove = String(args.move || '').trim()
+    if (!requestedMove) return 'Error: game_move requires a move.'
+    try {
+      const snapshot = requestedMove.toLowerCase() === 'best'
+        ? applyBestAgentMove()
+        : applyGameSessionMove(requestedMove, 'agent')
+      return `Agent played ${snapshot.lastMove || requestedMove}. It is now ${snapshot.turn === 'human' ? 'the user' : snapshot.turn === 'agent' ? 'the agent' : 'game over'} turn.\nCurrent state:\n${JSON.stringify(snapshot)}`
+    } catch (err: any) {
+      return `Error: ${err?.message || String(err)}`
+    }
+  }
+
+  if (toolCall.name === GAME_STATE_TOOL_NAME) {
+    const snapshot = getGameSessionSnapshot()
+    return snapshot ? `Current state:\n${JSON.stringify(snapshot)}` : 'No minigame is currently open.'
+  }
+
   const ipc = (window as any).electron?.ipcRenderer
   if (!ipc) return 'Error: IPC bridge not available — is the app running in Electron?'
 
@@ -1624,6 +1732,12 @@ export function describeToolCall(toolCall: ToolCall): string {
       return 'todoread()'
     case RENAME_CHAT_TOOL_NAME:
       return `rename_chat(${String((args as any).title ?? '').slice(0, 60)})`
+    case GAME_START_TOOL_NAME:
+      return `game_start(${String((args as any).kind ?? '')})`
+    case GAME_MOVE_TOOL_NAME:
+      return `game_move(${String((args as any).move ?? 'best')})`
+    case GAME_STATE_TOOL_NAME:
+      return 'game_state()'
     case SET_EXPRESSION_TOOL_NAME:
       return `set_expression(${String((args as any).expression ?? 'neutral').slice(0, 30)})`
     case 'spotify_now_playing':

@@ -7,6 +7,7 @@ import {
   PhChartBar,
   PhDeviceMobile,
   PhFloppyDisk,
+  PhGameController,
   PhGear,
   PhGlobe,
   PhHeart,
@@ -39,8 +40,11 @@ import QrPairModal from './components/QrPairModal.vue'
 import RepositoryPickerModal from './components/RepositoryPickerModal.vue'
 import SakuraPetals from './components/SakuraPetals.vue'
 import BrowserPanel from './components/BrowserPanel.vue'
+import MiniGamePanel from './components/MiniGamePanel.vue'
 import { useBrowserStore } from './stores/browser'
 import type { ActiveCodingRepo } from './types/coding-session'
+import { gameSession, applyGameSessionMove, closeGameSession } from './game/session'
+import { gameMoveLabel } from '@syntax-senpai/game-engine'
 
 const store = useChatStore()
 const browser = useBrowserStore()
@@ -48,6 +52,26 @@ const { invoke, on } = useIpc()
 const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, setUI, DEFAULT_THEME } = useTheme()
 const { t, locale, setLocale, localeOptions } = useI18n()
 const voice = useVoice()
+
+async function handleGameUserMove(move: string) {
+  if (gameSession.busy || !gameSession.snapshot) return
+  gameSession.busy = true
+  try {
+    const before = gameSession.snapshot
+    const snapshot = applyGameSessionMove(move, 'human')
+    const label = gameMoveLabel(before.kind, move)
+    await store.sendGameEvent(
+      `[Minigame event] The user just played ${label} in ${before.kind}. ` +
+      `The authoritative game state after that move is ${JSON.stringify(snapshot)}. ` +
+      `Do not invent a board or move. If the game is still playing and the state says it is the agent turn, call game_move with move="best" so the built-in engine chooses the move. ` +
+      `Then make a brief in-character remark about the position. If the game is over, comment on the result and do not call game_move.`,
+    )
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  } finally {
+    gameSession.busy = false
+  }
+}
 
 /**
  * Message windowing: long conversations (1000+ turns) were rendering every
@@ -6255,7 +6279,7 @@ async function handleImportData() {
             </div>
 
             <div :class="[
-              (group.msg.role !== 'user' || group.msg.source === 'wechat') ? 'flex flex-col min-w-0' : 'min-w-0',
+              (group.msg.role !== 'user' || group.msg.source === 'wechat' || group.msg.source === 'game') ? 'flex flex-col min-w-0' : 'min-w-0',
               compactChatLayout ? 'max-w-[calc(100%-2.25rem)]' : '',
             ]">
               <span
@@ -6271,6 +6295,13 @@ async function handleImportData() {
               >
                 <PhWechatLogo :size="14" weight="regular" aria-hidden="true" />
                 <span>via WeChat{{ group.msg.sourceLabel ? ` · ${group.msg.sourceLabel}` : '' }}</span>
+              </span>
+              <span
+                v-if="group.msg.role === 'user' && group.msg.source === 'game'"
+                :class="[compactChatLayout ? 'text-[10px] text-cyan-300/80 mb-0.5 mr-0.5 font-semibold self-end flex items-center gap-1' : 'text-[11px] text-cyan-300/80 mb-0.5 mr-1 font-semibold self-end flex items-center gap-1']"
+              >
+                <PhGameController :size="14" weight="regular" aria-hidden="true" />
+                <span>Minigame event</span>
               </span>
 
               <!-- Collapsible "process" panel: tool calls + intermediate
@@ -6607,6 +6638,16 @@ async function handleImportData() {
 
     <!-- Embedded browser panel (shared between the user and the waifu agent) -->
     <BrowserPanel v-if="browser.panelOpen && !compactChatLayout" />
+
+    <!-- Agent-launched minigame panel. The board is backed by the same
+         authoritative engine that handles game_start/game_move tool calls. -->
+    <MiniGamePanel
+      v-if="gameSession.open"
+      :snapshot="gameSession.snapshot"
+      :busy="gameSession.busy"
+      @move="handleGameUserMove"
+      @close="closeGameSession"
+    />
 
     <!-- Floating Live2D avatar panel -->
     <Teleport to="body">

@@ -21,6 +21,7 @@
     "@phosphor-icons/vue": "^2.2.0",
     "@syntax-senpai/agent-tools": "workspace:*",
     "@syntax-senpai/ai-core": "workspace:*",
+    "@syntax-senpai/game-engine": "workspace:*",
     "@syntax-senpai/logger": "workspace:*",
     "@syntax-senpai/storage": "workspace:*",
     "@syntax-senpai/ui": "workspace:*",

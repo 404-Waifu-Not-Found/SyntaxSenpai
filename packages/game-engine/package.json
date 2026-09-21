@@ -1,0 +1,20 @@
+{
+  "name": "@syntax-senpai/game-engine",
+  "version": "0.0.1",
+  "description": "Deterministic minigame rules and AI engines for SyntaxSenpai",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run --environment node"
+  },
+  "dependencies": {
+    "chess.js": "^1.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.3"
+  }
+}

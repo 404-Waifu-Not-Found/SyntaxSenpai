@@ -6,7 +6,7 @@ import { AIChatRuntime, withRetry, classifyError, describeError, type ToolCall }
 import { useIpc } from '../composables/use-ipc'
 import { useKeyManager } from '../composables/use-key-manager'
 import { createLogger } from '../composables/logger'
-import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, SET_EXPRESSION_TOOL_NAME, TODO_WRITE_TOOL_NAME, TODO_READ_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, CARD_MARKER_FENCE, consumePendingBrowserScreenshot, modelSupportsVision, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
+import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, SET_EXPRESSION_TOOL_NAME, TODO_WRITE_TOOL_NAME, TODO_READ_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, GAME_START_TOOL_NAME, GAME_MOVE_TOOL_NAME, GAME_STATE_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, CARD_MARKER_FENCE, consumePendingBrowserScreenshot, modelSupportsVision, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
 import { useBrowserStore } from './browser'
 import { runAgentTurn, type SideEffectResult } from '../agent/run-turn'
 import {
@@ -167,7 +167,7 @@ export interface Message {
     status: 'pending' | 'approved' | 'denied'
   }
   /** Where a user message originated, when not typed in the desktop app. */
-  source?: 'wechat'
+  source?: 'wechat' | 'game'
   /** Human-readable origin label (e.g. the WeChat peer's display name). */
   sourceLabel?: string
   /**
@@ -1525,6 +1525,9 @@ export const useChatStore = defineStore('chat', () => {
       TODO_READ_TOOL_NAME,
       RENAME_CHAT_TOOL_NAME,
       RENDER_CARD_TOOL_NAME,
+      GAME_START_TOOL_NAME,
+      GAME_MOVE_TOOL_NAME,
+      GAME_STATE_TOOL_NAME,
     ].includes(toolName)
   }
 
@@ -3352,7 +3355,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
 
   async function sendMessage(
     text: string,
-    opts: { source?: 'wechat'; sourceLabel?: string } = {},
+    opts: { source?: 'wechat' | 'game'; sourceLabel?: string } = {},
   ) {
     // 单聊主入口：命令处理、显式终端执行、普通聊天、agent 工具循环都从这里分流。
     if (isGroupChat.value && groupWaifuIds.value.length > 0) {
@@ -4040,6 +4043,10 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     }
   }
 
+  async function sendGameEvent(text: string) {
+    return sendMessage(text, { source: 'game', sourceLabel: 'Minigame' })
+  }
+
   function handleExternalConversationEvent(event: any) {
     if (!event?.conversationId || conversationId.value !== event.conversationId) return
 
@@ -4479,6 +4486,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     deleteMemory,
     clearMemories,
     sendMessage,
+    sendGameEvent,
     handleExternalConversationEvent,
     wechatBindings,
     currentWeChatBinding,

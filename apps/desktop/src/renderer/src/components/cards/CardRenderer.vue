@@ -4,6 +4,7 @@ import WeatherCard from './WeatherCard.vue'
 import TableCard from './TableCard.vue'
 import LinkPreviewCard from './LinkPreviewCard.vue'
 import CodeComparisonCard from './CodeComparisonCard.vue'
+import GomokuCard from './GomokuCard.vue'
 
 const props = defineProps<{
   type: string
@@ -16,6 +17,7 @@ const component = computed(() => {
     case 'table': return TableCard
     case 'link_preview': return LinkPreviewCard
     case 'code_comparison': return CodeComparisonCard
+    case 'gomoku': return GomokuCard
     default: return null
   }
 })

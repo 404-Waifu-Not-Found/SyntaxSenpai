@@ -120,7 +120,7 @@ function parseRenderCardArgs(args: unknown): RenderCardPayload | null {
   const obj = args as Record<string, unknown> | null | undefined
   if (!obj || typeof obj !== 'object') return null
   const rawType = typeof obj.type === 'string' ? obj.type.trim() : ''
-  const allowed: RenderCardType[] = ['weather', 'table', 'link_preview', 'code_comparison']
+  const allowed: RenderCardType[] = ['weather', 'table', 'link_preview', 'code_comparison', 'gomoku']
   if (!allowed.includes(rawType as RenderCardType)) return null
   const data = obj.data && typeof obj.data === 'object' ? (obj.data as Record<string, unknown>) : null
   if (!data) return null
@@ -474,7 +474,7 @@ Tool selection — use the dedicated tool, not a shell workaround:
 - webfetch → fetch and read the ACTUAL contents of a URL (docs pages, articles, raw files, API responses). web_search only returns links; webfetch returns the page body.
 ${webSearchLine}
 - rename_chat → name the current conversation so the sidebar is useful. Call it once after the user's first message (pick a short, specific title — you are allowed personality) and again whenever the topic clearly shifts. Don't repeat-call it for the same topic.
-- render_card → display structured information as a rich inline visual card. Use ONLY for: current weather (type="weather"), tabular data with 3+ rows (type="table"), link previews with title+description+site (type="link_preview"), or before/after code diffs (type="code_comparison"). Do NOT use for prose, jokes, single values, greetings, or simple factual sentences. Call it BEFORE stop_response; the card appears alongside your final_message automatically, so don't also describe the same numbers in words.${shellLine}
+- render_card → display structured information as a rich inline visual card. Use ONLY for: current weather (type="weather"), tabular data with 3+ rows (type="table"), link previews with title+description+site (type="link_preview"), before/after code diffs (type="code_comparison"), or interactive Gomoku mini-games (type="gomoku"). Do NOT use for prose, jokes, single values, greetings, or simple factual sentences. Call it BEFORE stop_response; the card appears alongside your final_message automatically, so don't also describe the same numbers in words.${shellLine}
 - browser_tabs → when asked to open the same page multiple times, call action="new" once with url and count (up to 20). Do not open duplicate tabs one by one.
 
 Realtime / live data — decision tree:
@@ -3103,7 +3103,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
                     pendingCards.push(payload)
                     return { resultContent: `Rendered ${payload.type} card.` }
                   }
-                  return { resultContent: 'Error: render_card requires a valid { type, data } object. Supported types: weather, table, link_preview, code_comparison.' }
+                  return { resultContent: 'Error: render_card requires a valid { type, data } object. Supported types: weather, table, link_preview, code_comparison, gomoku.' }
                 }
                 if (toolCall.name === DISPATCH_SUBAGENTS_TOOL_NAME) {
                   const args = (toolCall.arguments ?? {}) as { rationale?: string; subagents?: any[] }
@@ -3814,7 +3814,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
                 pendingCards.push(payload)
                 return { resultContent: `Rendered ${payload.type} card.` }
               }
-              return { resultContent: 'Error: render_card requires a valid { type, data } object. Supported types: weather, table, link_preview, code_comparison.' }
+              return { resultContent: 'Error: render_card requires a valid { type, data } object. Supported types: weather, table, link_preview, code_comparison, gomoku.' }
             }
             if (tc.name === DISPATCH_SUBAGENTS_TOOL_NAME) {
               const args = (tc.arguments ?? {}) as { rationale?: string; subagents?: any[] }

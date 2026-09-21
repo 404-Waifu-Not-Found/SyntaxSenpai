@@ -81,7 +81,7 @@ export function consumePendingBrowserScreenshot(): string | null {
 
 export const CARD_MARKER_FENCE = 'syntax-senpai-card'
 
-export type RenderCardType = 'weather' | 'table' | 'link_preview' | 'code_comparison'
+export type RenderCardType = 'weather' | 'table' | 'link_preview' | 'code_comparison' | 'gomoku'
 
 export interface RenderCardPayload {
   type: RenderCardType
@@ -732,16 +732,16 @@ export const agentTools: ToolDefinition[] = [
   {
     name: RENDER_CARD_TOOL_NAME,
     description:
-      'Render a rich visual card inline in the chat. Use for information that benefits from structured display: current weather, side-by-side comparisons, tabular data with >2 rows, and link previews. ' +
+      'Render a rich visual card inline in the chat. Use for information that benefits from structured display: current weather, side-by-side comparisons, tabular data with >2 rows, link previews, and interactive mini-games. ' +
       'Do NOT use for plain prose, jokes, greetings, or simple yes/no answers. ' +
-      'Supported types: "weather" (current + forecast), "table" (rows/columns), "link_preview" (title/url/description), "code_comparison" (before/after code snippets). ' +
+      'Supported types: "weather" (current + forecast), "table" (rows/columns), "link_preview" (title/url/description), "code_comparison" (before/after code snippets), "gomoku" (interactive five-in-a-row game). ' +
       'Call this ONCE per piece of content you want visualized — then continue with normal text or call stop_response. The card is displayed to the user immediately; you do not need to repeat its contents in your final_message.',
     parameters: {
       type: 'object',
       properties: {
         type: {
           type: 'string',
-          enum: ['weather', 'table', 'link_preview', 'code_comparison'],
+          enum: ['weather', 'table', 'link_preview', 'code_comparison', 'gomoku'],
           description: 'Which card template to render.',
         },
         data: {
@@ -751,7 +751,8 @@ export const agentTools: ToolDefinition[] = [
             '- weather: { location, temperature_c, conditions, emoji?, humidity_pct?, wind_kph?, forecast?: [{ day, high_c, low_c, conditions, emoji? }] }\n' +
             '- table: { title?, headers: string[], rows: string[][], caption? }\n' +
             '- link_preview: { url, title, description?, site?, image_url? }\n' +
-            '- code_comparison: { title?, before: { label?, language?, code }, after: { label?, language?, code } }',
+            '- code_comparison: { title?, before: { label?, language?, code }, after: { label?, language?, code } }\n' +
+            '- gomoku: { title?, board_size?: 10-19, user_stone?: "black"|"white", ai_stone?: "black"|"white", ai_name?: string, opening_line?: string }',
         },
       },
       required: ['type', 'data'],

@@ -231,6 +231,8 @@ export class DesktopSQLiteChatStore implements IChatStore {
     const conv = this.data.conversations[id];
     if (!conv) return;
 
+    if (updates.workspace !== undefined) conv.workspace = updates.workspace;
+    if (updates.presentation !== undefined) conv.presentation = updates.presentation;
     // Only overwrite fields that are actually provided
     if (updates.title !== undefined) conv.title = updates.title;
     if (updates.summary !== undefined) conv.summary = updates.summary;
@@ -251,10 +253,14 @@ export class DesktopSQLiteChatStore implements IChatStore {
     if (!this.data.messages[conversationId]) {
       this.data.messages[conversationId] = [];
     }
+    const existing = this.data.messages[conversationId];
+    const duplicate = existing.findIndex(m => m.id === message.id || (m.role === 'assistant' && message.role === 'assistant' && (m.id.startsWith('run-result-') || message.id.startsWith('run-result-')) && m.content === message.content && (m as any).waifuId === (message as any).waifuId));
+    if (duplicate >= 0) existing.splice(duplicate, 1);
     const src = (message as any).source;
     this.data.messages[conversationId].push({
       id: message.id,
       role: message.role,
+      waifuId: (message as any).waifuId, waifuDisplayName: (message as any).waifuDisplayName, runId: (message as any).runId,
       content: typeof message.content === "string" ? message.content : JSON.stringify(message.content),
       createdAt: (message as any).timestamp || message.createdAt || new Date().toISOString(),
       ...(src ? { source: src, sourceLabel: (message as any).sourceLabel } : {}),

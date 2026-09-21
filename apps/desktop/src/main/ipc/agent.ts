@@ -1,3 +1,4 @@
+import { registerHostHandler, resolveWorkspacePath, hostContext, invokeHost } from '../agent/host'
 const { ipcMain, app } = require('electron')
 const fs = require('fs').promises
 const fsSync = require('fs')
@@ -30,38 +31,38 @@ export function registerAgentIpc() {
   if (registered) return
   registered = true
 
-  ipcMain.handle('agent:exec', async (event: any, payload: any) => {
-    return await executor.runCommand(payload)
+  registerHostHandler('agent:exec', async (event: any, payload: any) => {
+    return await invokeHost('terminal:exec', payload.command, payload.cwd)
   })
 
-  ipcMain.handle('agent:readFile', async (event: any, filePath: string) => {
-    return await executor.readFile(filePath)
+  registerHostHandler('agent:readFile', async (event: any, filePath: string) => {
+    return await invokeHost('fs:read', filePath)
   })
 
-  ipcMain.handle('agent:writeFile', async (event: any, filePath: string, content: string) => {
-    return await executor.writeFile(filePath, content)
+  registerHostHandler('agent:writeFile', async (event: any, filePath: string, content: string) => {
+    return await invokeHost('fs:write', filePath, content)
   })
 
-  ipcMain.handle('agent:listDirectory', async (event: any, dirPath: string) => {
-    return await executor.listDirectory(dirPath)
+  registerHostHandler('agent:listDirectory', async (event: any, dirPath: string) => {
+    return await invokeHost('fs:list', dirPath)
   })
 
-  ipcMain.handle('agent:openExternal', async (event: any, url: string) => {
+  registerHostHandler('agent:openExternal', async (event: any, url: string) => {
     return await executor.openExternal(url)
   })
 
-  ipcMain.handle('agent:webSearch', async (_event: any, query: string, limit?: number) => {
+  registerHostHandler('agent:webSearch', async (_event: any, query: string, limit?: number) => {
     if (!isWebSearchEnabled()) {
       return { success: false, error: 'Web search is disabled. Enable it in Settings before using web_search.' }
     }
     return await executor.webSearch(query, limit)
   })
 
-  ipcMain.handle('agent:webFetch', async (_event: any, url: string, format?: string) => {
+  registerHostHandler('agent:webFetch', async (_event: any, url: string, format?: string) => {
     return await executor.webFetch(url, format)
   })
 
-  ipcMain.handle('agent:webSearchEnabled:get', async () => {
+  registerHostHandler('agent:webSearchEnabled:get', async () => {
     try {
       return { success: true, enabled: isWebSearchEnabled() }
     } catch (err: any) {
@@ -69,7 +70,7 @@ export function registerAgentIpc() {
     }
   })
 
-  ipcMain.handle('agent:webSearchEnabled:set', async (_event: any, enabled: boolean) => {
+  registerHostHandler('agent:webSearchEnabled:set', async (_event: any, enabled: boolean) => {
     try {
       writeWebSearchEnabled(!!enabled)
       return { success: true, enabled: !!enabled }
@@ -78,7 +79,7 @@ export function registerAgentIpc() {
     }
   })
 
-  ipcMain.handle('agent:getLog', async (event: any) => {
+  registerHostHandler('agent:getLog', async (event: any) => {
     try {
       const dbPath = process.env.CHAT_DB_PATH || 'syntax-senpai.sqlite'
       const logPath = path.join(path.dirname(dbPath), 'agent.log')
@@ -89,7 +90,7 @@ export function registerAgentIpc() {
     }
   })
 
-  ipcMain.handle('agent:getAudit', async (event: any) => {
+  registerHostHandler('agent:getAudit', async (event: any) => {
     try {
       const dbPath = process.env.CHAT_DB_PATH || 'syntax-senpai.sqlite'
       const auditPath = path.join(path.dirname(dbPath), 'agent-audit.jsonl')
@@ -100,7 +101,7 @@ export function registerAgentIpc() {
     }
   })
 
-  ipcMain.handle('agent:clearAudit', async (event: any) => {
+  registerHostHandler('agent:clearAudit', async (event: any) => {
     try {
       const dbPath = process.env.CHAT_DB_PATH || 'syntax-senpai.sqlite'
       const auditPath = path.join(path.dirname(dbPath), 'agent-audit.jsonl')
@@ -111,65 +112,6 @@ export function registerAgentIpc() {
     }
   })
 
-  ipcMain.handle('agent:getAllowlist', async (event: any) => {
-    try {
-      if (typeof executor.getAllowlist === 'function') {
-        const list = await executor.getAllowlist()
-        return { success: true, allowlist: Array.isArray(list) ? list : list }
-      }
-      const dbPath = process.env.CHAT_DB_PATH || 'syntax-senpai.sqlite'
-      const allowPath = path.join(path.dirname(dbPath), 'agent-allowlist.json')
-      const raw = await fs.readFile(allowPath, 'utf-8').catch(() => '')
-      const arr = raw ? JSON.parse(raw) : []
-      return { success: true, allowlist: arr }
-    } catch (err: any) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  })
-
-  ipcMain.handle('agent:setAllowlist', async (event: any, list: any) => {
-    try {
-      if (typeof executor.saveAllowlist === 'function') return await executor.saveAllowlist(list)
-      const dbPath = process.env.CHAT_DB_PATH || 'syntax-senpai.sqlite'
-      const allowPath = path.join(path.dirname(dbPath), 'agent-allowlist.json')
-      await fs.writeFile(allowPath, JSON.stringify(list || [], null, 2)).catch(() => {})
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  })
-
-  ipcMain.handle('agent:addAllow', async (event: any, cmd: string) => {
-    try {
-      if (typeof executor.addAllowed === 'function') return await executor.addAllowed(cmd)
-      const dbPath = process.env.CHAT_DB_PATH || 'syntax-senpai.sqlite'
-      const allowPath = path.join(path.dirname(dbPath), 'agent-allowlist.json')
-      const raw = await fs.readFile(allowPath, 'utf-8').catch(() => '')
-      const arr = raw ? JSON.parse(raw) : []
-      if (!arr.includes(cmd)) arr.push(cmd)
-      await fs.writeFile(allowPath, JSON.stringify(arr, null, 2)).catch(() => {})
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  })
-
-  ipcMain.handle('agent:removeAllow', async (event: any, cmd: string) => {
-    try {
-      if (typeof executor.removeAllowed === 'function') return await executor.removeAllowed(cmd)
-      const dbPath = process.env.CHAT_DB_PATH || 'syntax-senpai.sqlite'
-      const allowPath = path.join(path.dirname(dbPath), 'agent-allowlist.json')
-      const raw = await fs.readFile(allowPath, 'utf-8').catch(() => '')
-      const arr = raw ? JSON.parse(raw) : []
-      const filtered = arr.filter((c: any) => c !== cmd)
-      await fs.writeFile(allowPath, JSON.stringify(filtered, null, 2)).catch(() => {})
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  })
 }
-
-module.exports = { registerAgentIpc, isWebSearchEnabled }
 
 export {}

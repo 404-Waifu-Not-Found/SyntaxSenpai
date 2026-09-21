@@ -1,3 +1,4 @@
+import { getRunService } from './agent/run-service'
 import WebSocket, { WebSocketServer } from 'ws'
 import { randomUUID } from 'crypto'
 import os from 'os'
@@ -326,62 +327,11 @@ async function runMobileWaifuTurn(options: {
   aiHistory: any[]
   tools: typeof MOBILE_AGENT_TOOLS
 }) {
-  const provider = options.runtime.getProvider()
-  const localHistory = [...options.aiHistory]
-  let fullContent = ''
+  const service = getRunService()
+  const id = await service.start({ model: options.model, providerConfig: { type: 'ollama' }, history: options.aiHistory, tools: options.tools as any, systemPrompt: options.systemPrompt, maxIterations: MOBILE_MAX_TOOL_ITERATIONS }, options.runtime.getProvider())
+  const result = await service.runs.get(id)!.promise
+  return extractDelegatedTasks(result.finalContent)
 
-  for (let iteration = 0; iteration <= MOBILE_MAX_TOOL_ITERATIONS; iteration++) {
-    const response = await provider.chat({
-      model: options.model,
-      messages: localHistory,
-      tools: options.tools as any,
-      systemPrompt: options.systemPrompt,
-    })
-
-    if (!response.toolCalls || response.toolCalls.length === 0) {
-      fullContent = response.content || ''
-      break
-    }
-
-    localHistory.push({
-      id: response.id || `mobile-assistant-${Date.now()}-${iteration}`,
-      role: 'assistant',
-      content: response.content || '',
-      toolCalls: response.toolCalls,
-    })
-
-    let stopped = false
-
-    for (const toolCall of response.toolCalls as Array<{ id: string; name: string; arguments?: Record<string, unknown> }>) {
-      if (toolCall.name === MOBILE_STOP_TOOL_NAME) {
-        fullContent = String(toolCall.arguments?.final_message || response.content || '')
-        localHistory.push({
-          id: `tool-result-${Date.now()}-${toolCall.id}`,
-          role: 'tool',
-          content: 'ok',
-          toolCallId: toolCall.id,
-        })
-        stopped = true
-        break
-      }
-
-      const result = await executeMobileToolCall(toolCall)
-      localHistory.push({
-        id: `tool-result-${Date.now()}-${toolCall.id}`,
-        role: 'tool',
-        content: result,
-        toolCallId: toolCall.id,
-      })
-    }
-
-    if (stopped) break
-
-    if (iteration === MOBILE_MAX_TOOL_ITERATIONS) {
-      fullContent = '(Reached maximum command iterations — stopping.)'
-    }
-  }
-
-  return extractDelegatedTasks(fullContent.trim() || 'Done.')
 }
 
 async function finalizeMobileAssistantResponse(

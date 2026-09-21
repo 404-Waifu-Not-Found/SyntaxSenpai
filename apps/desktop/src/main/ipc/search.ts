@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { registerHostHandler, resolveWorkspacePath, hostContext } from '../agent/host'
 /**
  * Search & patch IPC — opencode-parity file tools for the renderer agent.
  *
@@ -28,12 +30,7 @@ const IGNORED_DIRS = new Set([
   'target', 'vendor', '.pnpm-store',
 ])
 
-function resolvePath(p?: string): string {
-  if (!p) return process.cwd()
-  let resolved = p
-  if (resolved.startsWith('~')) resolved = path.join(os.homedir(), resolved.slice(1))
-  return path.resolve(resolved)
-}
+const resolvePath = resolveWorkspacePath
 
 /** Forward-slash a path so glob regexes behave the same on Windows. */
 function toPosix(p: string): string {
@@ -414,38 +411,43 @@ async function handlePatch(rawDiff: string, rawCwd?: string) {
   if (patches.length === 0) {
     return { success: false, error: 'no recognizable unified-diff hunks found in the patch' }
   }
-  const applied: string[] = []
+  const staged: Array<{ target: string; targetRel: string; original: string; content: string; remove: boolean; create: boolean }> = []
   for (const patch of patches) {
-    const isCreate = patch.oldPath === '/dev/null'
-    const isDelete = patch.newPath === '/dev/null'
-    const targetRel = isDelete ? patch.oldPath : patch.newPath || patch.oldPath
+    const create = patch.oldPath === '/dev/null', remove = patch.newPath === '/dev/null'
+    const targetRel = remove ? patch.oldPath : patch.newPath || patch.oldPath
     const target = path.resolve(cwd, targetRel)
-    try {
-      if (isDelete) {
-        await fsp.rm(target, { force: true })
-        applied.push(`deleted ${targetRel}`)
-        continue
-      }
-      const original = isCreate ? '' : await fsp.readFile(target, 'utf8')
-      const result = applyHunks(original, patch.hunks)
-      if (result.error) {
-        return { success: false, error: `${targetRel}: ${result.error}`, applied }
-      }
-      await fsp.mkdir(path.dirname(target), { recursive: true })
-      await fsp.writeFile(target, result.content, 'utf8')
-      applied.push(`${isCreate ? 'created' : 'patched'} ${targetRel}`)
-    } catch (err: any) {
-      return { success: false, error: `${targetRel}: ${err?.message || String(err)}`, applied }
-    }
+    if (staged.some(p => p.target === target)) return { success: false, error: 'Duplicate file sections; combine the hunks for each file.', applied: [] }
+    const exists = await fsp.stat(target).catch(() => null)
+    if (create && exists) return { success: false, error: `Refusing to replace existing file with a create patch: ${targetRel}`, applied: [] }
+    const original = create ? '' : await fsp.readFile(target, 'utf8')
+    const expected = hostContext.getStore()?.readHashes.get(target)
+    if (expected && expected !== createHash('sha256').update(original).digest('hex')) return { success: false, error: `Stale file revision: ${targetRel}. Read again.`, applied: [] }
+    const result = applyHunks(original, patch.hunks)
+    if (result.error) return { success: false, error: `${targetRel}: ${result.error}`, applied: [] }
+    if (remove && result.content.trim()) return { success: false, error: `Deletion patch must match the complete file: ${targetRel}`, applied: [] }
+    staged.push({ target, targetRel, original, content: result.content, remove, create })
   }
-  return { success: true, applied }
+  const applied: string[] = []
+  await hostContext.getStore()?.beforeWrite?.(staged.map(p => p.target))
+  try {
+    for (const p of staged) {
+      const current = await fsp.readFile(p.target, 'utf8').catch((e: any) => { if (e.code === 'ENOENT' && p.create) return ''; throw e })
+      if (current !== p.original) throw new Error(`File changed during patch: ${p.targetRel}`)
+      if (p.remove) await fsp.unlink(p.target)
+      else { await fsp.mkdir(path.dirname(p.target), { recursive: true }); await fsp.writeFile(p.target, p.content, 'utf8') }
+      hostContext.getStore()?.readHashes.set(p.target, createHash('sha256').update(p.remove ? '' : p.content).digest('hex'))
+      applied.push(`${p.remove ? 'deleted' : p.create ? 'created' : 'patched'} ${p.targetRel}`)
+    }
+    return { success: true, applied }
+  } catch (error) { return { success: false, error: String(error), applied } }
+  finally { await hostContext.getStore()?.afterWrite?.(staged.map(p => p.target)) }
 }
 
 export function registerSearchIpc() {
   if (registered) return
   registered = true
 
-  ipcMain.handle('fs:glob', async (_e: any, pattern: string, cwd?: string, limit?: number) => {
+  registerHostHandler('fs:glob', async (_e: any, pattern: string, cwd?: string, limit?: number) => {
     try {
       return await handleGlob(pattern, cwd, limit)
     } catch (err: any) {
@@ -453,15 +455,15 @@ export function registerSearchIpc() {
     }
   })
 
-  ipcMain.handle('fs:grep', async (_e: any, pattern: string, searchPath?: string, opts?: any) => {
+  registerHostHandler('fs:grep', async (_e: any, pattern: string, searchPath?: string, opts?: any) => {
     return await handleGrep(pattern, searchPath, opts || {})
   })
 
-  ipcMain.handle('fs:list', async (_e: any, dirPath?: string, depth?: number) => {
+  registerHostHandler('fs:list', async (_e: any, dirPath?: string, depth?: number) => {
     return await handleList(dirPath, depth)
   })
 
-  ipcMain.handle('fs:patch', async (_e: any, diff: string, cwd?: string) => {
+  registerHostHandler('fs:patch', async (_e: any, diff: string, cwd?: string) => {
     try {
       return await handlePatch(diff, cwd)
     } catch (err: any) {

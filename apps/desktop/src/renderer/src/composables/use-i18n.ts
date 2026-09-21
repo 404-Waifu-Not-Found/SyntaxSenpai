@@ -239,8 +239,6 @@ const messages: Record<Locale, Record<string, string>> = {
     // Agent
     'agent.title': 'Agent Access',
     'agent.description': 'Choose how the agent can act on your machine.',
-    'agent.askTitle': 'Ask before running',
-    'agent.askDesc': 'Show Approve/Deny buttons before file, shell, network, git, or plugin actions run',
     'agent.autoTitle': 'Auto Mode',
     'agent.autoDesc': 'The agent proposes actions, then a separate AI approval pass allows or denies each one',
     'agent.fullTitle': 'Full access',

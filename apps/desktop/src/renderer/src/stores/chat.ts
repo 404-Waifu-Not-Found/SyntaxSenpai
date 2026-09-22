@@ -11,6 +11,7 @@ import { useBrowserStore } from './browser'
 import { runAgentTurn, type SideEffectResult } from '../agent/run-turn'
 import { detectGameLaunchIntent } from '../game/intent'
 import { startGameSession } from '../game/session'
+import { fallbackConversationTitle, needsAutomaticConversationTitle } from './conversation-title'
 import {
   dispatchSubagents,
   type SubagentSnapshot,
@@ -1015,6 +1016,7 @@ export const useChatStore = defineStore('chat', () => {
   const streamController = ref<AbortController | null>(null)
   const conversationId = ref<string | null>(null)
   const conversations = ref<any[]>([])
+  const autoNamingConversationIds = new Set<string>()
   const recentMessageId = ref<string | null>(null)
   const pendingClearVerification = ref(false)
   const activeCodingRepo = ref<ActiveCodingRepo | null>(null)
@@ -2663,28 +2665,52 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   async function autoNameConversation(id: string, firstUserMessage: string) {
+    if (autoNamingConversationIds.has(id)) return
+    const conversation = conversations.value.find((item) => item.id === id)
+    if (conversation && !needsAutomaticConversationTitle(conversation.title, selectedWaifu.value?.displayName)) return
+
+    autoNamingConversationIds.add(id)
     try {
-      const key = await keyManager.getKey(selectedProvider.value)
-      const providerConfig = getProviderConfig(selectedProvider.value, key)
-      const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
-      const waifu = selectedWaifu.value
-      if (providerRequiresApiKey(selectedProvider.value) && (!providerConfig.apiKey || providerConfig.apiKey === '')) return
-      const runtime = new AIChatRuntime({
-        provider: getProviderConfig(selectedProvider.value, key),
-        model,
-        systemPrompt: `You are ${waifu?.displayName || 'an assistant'} naming a chat for your own sidebar. Read the user's first message and reply with ONE short title (2–8 words) that captures what the conversation is really about. You can have personality — a little wink, an emoji at most — but NO surrounding quotes and NO trailing punctuation. Reply with ONLY the title, nothing else.`,
-      })
-      let title = ''
-      for await (const chunk of runtime.streamMessage({ text: firstUserMessage, history: [] })) {
-        if (chunk.type === 'text_delta' && chunk.delta) title += chunk.delta
+      const fallback = fallbackConversationTitle(firstUserMessage)
+      let title = fallback
+
+      try {
+        const provider = selectedProvider.value
+        const key = await keyManager.getKey(provider)
+        const providerConfig = getProviderConfig(provider, key)
+        const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[provider] || 'gpt-4o'
+        const waifu = selectedWaifu.value
+        if (!(providerRequiresApiKey(provider) && (!providerConfig.apiKey || providerConfig.apiKey === ''))) {
+          const runtime = new AIChatRuntime({
+            provider: providerConfig,
+            model,
+            systemPrompt: `You are ${waifu?.displayName || 'an assistant'} naming a chat for your own sidebar. Read the user's first message and reply with ONE short title (2–8 words) that captures what the conversation is really about. Do not use emojis, surrounding quotes, or trailing punctuation. Reply with ONLY the title, nothing else.`,
+          })
+          let generatedTitle = ''
+          for await (const chunk of runtime.streamMessage({ text: firstUserMessage, history: [] })) {
+            if (chunk.type === 'text_delta' && chunk.delta) generatedTitle += chunk.delta
+          }
+          const cleanedTitle = generatedTitle
+            .replace(/\s+/g, ' ')
+            .trim()
+            .replace(/^[`"'“”‘’]+|[`"'“”‘’]+$/g, '')
+            .replace(/[.!?]+$/, '')
+            .slice(0, 60)
+          if (cleanedTitle) title = cleanedTitle
+        }
+      } catch {
+        // The deterministic title below keeps the sidebar useful if naming
+        // cannot reach the selected provider.
       }
-      title = title.trim().replace(/^["']|["']$/g, '').slice(0, 60)
+
       if (title) {
-        await invoke('store:updateConversation', id, { title })
-        await loadConversations()
+        const result = await invoke('store:updateConversation', id, { title })
+        if (result?.success) await loadConversations()
       }
-    } catch {
-      // naming is best-effort, never block or surface errors
+    } catch (err) {
+      console.warn('auto naming conversation failed:', err)
+    } finally {
+      autoNamingConversationIds.delete(id)
     }
   }
 
@@ -2910,6 +2936,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
         try { await invoke('store:addMessage', convId, userMsg) } catch (e) { console.warn('Failed to save user message:', e) }
       }
       if (isNewConversation) await loadConversations()
+      if (convId) void autoNameConversation(convId, trimmedText)
 
       const key = await keyManager.getKey(selectedProvider.value)
       const providerConfig = getProviderConfig(selectedProvider.value, key)
@@ -3499,6 +3526,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           try { await invoke('store:addMessage', convId, userMsg) } catch (e) { console.warn('Failed to save user message:', e) }
         }
         if (isNewConversation) await loadConversations()
+        if (convId) void autoNameConversation(convId, trimmedText)
 
         const result = await invoke('terminal:exec', explicitTerminalCommand)
         const stdout = result?.stdout || ''
@@ -3573,6 +3601,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
       }
       // Refresh sidebar immediately so the new conversation is visible
       if (isNewConversation) await loadConversations()
+      if (convId) void autoNameConversation(convId, trimmedText)
 
       // A clear game request should always produce the playable desktop GUI,
       // even when a provider chooses to answer conversationally instead of

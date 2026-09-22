@@ -7,7 +7,7 @@ function toolCall(id: string, name = 'terminal'): ToolCall {
 }
 
 describe('runAgentTurn parallel tool execution', () => {
-  it('runs independent terminal calls concurrently and preserves result order', async () => {
+  it('runs terminal calls classified by an independence adapter concurrently and preserves result order', async () => {
     const history: any[] = []
     let active = 0
     let peak = 0
@@ -25,6 +25,7 @@ describe('runAgentTurn parallel tool execution', () => {
       tools: [],
       systemPrompt: '',
       maxIterations: 2,
+      describeExecution: tc => ({ access: 'read', resources: [tc.id], lane: 'process' }),
       executeTool: async (tc) => {
         active += 1
         peak = Math.max(peak, active)
@@ -57,6 +58,7 @@ describe('runAgentTurn parallel tool execution', () => {
       tools: [],
       systemPrompt: '',
       maxIterations: 2,
+      describeExecution: tc => ({ access: 'read', resources: [tc.id], lane: 'process' }),
       maxParallelTools: 2,
       executeTool: async () => {
         active += 1

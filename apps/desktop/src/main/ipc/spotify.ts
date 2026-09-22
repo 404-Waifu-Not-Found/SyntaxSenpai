@@ -1,3 +1,4 @@
+import { registerHostHandler, resolveWorkspacePath, hostContext } from '../agent/host'
 /**
  * Spotify IPC – gives the AI access to the currently playing track.
  *
@@ -27,7 +28,7 @@ export function registerSpotifyIpc() {
   if (registered) return
   registered = true
 
-  ipcMain.handle('spotify:nowPlaying', async () => {
+  registerHostHandler('spotify:nowPlaying', async () => {
     try {
       // Check if Spotify is running
       const running = await runAppleScript(
@@ -80,7 +81,7 @@ export function registerSpotifyIpc() {
     }
   })
 
-  ipcMain.handle('spotify:control', async (_event: any, action: string) => {
+  registerHostHandler('spotify:control', async (_event: any, action: string) => {
     try {
       const running = await runAppleScript(
         'tell application "System Events" to (name of processes) contains "Spotify"',

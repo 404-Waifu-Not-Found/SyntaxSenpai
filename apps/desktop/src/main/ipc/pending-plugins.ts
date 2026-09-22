@@ -1,11 +1,8 @@
+import { activateUserPlugins } from './plugins'
+import { registerHostHandler, resolveWorkspacePath, hostContext } from '../agent/host'
 /**
- * Pending-plugins IPC — AI-authored tool proposals awaiting user approval.
- *
- * The waifu uses the `propose_tool` agent tool to write a plugin bundle
- * to `<userData>/pending-plugins/<slug>/`. She CANNOT activate it; the
- * user must open Settings → Plugins → Pending and explicitly approve,
- * which moves the bundle to the active plugins directory. Takes effect
- * after restart — same UX contract as the existing plugins system.
+ * AI-authored tool bundles are staged under pending-plugins, then activated
+ * through the same execution policy as every other agent action.
  */
 
 const electronModule = require('electron')
@@ -23,9 +20,7 @@ function pendingDir(): string {
 }
 
 function activePluginsDir(): string {
-  // Same precedence as ipc/plugins.ts::resolvePluginDir — for approvals,
-  // we always target userData/plugins so repo-local plugins aren't
-  // mutated by the app.
+  // Always target userData/plugins so repo-local plugins are not mutated.
   return path.join(app.getPath('userData'), 'plugins')
 }
 
@@ -73,7 +68,7 @@ export function registerPendingPluginsIpc() {
   if (registered) return
   registered = true
 
-  ipcMain.handle('pending-plugins:list', async () => {
+  registerHostHandler('pending-plugins:list', async () => {
     try {
       const dir = pendingDir()
       if (!fs.existsSync(dir)) return { success: true, directory: dir, pending: [] }
@@ -91,7 +86,7 @@ export function registerPendingPluginsIpc() {
 
   // Called by the propose_tool agent tool. Validates inputs, writes the
   // pending bundle atomically, and returns the written paths.
-  ipcMain.handle(
+  registerHostHandler(
     'pending-plugins:write',
     async (
       _e: any,
@@ -121,9 +116,7 @@ export function registerPendingPluginsIpc() {
           description: typeof description === 'string' ? description : undefined,
           main: 'index.js',
           enabled: true,
-          // Mark as AI-authored so the UI can surface a clear "review
-          // this code before approving" warning — matches the gate
-          // already described in propose_tool's tool description.
+          // Preserve origin metadata for logs and plugin inspection.
           aiAuthored: true,
         }
 
@@ -145,7 +138,7 @@ export function registerPendingPluginsIpc() {
     },
   )
 
-  ipcMain.handle('pending-plugins:approve', async (_e: any, slug: string) => {
+  registerHostHandler('pending-plugins:activate', async (_e: any, slug: string) => {
     try {
       if (!isValidSlug(slug)) return { success: false, error: 'Invalid slug' }
       const srcDir = path.join(pendingDir(), slug)
@@ -158,14 +151,16 @@ export function registerPendingPluginsIpc() {
       }
       fs.cpSync(srcDir, dstDir, { recursive: true })
       fs.rmSync(srcDir, { recursive: true, force: true })
-      mainLogger.info({ slug, dst: dstDir }, 'pending plugin approved')
+      const loaded = await activateUserPlugins()
+      if (!loaded.some(plugin => plugin.manifest.name === JSON.parse(fs.readFileSync(path.join(dstDir, 'plugin.json'), 'utf8')).name)) return { success: false, error: 'Plugin written but activation failed. Inspect execution log.' }
+      mainLogger.info({ slug, dst: dstDir }, 'plugin activated')
       return { success: true, slug, installedTo: dstDir }
     } catch (err: any) {
       return { success: false, error: err?.message || String(err) }
     }
   })
 
-  ipcMain.handle('pending-plugins:reject', async (_e: any, slug: string) => {
+  registerHostHandler('pending-plugins:reject', async (_e: any, slug: string) => {
     try {
       if (!isValidSlug(slug)) return { success: false, error: 'Invalid slug' }
       const dir = path.join(pendingDir(), slug)

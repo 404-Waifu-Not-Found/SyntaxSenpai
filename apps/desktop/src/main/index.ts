@@ -21,6 +21,7 @@ if (typeof electronModule === 'string') {
 const { app, BrowserWindow, ipcMain, clipboard, globalShortcut, Tray, Menu, nativeImage, screen, protocol: earlyProtocol } = electronModule
 const { join, resolve, sep } = require('path')
 const fs = require('fs')
+if (process.env.SYNTAX_SENPAI_DATA_DIR) { fs.mkdirSync(process.env.SYNTAX_SENPAI_DATA_DIR, { recursive: true }); app.setPath('userData', process.env.SYNTAX_SENPAI_DATA_DIR) }
 
 // Register `userdata://` as a standard, fetch-capable, secure scheme BEFORE
 // app is ready. Without this, the scheme is treated as opaque — relative URL
@@ -58,7 +59,8 @@ import { registerExportIpc } from './ipc/export'
 import { registerWsIpc } from './ipc/ws'
 import { registerPluginsIpc } from './ipc/plugins'
 import { registerWaifusIpc } from './ipc/waifus'
-import { registerStrictModeIpc } from './ipc/strict-mode'
+import { registerPolicyIpc } from './agent/policy'
+import { registerRunService } from './agent/run-service'
 import { registerLogIpc } from './ipc/log'
 import { registerRepositoryIpc } from './ipc/repository'
 import { registerSkillsIpc } from './ipc/skills'
@@ -732,7 +734,8 @@ app.whenReady().then(() => {
   registerWsIpc()
   registerPluginsIpc()
   registerWaifusIpc()
-  registerStrictModeIpc()
+  registerPolicyIpc()
+  registerRunService()
   registerLogIpc()
   registerRepositoryIpc()
   registerSkillsIpc()

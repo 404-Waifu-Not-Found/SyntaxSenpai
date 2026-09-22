@@ -40,12 +40,19 @@ import QrPairModal from './components/QrPairModal.vue'
 import RepositoryPickerModal from './components/RepositoryPickerModal.vue'
 import SakuraPetals from './components/SakuraPetals.vue'
 import BrowserPanel from './components/BrowserPanel.vue'
+import WorkspacePanel from './components/WorkspacePanel.vue'
+import { useWorkspaceStore, codingIntent } from './stores/workspace'
 import { useBrowserStore } from './stores/browser'
 import type { ActiveCodingRepo } from './types/coding-session'
 import { gameSession, applyGameSessionMove, closeGameSession } from './game/session'
 import { gameMoveLabel } from '@syntax-senpai/game-engine'
 
 const store = useChatStore()
+const workspace = useWorkspaceStore()
+watch(() => store.conversationId, id => { void workspace.bind(id) }, { immediate: true })
+watch(() => store.activeCodingRepo, repo => { if (store.conversationId) void invoke('store:updateConversation', store.conversationId, { workspace: repo }); if (repo && workspace.mode === 'auto') workspace.open = true }, { deep: true })
+watch(() => store.messages.length, () => { const last = [...store.messages].reverse().find(m => m.role === 'user'); if (last && workspace.mode === 'auto' && codingIntent(last.content, !!store.activeCodingRepo)) workspace.open = true })
+
 const browser = useBrowserStore()
 const { invoke, on } = useIpc()
 const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, setUI, DEFAULT_THEME } = useTheme()
@@ -383,57 +390,6 @@ const pluginsList = ref<DesktopPluginEntry[]>([])
 const pluginsDirectory = ref<string>('')
 const pluginsLoading = ref(false)
 const pluginsError = ref<string>('')
-
-// Pending plugins — AI-authored tool proposals waiting for user approval.
-// Lives on the same tab as active plugins so users see both in one place.
-interface PendingPluginEntry {
-  slug: string
-  name: string
-  version: string
-  description?: string
-  manifest: any
-  code: string
-  createdAt: string
-}
-const pendingPlugins = ref<PendingPluginEntry[]>([])
-const pendingExpanded = ref<Set<string>>(new Set())
-
-async function refreshPendingPlugins() {
-  try {
-    const result = await invoke('pending-plugins:list')
-    if (result?.success && Array.isArray(result.pending)) {
-      pendingPlugins.value = result.pending
-    }
-  } catch { /* optional */ }
-}
-
-function togglePendingExpanded(slug: string) {
-  const next = new Set(pendingExpanded.value)
-  if (next.has(slug)) next.delete(slug)
-  else next.add(slug)
-  pendingExpanded.value = next
-}
-
-async function approvePending(slug: string) {
-  const result = await invoke('pending-plugins:approve', slug)
-  if (result?.success) {
-    pendingPlugins.value = pendingPlugins.value.filter((p) => p.slug !== slug)
-    showToast(`Approved "${slug}" — restart to load the new tool`, 'success')
-    refreshPlugins()
-  } else {
-    showToast(result?.error || 'Approve failed', 'error')
-  }
-}
-
-async function rejectPending(slug: string) {
-  const result = await invoke('pending-plugins:reject', slug)
-  if (result?.success) {
-    pendingPlugins.value = pendingPlugins.value.filter((p) => p.slug !== slug)
-    showToast(`Rejected "${slug}"`, 'success')
-  } else {
-    showToast(result?.error || 'Reject failed', 'error')
-  }
-}
 
 // Skills tab state — user-facing view over <userData>/skills/*.
 interface SkillTabEntry { slug: string; name: string; description: string; body?: string }
@@ -1025,13 +981,6 @@ async function deleteCustomWaifu(id: string) {
   }
 }
 
-// Strict-mode state: toggle for the allowlist sandbox. The allowlist itself
-// is already managed by the existing agent:* IPC and its UI in the AI tab.
-interface StrictModeState {
-  enabled: boolean
-  auditLog: string
-}
-const strictMode = ref<StrictModeState>({ enabled: false, auditLog: '' })
 const overlayWindow = ref<{ enabled: boolean }>({ enabled: false })
 const fullscreenWindow = ref<{ enabled: boolean }>({ enabled: false })
 const currentWindowBounds = ref<{ width: number; height: number } | null>(null)
@@ -1059,20 +1008,6 @@ const currentWindowResolutionLabel = computed(() => {
   return bounds ? `${bounds.width} × ${bounds.height}` : 'Current window size'
 })
 
-async function refreshStrictMode() {
-  try {
-    const result = await invoke('strictMode:get')
-    if (result?.success) {
-      strictMode.value = {
-        enabled: !!result.enabled,
-        auditLog: result.auditLog || '',
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
 function applyWindowPresentationState(result: any) {
   overlayWindow.value.enabled = !!result?.overlayEnabled
   fullscreenWindow.value.enabled = !!result?.fullscreenEnabled
@@ -1097,17 +1032,6 @@ async function refreshOverlayWindowMode() {
     }
   } catch {
     /* ignore */
-  }
-}
-
-async function toggleStrictMode() {
-  const next = !strictMode.value.enabled
-  const result = await invoke('strictMode:set', next)
-  if (result?.success) {
-    strictMode.value.enabled = !!result.enabled
-    showToast(`Strict mode ${next ? 'enabled' : 'disabled'}`, 'success')
-  } else {
-    showToast(result?.error || 'Failed to toggle strict mode', 'error')
   }
 }
 
@@ -1144,11 +1068,6 @@ async function applyWindowResolution(value: string) {
   } else {
     showToast(result?.error || 'Failed to update window resolution', 'error')
   }
-}
-
-async function openAuditLog() {
-  const result = await invoke('strictMode:openAuditLog')
-  if (!result?.success) showToast(result?.error || 'Failed to open audit log', 'error')
 }
 
 async function checkMobilePairingStatus() {
@@ -1972,7 +1891,7 @@ watch(
       if (pluginsList.value.length === 0 && !pluginsLoading.value) refreshPlugins()
       // Pending proposals are cheap to list — always refresh so a new
       // propose_tool call mid-session shows up without a reload.
-      refreshPendingPlugins()
+
     }
     if (tab === 'skills' && skillsList.value.length === 0 && !skillsLoading.value) {
       refreshSkillsTab()
@@ -1981,7 +1900,7 @@ watch(
       refreshCustomWaifus()
     }
     if (tab === 'general') {
-      refreshStrictMode()
+
       refreshOverlayWindowMode()
     }
   },
@@ -1989,7 +1908,7 @@ watch(
 const showAgent = ref(false)
 const showModelPicker = ref(false)
 const providerModels = ref<Record<string, Array<{ id: string; displayName: string }>>>({})
-type AgentMode = 'ask' | 'auto' | 'full'
+type AgentMode = 'auto' | 'full'
 const agentMode = computed({
   get: () => store.agentMode as AgentMode,
   set: (v: AgentMode) => store.setAgentMode(v),
@@ -1998,9 +1917,6 @@ const convSearch = ref('')
 const convSearchMatchIds = ref<Set<string> | null>(null)
 let convSearchTimer: ReturnType<typeof setTimeout> | null = null
 const showMemory = ref(false)
-const agentAllowlist = ref<string[]>([])
-const newAllowCmd = ref('')
-const showAllowlist = ref(false)
 const newMemoryKey = ref('')
 const newMemoryValue = ref('')
 const newMemoryCategory = ref('general')
@@ -2475,7 +2391,7 @@ function onAppSkillCreated(e: Event) {
 }
 function onAppToolProposed(e: Event) {
   const detail: any = (e as CustomEvent).detail
-  refreshPendingPlugins()
+
   const name = detail?.name || detail?.slug || 'a new tool'
   showToast(`${name} proposed — review it in Settings → Plugins → Pending`, 'success')
 }
@@ -2931,23 +2847,6 @@ async function exportAuditLog() {
   }
 }
 
-async function loadAllowlist() {
-  const res = await invoke('agent:getAllowlist')
-  if (res?.success) agentAllowlist.value = res.allowlist || []
-}
-
-async function addToAllowlist() {
-  const cmd = newAllowCmd.value.trim()
-  if (!cmd) return
-  await invoke('agent:addAllow', cmd)
-  newAllowCmd.value = ''
-  await loadAllowlist()
-}
-
-async function removeFromAllowlist(cmd: string) {
-  await invoke('agent:removeAllow', cmd)
-  await loadAllowlist()
-}
 
 function exportConversationMarkdown() {
   if (store.messages.length === 0) return
@@ -2982,6 +2881,7 @@ function exportConversationMarkdown() {
   showToast(t('toast.conversationExported'), 'success')
 }
 
+
 async function handleExportData() {
   try {
     const conversationsRes = await invoke('store:listConversations')
@@ -3014,7 +2914,7 @@ async function handleExportData() {
         setup: readLocalStorageJson('syntax-senpai-setup'),
         groupChat: readLocalStorageJson('syntax-senpai-group-chat'),
         providerPreferences: readLocalStorageJson('syntax-senpai-provider-preferences'),
-        agentMode: localStorage.getItem('syntax-senpai-agent-mode') || store.agentMode,
+        executionPolicy: { version: 2, autoDecideActions: store.autoDecideActions },
         webSearchEnabled: store.webSearchEnabled,
         overlayWindowEnabled: overlayWindow.value.enabled,
         proactiveChatEnabled: store.proactiveChatEnabled,
@@ -3041,6 +2941,7 @@ async function handleExportData() {
         selectedModel: store.selectedModel,
         conversations,
         memories: store.userMemories,
+        runs: await invoke('runs:export'),
       },
     }
 
@@ -3095,6 +2996,7 @@ async function handleImportData() {
       return
     }
 
+    if (payload?.data?.runs) await invoke('runs:import', payload.data.runs)
     if (payload?.settings?.locale) {
       setLocale(payload.settings.locale as any)
     }
@@ -3130,9 +3032,7 @@ async function handleImportData() {
     if (payload?.settings?.providerPreferences) {
       localStorage.setItem('syntax-senpai-provider-preferences', JSON.stringify(payload.settings.providerPreferences))
     }
-    if (payload?.settings?.agentMode) {
-      store.setAgentMode(payload.settings.agentMode)
-    }
+    if (payload?.settings?.executionPolicy?.version === 2) store.setAutoDecideActions(payload.settings.executionPolicy.autoDecideActions === true)
     if (typeof payload?.settings?.webSearchEnabled === 'boolean') {
       store.setWebSearchEnabled(payload.settings.webSearchEnabled)
     }
@@ -3892,35 +3792,10 @@ async function handleImportData() {
             </div>
 
             <div class="settings-card">
-              <div class="flex items-start justify-between gap-4 mb-2">
-                <div>
-                  <div class="text-sm font-semibold text-neutral-200">Strict mode (agent sandbox)</div>
-                  <p class="mt-1 text-xs text-neutral-400">
-                    Run every agent shell command against a user-managed allowlist and write a JSONL audit trail. Blocks anything not explicitly allowed.
-                  </p>
-                </div>
-                <button
-                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
-                  :style="{ background: strictMode.enabled ? 'linear-gradient(90deg,#ef4444,#f97316)' : '#404040' }"
-                  :aria-label="`${strictMode.enabled ? 'Disable' : 'Enable'} strict mode`"
-                  @click="toggleStrictMode"
-                >
-                  <span
-                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
-                    :style="{ transform: strictMode.enabled ? 'translateX(20px)' : 'translateX(0)' }"
-                  />
-                </button>
-              </div>
-
-              <div v-if="strictMode.enabled" class="mt-2 flex items-center justify-between gap-2">
-                <p class="text-[11px] text-neutral-500">
-                  Manage the allowlist on the AI tab. Audit log:
-                  <span class="font-mono text-neutral-400 break-all">{{ strictMode.auditLog }}</span>
-                </p>
-                <button class="btn-secondary text-xs shrink-0" aria-label="Open audit log file" @click="openAuditLog">
-                  View log
-                </button>
-              </div>
+          <label class="flex items-center justify-between gap-4 rounded-xl border border-neutral-700 p-4 mb-6">
+            <span><strong>Auto decide</strong><span class="block text-xs text-neutral-400 mt-1">Off: execute directly. On: the agent reviews actions automatically.</span></span>
+            <input type="checkbox" class="w-5 h-5" :checked="store.autoDecideActions" @change="store.setAutoDecideActions(($event.target as HTMLInputElement).checked)" />
+          </label>
             </div>
           </div>
 
@@ -4084,249 +3959,6 @@ async function handleImportData() {
               </button>
             </div>
 
-            <!-- Agent command allowlist -->
-            <div class="settings-card">
-              <div class="flex items-center justify-between mb-1">
-                <div>
-                  <h3 class="text-sm font-bold text-white">Command Allowlist</h3>
-                  <p class="text-xs text-neutral-400">Commands the agent may run without a destructive-action dialog.</p>
-                </div>
-                <button
-                  class="text-xs text-primary-400 hover:text-primary-300 font-semibold"
-                  @click="showAllowlist = !showAllowlist; showAllowlist && loadAllowlist()"
-                >
-                  {{ showAllowlist ? 'Hide' : 'Manage' }}
-                </button>
-              </div>
-              <Transition
-                enter-active-class="transition-all duration-150"
-                leave-active-class="transition-all duration-100"
-                enter-from-class="opacity-0 -translate-y-1"
-                leave-to-class="opacity-0 -translate-y-1"
-              >
-                <div v-if="showAllowlist" class="mt-3">
-                  <div class="flex gap-2 mb-3">
-                    <input
-                      v-model="newAllowCmd"
-                      placeholder="command name (e.g. pnpm)"
-                      class="input-field text-sm flex-1"
-                      @keydown.enter="addToAllowlist"
-                    >
-                    <button class="btn-primary text-sm px-4" @click="addToAllowlist">Add</button>
-                  </div>
-                  <div class="space-y-1 max-h-36 overflow-y-auto">
-                    <div
-                      v-for="cmd in agentAllowlist"
-                      :key="cmd"
-                      class="flex items-center justify-between px-3 py-1.5 rounded-lg bg-neutral-800/40 border border-neutral-700/30 group"
-                    >
-                      <code class="text-xs text-emerald-400 font-mono">{{ cmd }}</code>
-                      <button
-                        class="text-xs text-neutral-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all duration-150"
-                        @click="removeFromAllowlist(cmd)"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    <div v-if="agentAllowlist.length === 0" class="text-xs text-neutral-500 text-center py-2">
-                      No commands in allowlist
-                    </div>
-                  </div>
-                </div>
-              </Transition>
-            </div>
-          </div>
-
-          <!-- Metrics Tab: telemetry -->
-          <div v-if="settingsTab === 'metrics'">
-            <div class="settings-card">
-              <div class="mb-3">
-                <div class="flex items-center justify-between gap-3">
-                  <div>
-                    <h3 class="text-sm font-bold text-white">{{ t('settings.metricsTitle') }}</h3>
-                    <p class="text-xs text-neutral-400">
-                      {{ t('settings.metricsDescription') }}
-                    </p>
-                  </div>
-                  <span
-                    class="rounded-full px-2.5 py-1 text-[11px] font-semibold"
-                    :class="store.apiTelemetryAlert.active ? 'bg-red-500/20 text-red-200' : 'bg-emerald-500/20 text-emerald-200'"
-                  >
-                    {{ t('settings.metricsThreshold') }}: {{ formatDuration(store.apiSpikeThresholdMs).value }} {{ formatDuration(store.apiSpikeThresholdMs).unit }}
-                  </span>
-                </div>
-              </div>
-
-              <div class="mb-4 rounded-xl border border-neutral-800/60 bg-neutral-900/55 p-3">
-                <div class="flex items-start justify-between gap-4">
-                  <div>
-                    <div class="font-semibold text-neutral-200">Enable timeouts and iterations cap</div>
-                    <div class="mt-1 text-xs text-neutral-500">
-                      Off by default. When enabled, retries on timeout/network failures, response-time alerts, and tool/subagent iteration caps are enforced.
-                    </div>
-                  </div>
-                  <button
-                    class="relative h-6 w-11 shrink-0 cursor-pointer rounded-full transition-all duration-300"
-                    :style="{ background: store.enableTimeoutsAndIterationCaps ? 'linear-gradient(90deg,#22c55e,#06b6d4)' : '#404040' }"
-                    :aria-label="`${store.enableTimeoutsAndIterationCaps ? 'Disable' : 'Enable'} timeouts and iterations cap`"
-                    @click="store.setEnableTimeoutsAndIterationCaps(!store.enableTimeoutsAndIterationCaps)"
-                  >
-                    <span
-                      class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
-                      :style="{ transform: store.enableTimeoutsAndIterationCaps ? 'translateX(20px)' : 'translateX(0)' }"
-                    />
-                  </button>
-                </div>
-              </div>
-
-              <div class="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-                <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
-                  <div class="font-semibold text-neutral-200">{{ t('settings.maxIterations') }}</div>
-                  <div class="mt-1 text-xs text-neutral-500">
-                    {{ t('settings.maxIterationsDescription') }}
-                    <span v-if="!store.enableTimeoutsAndIterationCaps" class="text-amber-300"> Disabled until caps are enabled.</span>
-                  </div>
-                  <input
-                    class="input-field mt-3"
-                    type="number"
-                    min="1"
-                    max="24"
-                    :disabled="!store.enableTimeoutsAndIterationCaps"
-                    :value="store.maxToolIterations"
-                    @change="store.setMaxToolIterations(Number(($event.target as HTMLInputElement).value))"
-                  >
-                </label>
-                <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
-                  <div class="font-semibold text-neutral-200">{{ t('settings.responseThreshold') }}</div>
-                  <div class="mt-1 text-xs text-neutral-500">
-                    {{ t('settings.responseThresholdDescription') }}
-                    <span v-if="!store.enableTimeoutsAndIterationCaps" class="text-amber-300"> Disabled until caps are enabled.</span>
-                  </div>
-                  <input
-                    class="input-field mt-3"
-                    type="number"
-                    min="250"
-                    max="60000"
-                    step="250"
-                    :disabled="!store.enableTimeoutsAndIterationCaps"
-                    :value="store.apiSpikeThresholdMs"
-                    @change="store.setApiSpikeThresholdMs(Number(($event.target as HTMLInputElement).value))"
-                  >
-                </label>
-                <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
-                  <div class="font-semibold text-neutral-200">Subagent iteration cap</div>
-                  <div class="mt-1 text-xs text-neutral-500">
-                    Max iterations each dispatched subagent gets before it must stop. Lower = cheaper, higher = more thorough. Default 6.
-                    <span v-if="!store.enableTimeoutsAndIterationCaps" class="text-amber-300"> Disabled until caps are enabled.</span>
-                  </div>
-                  <input
-                    class="input-field mt-3"
-                    type="number"
-                    min="3"
-                    max="12"
-                    :disabled="!store.enableTimeoutsAndIterationCaps"
-                    :value="store.subagentMaxIterations"
-                    @change="store.setSubagentMaxIterations(Number(($event.target as HTMLInputElement).value))"
-                  >
-                </label>
-                <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
-                  <div class="font-semibold text-neutral-200">Subagent concurrency</div>
-                  <div class="mt-1 text-xs text-neutral-500">How many subagents run in parallel per dispatch. Lower = friendlier to rate limits. Default 4.</div>
-                  <input
-                    class="input-field mt-3"
-                    type="number"
-                    min="1"
-                    max="8"
-                    :value="store.subagentConcurrency"
-                    @change="store.setSubagentConcurrency(Number(($event.target as HTMLInputElement).value))"
-                  >
-                </label>
-              </div>
-
-              <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-                <div class="rounded-xl bg-neutral-900/55 p-3">
-                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsLatest') }}</div>
-                  <div class="mt-2 text-xl font-bold text-white">{{ formatDuration(telemetryStats.latest).value }}<span v-if="telemetryStats.latest !== null" class="ml-1 text-xs text-neutral-400">{{ formatDuration(telemetryStats.latest).unit }}</span></div>
-                </div>
-                <div class="rounded-xl bg-neutral-900/55 p-3">
-                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsAverage') }}</div>
-                  <div class="mt-2 text-xl font-bold text-white">{{ formatDuration(telemetryStats.average).value }}<span v-if="telemetryStats.average !== null" class="ml-1 text-xs text-neutral-400">{{ formatDuration(telemetryStats.average).unit }}</span></div>
-                </div>
-                <div class="rounded-xl bg-neutral-900/55 p-3">
-                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsP95') }}</div>
-                  <div class="mt-2 text-xl font-bold text-white">{{ formatDuration(telemetryStats.p95).value }}<span v-if="telemetryStats.p95 !== null" class="ml-1 text-xs text-neutral-400">{{ formatDuration(telemetryStats.p95).unit }}</span></div>
-                </div>
-                <div class="rounded-xl bg-neutral-900/55 p-3">
-                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsAlerts') }}</div>
-                  <div class="mt-2 text-xl font-bold" :class="store.apiTelemetryAlert.active ? 'text-red-300' : 'text-white'">{{ telemetryStats.alertCount }}</div>
-                </div>
-              </div>
-
-              <div class="mt-4 rounded-xl bg-neutral-900/55 p-3">
-                <div class="mb-3 flex items-center justify-between">
-                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsHistory') }}</div>
-                  <div v-if="store.apiTelemetryAlert.active" class="text-xs font-semibold text-red-300">
-                    {{ store.apiTelemetryAlert.message }}
-                  </div>
-                </div>
-
-                <div v-if="telemetryHistory.length > 0" class="space-y-3">
-                  <div class="flex h-24 items-end gap-2">
-                    <div
-                      v-for="sample in telemetryHistory.slice(-16)"
-                      :key="sample.id"
-                      class="flex-1 rounded-t-md transition-all"
-                      :class="sample.alert ? 'bg-red-400/80' : 'bg-cyan-400/80'"
-                      :style="{ height: telemetryBarHeight(sample.totalMs) }"
-                      :title="`${sample.provider} ${sample.model}: ${formatDuration(sample.totalMs).value} ${formatDuration(sample.totalMs).unit}`"
-                    />
-                  </div>
-                  <div class="max-h-36 space-y-2 overflow-y-auto pr-1">
-                    <div
-                      v-for="sample in store.apiTelemetryHistory.slice(0, 6)"
-                      :key="sample.id"
-                      class="flex items-center justify-between rounded-lg bg-black/20 px-3 py-2 text-xs"
-                    >
-                      <div class="min-w-0">
-                        <div class="truncate font-semibold text-neutral-200">{{ sample.provider }} · {{ sample.model }}</div>
-                        <div class="text-neutral-500">{{ new Date(sample.measuredAt).toLocaleTimeString() }}</div>
-                      </div>
-                      <div class="ml-3 text-right">
-                        <div :class="sample.alert ? 'text-red-300' : 'text-cyan-200'">{{ formatDuration(sample.totalMs).value }} {{ formatDuration(sample.totalMs).unit }}</div>
-                        <div class="text-neutral-500">{{ sample.roundTrips }} calls</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div v-else class="py-4 text-sm text-neutral-500">
-                  {{ t('settings.metricsEmpty') }}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Shared Save/Cancel footer for General/AI/Data/Metrics -->
-          <div
-            v-if="['general', 'ai', 'data', 'metrics'].includes(settingsTab)"
-            class="flex gap-2"
-          >
-            <button class="btn-secondary flex-1" @click="showSettings = false">
-              {{ t('settings.cancel') }}
-            </button>
-            <button
-              class="btn-primary flex-1"
-              @click="handleSetup(store.apiKey)"
-            >
-              {{ t('settings.save') }}
-            </button>
-            <button class="btn-ghost flex-1" @click="startDemoMode">
-              {{ t('settings.skipDemo') }}
-            </button>
-          </div>
-
-          <!-- Theme Tab -->
-          <div v-if="settingsTab === 'theme'">
             <!-- Color Presets -->
             <div class="settings-card">
               <div class="mb-3">
@@ -4765,62 +4397,6 @@ async function handleImportData() {
               </ul>
             </div>
 
-            <div v-if="pendingPlugins.length > 0" class="settings-card">
-              <div class="flex items-start justify-between gap-3 mb-3">
-                <div>
-                  <h3 class="text-sm font-bold text-white">Pending — AI-authored tools</h3>
-                  <p class="text-xs text-neutral-400">
-                    Your waifu has proposed these tools. Review the code before approving — once approved + restarted, plugins run with full Node privileges.
-                  </p>
-                </div>
-              </div>
-
-              <ul class="flex flex-col gap-2">
-                <li
-                  v-for="plugin in pendingPlugins"
-                  :key="plugin.slug"
-                  class="rounded-lg border border-amber-400/30 bg-amber-400/5 p-3"
-                >
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
-                      <div class="flex items-center gap-2 flex-wrap">
-                        <span class="text-sm font-semibold text-white">{{ plugin.name }}</span>
-                        <span class="text-[11px] text-neutral-500 font-mono">{{ plugin.slug }} v{{ plugin.version }}</span>
-                        <span class="text-[10px] uppercase tracking-wide text-amber-300 border border-amber-300/40 rounded px-1.5 py-0.5">pending</span>
-                      </div>
-                      <p v-if="plugin.description" class="text-xs text-neutral-400 mt-1">{{ plugin.description }}</p>
-                    </div>
-                    <div class="flex gap-2 shrink-0">
-                      <button
-                        class="btn-ghost text-xs"
-                        :aria-label="`Review code for ${plugin.slug}`"
-                        @click="togglePendingExpanded(plugin.slug)"
-                      >
-                        {{ pendingExpanded.has(plugin.slug) ? 'Hide code' : 'View code' }}
-                      </button>
-                      <button
-                        class="btn-secondary text-xs text-red-400"
-                        :aria-label="`Reject ${plugin.slug}`"
-                        @click="rejectPending(plugin.slug)"
-                      >
-                        Reject
-                      </button>
-                      <button
-                        class="btn-primary text-xs"
-                        :aria-label="`Approve ${plugin.slug}`"
-                        @click="approvePending(plugin.slug)"
-                      >
-                        Approve
-                      </button>
-                    </div>
-                  </div>
-                  <pre
-                    v-if="pendingExpanded.has(plugin.slug)"
-                    class="mt-3 max-h-72 overflow-auto rounded bg-neutral-950/70 p-2 text-[11px] text-neutral-300 font-mono whitespace-pre-wrap break-all"
-                  >{{ plugin.code }}</pre>
-                </li>
-              </ul>
-            </div>
           </div>
 
           <!-- Skills Tab -->
@@ -5682,80 +5258,10 @@ async function handleImportData() {
             {{ t('agent.description') }}
           </p>
 
-          <div class="space-y-3 mb-6">
-            <!-- Ask before running -->
-            <button
-              :class="[
-                'w-full text-left rounded-xl p-4 border-2 transition-all duration-200',
-                agentMode === 'ask'
-                  ? 'border-primary-500/60 bg-primary-500/10'
-                  : 'border-neutral-700/40 bg-neutral-800/30 hover:border-neutral-600/60',
-              ]"
-              @click="saveAgentMode('ask')"
-            >
-              <div class="flex items-center gap-3">
-                <span class="text-xl">🔔</span>
-                <div>
-                  <div class="text-sm font-semibold text-white">
-                    {{ t('agent.askTitle') }}
-                  </div>
-                  <div class="text-xs text-neutral-400 mt-0.5">
-                    {{ t('agent.askDesc') }}
-                  </div>
-                </div>
-                <div v-if="agentMode === 'ask'" class="ml-auto w-2 h-2 rounded-full bg-primary-400" />
-              </div>
-            </button>
-
-            <!-- Auto + common commands -->
-            <button
-              :class="[
-                'w-full text-left rounded-xl p-4 border-2 transition-all duration-200',
-                agentMode === 'auto'
-                  ? 'border-primary-500/60 bg-primary-500/10'
-                  : 'border-neutral-700/40 bg-neutral-800/30 hover:border-neutral-600/60',
-              ]"
-              @click="saveAgentMode('auto')"
-            >
-              <div class="flex items-center gap-3">
-                <span class="text-xl">⚡</span>
-                <div>
-                  <div class="text-sm font-semibold text-white">
-                    {{ t('agent.autoTitle') }}
-                  </div>
-                  <div class="text-xs text-neutral-400 mt-0.5">
-                    {{ t('agent.autoDesc') }}
-                  </div>
-                </div>
-                <div v-if="agentMode === 'auto'" class="ml-auto w-2 h-2 rounded-full bg-primary-400" />
-              </div>
-            </button>
-
-            <!-- Full access -->
-            <button
-              :class="[
-                'w-full text-left rounded-xl p-4 border-2 transition-all duration-200',
-                agentMode === 'full'
-                  ? 'border-red-500/60 bg-red-500/10'
-                  : 'border-neutral-700/40 bg-neutral-800/30 hover:border-neutral-600/60',
-              ]"
-              @click="saveAgentMode('full')"
-            >
-              <div class="flex items-center gap-3">
-                <span class="text-xl">🔓</span>
-                <div>
-                  <div class="text-sm font-semibold text-white">
-                    {{ t('agent.fullTitle') }}
-                  </div>
-                  <div class="text-xs text-neutral-400 mt-0.5">
-                    {{ t('agent.fullDesc') }}
-                  </div>
-                </div>
-                <div v-if="agentMode === 'full'" class="ml-auto w-2 h-2 rounded-full bg-red-400" />
-              </div>
-            </button>
-          </div>
-
+          <label class="flex items-center justify-between gap-4 rounded-xl border border-neutral-700 p-4 mb-6">
+            <span><strong>Auto decide</strong><span class="block text-xs text-neutral-400 mt-1">Off: execute directly. On: the agent reviews actions automatically.</span></span>
+            <input type="checkbox" class="w-5 h-5" :checked="store.autoDecideActions" @change="store.setAutoDecideActions(($event.target as HTMLInputElement).checked)" />
+          </label>
           <button class="btn-secondary w-full" @click="showAgent = false">
             {{ t('settings.cancel') }}
           </button>
@@ -6363,35 +5869,6 @@ async function handleImportData() {
                 :recent="group.msg.id === store.recentMessageId"
                 :show-copy="group.msg.role === 'assistant'"
               />
-              <div
-                v-if="group.msg.pendingApproval"
-                :class="[
-                  'mt-2 flex gap-2 rounded-xl border border-amber-400/25 bg-amber-400/10 p-2',
-                  compactChatLayout ? 'max-w-[260px]' : 'max-w-md',
-                ]"
-              >
-                <template v-if="group.msg.pendingApproval.status === 'pending'">
-                  <button
-                    class="btn-primary flex-1 text-xs"
-                    @click="store.approveToolApproval(group.msg.pendingApproval.id)"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    class="btn-secondary flex-1 text-xs text-rose-300"
-                    @click="store.denyToolApproval(group.msg.pendingApproval.id)"
-                  >
-                    Deny
-                  </button>
-                </template>
-                <div
-                  v-else
-                  class="w-full text-center text-xs font-semibold"
-                  :class="group.msg.pendingApproval.status === 'approved' ? 'text-emerald-300' : 'text-rose-300'"
-                >
-                  {{ group.msg.pendingApproval.status === 'approved' ? 'Approved' : 'Denied' }}
-                </div>
-              </div>
               <SubagentPanel
                 v-if="group.msg.subagents && group.msg.subagents.length > 0"
                 :subagents="group.msg.subagents"
@@ -6477,6 +5954,10 @@ async function handleImportData() {
         </div>
 
         <!-- Coding-mode pill -->
+        <div v-if="!compactChatLayout" class="flex items-center gap-2 mb-2 text-xs">
+          <button v-for="m in (['auto','chat','code'] as const)" :key="m" class="px-2 py-1 rounded" :class="workspace.mode === m ? 'bg-primary-500/20 text-primary-200' : 'text-neutral-500'" @click="workspace.setMode(m)">{{ m === 'auto' ? 'Auto' : m === 'chat' ? 'Chat' : 'Code' }}</button>
+          <button class="ml-auto text-neutral-400" @click="workspace.open = !workspace.open">Workspace {{ workspace.open ? '›' : '‹' }}</button>
+        </div>
         <div v-if="store.activeCodingRepo && !compactChatLayout" :class="[compactChatLayout ? 'flex flex-wrap items-center gap-1.5 mb-2' : 'flex items-center gap-2 mb-2']">
           <button
             :class="[
@@ -6645,6 +6126,8 @@ async function handleImportData() {
         </p>
       </div>
     </div>
+
+    <WorkspacePanel />
 
     <!-- Embedded browser panel (shared between the user and the waifu agent) -->
     <BrowserPanel v-if="browser.panelOpen && !compactChatLayout" />

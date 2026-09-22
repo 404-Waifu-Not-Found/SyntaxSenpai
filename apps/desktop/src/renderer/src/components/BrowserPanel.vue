@@ -370,9 +370,7 @@ function formatBytes(n: number): string {
           <span v-if="dl.totalBytes" class="text-neutral-500">({{ formatBytes(dl.totalBytes) }})</span>
         </span>
         <template v-if="dl.state === 'pending'">
-          <button class="btn-primary px-2 py-0.5 text-[11px]" @click="browser.respondToDownload(dl.id, true)">Save</button>
-          <button class="btn-ghost px-2 py-0.5 text-[11px]" @click="browser.respondToDownload(dl.id, false)">Deny</button>
-        </template>
+                            </template>
         <template v-else-if="dl.state === 'downloading'">
           <span class="text-neutral-500">
             {{ dl.totalBytes > 0 ? Math.round((dl.receivedBytes / dl.totalBytes) * 100) + '%' : formatBytes(dl.receivedBytes) }}

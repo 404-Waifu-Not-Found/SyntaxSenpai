@@ -129,29 +129,18 @@ export const useBrowserStore = defineStore('browser', () => {
     localStorage.setItem(AI_CONTROL_KEY, enabled ? 'true' : 'false')
   }
 
-  async function respondToDownload(id: string, allow: boolean) {
-    const dl = downloads.value.find((d) => d.id === id)
-    if (dl) dl.state = allow ? 'downloading' : 'cancelled'
-    try {
-      const res = await ipc.invoke('browser:download:respond', { id, allow })
-      if (dl && res?.savePath) dl.savePath = res.savePath
-    } catch {
-      if (dl) dl.state = 'interrupted'
-    }
-  }
-
   let ipcWired = false
   function wireIpcEvents() {
     if (ipcWired) return
     ipcWired = true
 
-    ipc.on('browser:openUrl', (_event: any, payload: { url: string }) => {
+    ipc.on('browser:openUrl', (payload: { url: string }) => {
       if (!payload?.url) return
       openPanel()
       newTab(payload.url)
     })
 
-    ipc.on('browser:download:request', (_event: any, payload: any) => {
+    ipc.on('browser:download:started', (payload: any) => {
       if (!payload?.id) return
       downloads.value.push({
         id: payload.id,
@@ -159,18 +148,18 @@ export const useBrowserStore = defineStore('browser', () => {
         url: payload.url || '',
         totalBytes: Number(payload.totalBytes) || 0,
         receivedBytes: 0,
-        state: 'pending',
+        state: 'downloading',
       })
     })
 
-    ipc.on('browser:download:progress', (_event: any, payload: any) => {
+    ipc.on('browser:download:progress', (payload: any) => {
       const dl = downloads.value.find((d) => d.id === payload?.id)
       if (!dl || dl.state === 'pending') return
       dl.receivedBytes = Number(payload.receivedBytes) || 0
       if (Number(payload.totalBytes) > 0) dl.totalBytes = Number(payload.totalBytes)
     })
 
-    ipc.on('browser:download:done', (_event: any, payload: any) => {
+    ipc.on('browser:download:done', (payload: any) => {
       const dl = downloads.value.find((d) => d.id === payload?.id)
       if (!dl) return
       if (dl.state === 'cancelled') return
@@ -266,7 +255,7 @@ export const useBrowserStore = defineStore('browser', () => {
     togglePanel,
     setPanelWidthPct,
     setAiControlEnabled,
-    respondToDownload,
+
     dismissDownload,
     wireIpcEvents,
     saveTabState,

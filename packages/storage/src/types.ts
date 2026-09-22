@@ -78,6 +78,8 @@ export interface IChatStore {
  * Conversation record in database
  */
 export interface ConversationRecord {
+  workspace?: { path: string; name: string; branch?: string } | null;
+  presentation?: "auto" | "chat" | "code";
   id: string;
   waifuId: string;
   title?: string;

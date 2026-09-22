@@ -1,3 +1,4 @@
+import { decideAction } from '../agent/policy'
 const { ipcMain, app, session, BrowserWindow, webContents: webContentsModule } = require('electron')
 const path = require('path')
 
@@ -37,8 +38,8 @@ function setupBrowserSession() {
     callback(false)
   })
 
-  // Downloads pause until the user confirms via the renderer toast.
-  ses.on('will-download', (_event: any, item: any) => {
+  // Downloads pause only while the shared execution policy is evaluated.
+  ses.on('will-download', async (_event: any, item: any) => {
     const id = `dl-${Date.now()}-${++downloadSeq}`
     const filename = item.getFilename() || 'download'
     try { item.pause() } catch { /* best effort */ }
@@ -63,12 +64,15 @@ function setupBrowserSession() {
       })
     })
 
-    broadcast('browser:download:request', {
-      id,
-      filename,
-      url: item.getURL(),
-      totalBytes: item.getTotalBytes(),
-    })
+    const decision = await decideAction({ id, name: 'browser_download', arguments: { url: item.getURL(), filename } }, 'Download requested by the active browser task')
+    if (!decision.approved) { item.cancel(); broadcast('browser:download:blocked', { id, filename, reason: decision.reason }); return }
+    const fsSync = require('fs')
+    const safeName = path.basename(filename)
+    const ext = path.extname(safeName), base = path.basename(safeName, ext)
+    let target = path.join(app.getPath('downloads'), safeName), n = 1
+    while (fsSync.existsSync(target)) target = path.join(app.getPath('downloads'), `${base} (${n++})${ext}`)
+    item.setSavePath(target); broadcast('browser:download:started', { id, filename, url: item.getURL(), totalBytes: item.getTotalBytes() }); item.resume()
+
   })
 }
 
@@ -93,34 +97,6 @@ export function registerBrowserIpc() {
   app.on('web-contents-created', (_event: any, contents: any) => {
     if (contents.getType() !== 'webview') return
     hardenGuestContents(contents)
-  })
-
-  ipcMain.handle('browser:download:respond', async (_event: any, payload: { id: string; allow: boolean }) => {
-    try {
-      const pending = pendingDownloads.get(String(payload?.id))
-      if (!pending) return { success: false, error: 'download not found (may have expired)' }
-      if (payload?.allow) {
-        const downloadsDir = app.getPath('downloads')
-        // Avoid clobbering an existing file with the same name.
-        let target = path.join(downloadsDir, pending.filename)
-        let n = 1
-        const fsSync = require('fs')
-        const ext = path.extname(pending.filename)
-        const base = path.basename(pending.filename, ext)
-        while (fsSync.existsSync(target)) {
-          target = path.join(downloadsDir, `${base} (${n})${ext}`)
-          n += 1
-        }
-        pending.item.setSavePath(target)
-        pending.item.resume()
-        return { success: true, savePath: target }
-      }
-      pending.item.cancel()
-      pendingDownloads.delete(String(payload?.id))
-      return { success: true, cancelled: true }
-    } catch (err: any) {
-      return { success: false, error: err?.message || String(err) }
-    }
   })
 
   ipcMain.handle('browser:capturePage', async (_event: any, webContentsId: number) => {

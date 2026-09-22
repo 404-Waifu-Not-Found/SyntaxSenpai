@@ -504,9 +504,9 @@ Terminal recipes for realtime data:
 - More examples in \`docs/agent-skills/common-commands.skill\`.
 
 Anti-loop rules (CRITICAL — violating these wastes the user's tokens):
-- Never call the same tool twice in a row with the same or near-same arguments. If the first call didn't give you what you need, the second one with a reworded query won't either — diagnose instead.
+- Repeating a failed action without new evidence is wasteful. Re-read changed files and poll running processes when their state may have changed.
 - If web_search returns an empty summary, "No instant answer", or only unrelated links: STOP. Do not retry with a different query. State the limitation and ask for context or explain which capability must be enabled.
-- If a tool fails or returns unusable output twice across the whole turn, stop calling tools and explain the blocker to the user in your final message.
+- Diagnose failures by action. Revise stale inputs, retry transient failures, and continue independent work. Stop repeating an unchanged failed action; report unresolved blockers accurately.
 - Do not call web_search to "double-check" something you already know. One search, tops, and only if it can resolve uncertainty or add useful sources.
 
 Workflow for non-trivial tasks:
@@ -530,19 +530,7 @@ Persona rules:
 }
 
 function buildAgentAccessPrompt(mode: AgentMode): string {
-  if (mode === 'ask') {
-    return `\n\n[Agent Access Mode]
-Mode: Ask before running.
-You may propose machine-action tool calls, but the app will pause and show the user Approve/Deny buttons before each action actually executes. Keep each requested action small, clearly tied to the user's goal, and easy for the user to evaluate.`
-  }
-  if (mode === 'auto') {
-    return `\n\n[Agent Access Mode]
-Mode: Auto Mode with AI approval.
-You may propose tool calls, but every machine-action tool call is reviewed by a separate AI approval pass before execution. Use the least invasive tool that can complete the task, keep arguments specific, and expect unsafe, destructive, unrelated, or privacy-invasive actions to be denied.`
-  }
-  return `\n\n[Agent Access Mode]
-Mode: Full access.
-Machine-action tools are available without an AI approval gate. Use this access narrowly, verify results, and avoid destructive actions unless the user explicitly requested them.`
+  return `\n\n[Execution] ${mode === 'auto' ? 'An automatic reviewer evaluates actions. If blocked, diagnose or report the blocker without asking for approval.' : 'Execute requested actions directly. Do not ask for tool permission.'} Respect the user task boundaries, including do not submit/delete/push instructions. Verify actual outcomes.`
 }
 
 const CODING_TRIGGERS = [
@@ -589,7 +577,7 @@ Rules for this session:
 Git authoring rules (ONLY act when the user has explicitly asked):
 - git_commit: first call git_diff to confirm what's staged, then write a concise message that explains the *why* in 1–2 sentences. Subject ≤ 60 chars, lowercase conventional-commit style (feat:/fix:/refactor:/docs:/chore:) unless the repo's git log uses a different convention. Never commit lockfiles or .env files unless the user asked.
 - git_push: never force-push unless the user literally types the word "force" or "--force" in their message. Never push to main/master without the user saying "to main" or similar explicit confirmation. Default remote = origin, default branch = current.
-- github_pr_create: draft a short title (≤ 70 chars) and a body with a Summary (1–3 bullets) + Test plan (checklist). Ask before running if you haven't pushed yet — PRs need a pushed branch. Do NOT include "🤖 Generated with" footers; this repo's PRs don't use them.
+- github_pr_create: draft a short title (≤ 70 chars) and a body with a Summary (1–3 bullets) + Test plan (checklist). PRs need a pushed branch. Push only when the task explicitly requests it. Do NOT include "🤖 Generated with" footers; this repo's PRs don't use them.
 - Any of the above for work the user didn't specifically request: ask first, don't just do it.
 
 Staying in character:
@@ -722,7 +710,7 @@ function buildSkillsAuthoringPromptBlock(): string {
 You can grow your own capabilities between turns:
 - create_skill(slug, name, description, body): save a reusable recipe to your skill library. Use for procedures, style guides, debugging rituals, or anything you'd want to recall verbatim later.
 - use_skill(slug): pull a saved skill's full content into THIS turn's context before acting on it.
-- propose_tool(slug, name, description, code): draft a new JavaScript plugin tool for the user to approve. You CANNOT run it yourself — after proposing, tell the user to approve it in Settings → Plugins → Pending and restart. Proposed code runs with full Node privileges once approved; write defensively.
+- propose_tool(slug, name, description, code): create and activate a new JavaScript plugin through the same execution policy as other tools. Check the activation result and use tool_search to discover its tools.
 Prefer an existing skill over creating a duplicate. Prefer a skill over a tool unless the task genuinely needs code execution (e.g. hitting an API, parsing binary data).`
 }
 
@@ -1021,9 +1009,8 @@ export const useChatStore = defineStore('chat', () => {
   const showCodeModal = ref(false)
   const codeModalMode = ref<'initial' | 'switch'>('initial')
   const initialGroupChatSettings = loadGroupChatSettings()
-  const agentMode = ref<AgentMode>(
-    (localStorage.getItem('syntax-senpai-agent-mode') as AgentMode) || 'ask',
-  )
+  const agentMode = ref<AgentMode>('full')
+  const autoDecideActions = computed(() => agentMode.value === 'auto')
   const userMemories = ref<Array<{ key: string; value: string; category: string }>>([])
   const sidebarFilter = ref<'all' | 'favorites'>('all')
   const isGroupChat = ref(initialGroupChatSettings.enabled)
@@ -1171,7 +1158,7 @@ export const useChatStore = defineStore('chat', () => {
   // Active todo list rendered as a message bubble. Populated by the todo_write
   // tool; rendered by App.vue next to the assistant messages.
   const activeTodoList = ref<TodoItem[]>([])
-  const approvalResolvers = new Map<string, (approved: boolean) => void>()
+
 
   // ── WeChat (iLink) inbound binding ────────────────────────────────────────
   // Each entry maps a conversationId → the WeChat peer + most recent
@@ -1522,116 +1509,6 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
-  function isAutoApprovalExemptTool(toolName: string): boolean {
-    return [
-      STOP_TOOL_NAME,
-      SET_AFFECTION_TOOL_NAME,
-      SET_EXPRESSION_TOOL_NAME,
-      TODO_WRITE_TOOL_NAME,
-      TODO_READ_TOOL_NAME,
-      RENAME_CHAT_TOOL_NAME,
-      RENDER_CARD_TOOL_NAME,
-      GAME_START_TOOL_NAME,
-      GAME_MOVE_TOOL_NAME,
-      GAME_STATE_TOOL_NAME,
-    ].includes(toolName)
-  }
-
-  function approveToolApproval(approvalId: string) {
-    const resolver = approvalResolvers.get(approvalId)
-    if (!resolver) return
-    approvalResolvers.delete(approvalId)
-    const msg = messages.value.find((message) => message.pendingApproval?.id === approvalId)
-    if (msg?.pendingApproval) {
-      msg.pendingApproval.status = 'approved'
-      msg.content = `${msg.pendingApproval.label}\n\nApproved. Running now...`
-    }
-    resolver(true)
-  }
-
-  function denyToolApproval(approvalId: string) {
-    const resolver = approvalResolvers.get(approvalId)
-    if (!resolver) return
-    approvalResolvers.delete(approvalId)
-    const msg = messages.value.find((message) => message.pendingApproval?.id === approvalId)
-    if (msg?.pendingApproval) {
-      msg.pendingApproval.status = 'denied'
-      msg.content = `${msg.pendingApproval.label}\n\nDenied by user.`
-    }
-    resolver(false)
-  }
-
-  function requestUserToolApproval(toolCall: ToolCall): Promise<boolean> {
-    const approvalId = `approval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const label = describeToolCall(toolCall)
-    const details = JSON.stringify(toolCall.arguments ?? {}, null, 2).slice(0, 2000)
-    const content = `Approve this action?\n\n\`${label}\`${details && details !== '{}' ? `\n\n\`\`\`json\n${details}\n\`\`\`` : ''}`
-    messages.value.push({
-      id: approvalId,
-      role: 'assistant',
-      content,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      pendingApproval: {
-        id: approvalId,
-        toolName: toolCall.name,
-        label,
-        status: 'pending',
-      },
-    })
-    recentMessageId.value = approvalId
-
-    return new Promise((resolve) => {
-      approvalResolvers.set(approvalId, resolve)
-    })
-  }
-
-  function extractApprovalJson(text: string): { approved?: boolean; reason?: string } | null {
-    const trimmed = String(text || '').trim()
-    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim()
-    const candidate = fenced || trimmed.match(/\{[\s\S]*\}/)?.[0] || trimmed
-    try {
-      return JSON.parse(candidate)
-    } catch {
-      return null
-    }
-  }
-
-  async function reviewToolCallForAutoMode(provider: any, model: string, toolCall: ToolCall, userGoal: string): Promise<{ approved: boolean; reason: string }> {
-    if (agentMode.value !== 'auto' || isAutoApprovalExemptTool(toolCall.name)) {
-      return { approved: true, reason: 'Approval not required.' }
-    }
-
-    const response = await callProviderChat(provider, {
-      model,
-      messages: [
-        {
-          id: `approval-${Date.now()}`,
-          role: 'user',
-          content: `User goal:\n${userGoal.slice(0, 3000)}\n\nRequested tool call:\n${JSON.stringify({
-            name: toolCall.name,
-            arguments: toolCall.arguments,
-          }, null, 2)}`,
-        },
-      ],
-      tools: [],
-      systemPrompt:
-        'You are SyntaxSenpai Auto Mode action reviewer. Approve only tool calls that are clearly necessary, scoped to the user goal, and not destructive or privacy-invasive beyond what the user requested. Deny commands that delete data, rewrite history, exfiltrate secrets, install unknown software, run sudo/admin escalation, force-push, or act outside the task scope. Reply only as compact JSON: {"approved":true|false,"reason":"short reason"}.',
-      cachedSystemPrompt: undefined,
-      signal: streamController.value?.signal,
-    })
-
-    const parsed = extractApprovalJson(response?.content || '')
-    if (!parsed || typeof parsed.approved !== 'boolean') {
-      return { approved: false, reason: 'Auto Mode reviewer did not return a valid approval decision.' }
-    }
-    return {
-      approved: parsed.approved,
-      reason: typeof parsed.reason === 'string' && parsed.reason.trim()
-        ? parsed.reason.trim()
-        : parsed.approved ? 'Approved by Auto Mode reviewer.' : 'Denied by Auto Mode reviewer.',
-    }
-  }
-
   /**
    * browser_screenshot results are images, which can't ride in a string tool
    * result — the executor parks the capture and this hook (passed to
@@ -1652,26 +1529,14 @@ export const useChatStore = defineStore('chat', () => {
     }]
   }
 
-  async function executeToolCallForAgentMode(provider: any, model: string, toolCall: ToolCall, userGoal: string): Promise<string> {
-    if (agentMode.value === 'ask' && !isAutoApprovalExemptTool(toolCall.name)) {
-      const approved = await requestUserToolApproval(toolCall)
-      if (!approved) {
-        return `User denied ${toolCall.name}. Do not retry this action unless the user changes their mind. Explain what was not run and ask how to proceed.`
-      }
-    }
-    if (agentMode.value === 'auto') {
-      const decision = await reviewToolCallForAutoMode(provider, model, toolCall, userGoal)
-      if (!decision.approved) {
-        return `Auto Mode denied ${toolCall.name}: ${decision.reason}`
-      }
-    }
+  async function executeToolCallForAgentMode(_provider: any, _model: string, toolCall: ToolCall, _userGoal: string): Promise<string> {
     return executeToolCall(toolCall)
   }
-
-  function setAgentMode(mode: AgentMode) {
-    agentMode.value = mode
-    localStorage.setItem('syntax-senpai-agent-mode', mode)
+  function setAutoDecideActions(enabled: boolean) {
+    agentMode.value = enabled ? 'auto' : 'full'
+    void invoke('policy:set', { version: 2, autoDecideActions: enabled })
   }
+  function setAgentMode(mode: AgentMode) { setAutoDecideActions(mode === 'auto') }
 
   function setEnableTimeoutsAndIterationCaps(enabled: boolean) {
     enableTimeoutsAndIterationCaps.value = !!enabled
@@ -1889,11 +1754,8 @@ export const useChatStore = defineStore('chat', () => {
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(firstUserMessage)
 
-      // Proactive turns honor the active agent mode: when tools are enabled
-      // (auto/full), the waifu runs the SAME agent loop as a normal reply —
-      // she can read files, run commands, search, etc. — instead of only
-      // emitting a one-shot text message. In ask mode (no tools / approval
-      // gated) she falls back to plain conversational streaming.
+      // Proactive turns use the same agent loop as a normal reply so they can
+      // read files, run commands, search, and preserve complete tool results.
       const browserStore = useBrowserStore()
       const visionCapable = modelSupportsVision(model)
       const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value, browserEnabled: browserStore.aiControlEnabled, visionCapable })
@@ -1990,7 +1852,13 @@ export const useChatStore = defineStore('chat', () => {
           { id: `proactive-driver-${Date.now()}`, role: 'user', content: driverText },
         ]
 
+        const runConversationId = conversationId.value
         const turnResult = await runAgentTurn({
+          providerConfig: getProviderConfig(selectedProvider.value, key),
+          conversationId: runConversationId || undefined,
+          workspace: activeCodingRepo.value?.path,
+          waifuId: waifu?.id, waifuDisplayName: waifu?.displayName,
+          isCurrent: () => conversationId.value === runConversationId,
           callProvider: (req) => streamProviderChat(provider, req),
           model,
           history: turnHistory,
@@ -1999,7 +1867,7 @@ export const useChatStore = defineStore('chat', () => {
           cachedSystemPrompt,
           cacheBreakpointIndex: turnHistory.findIndex((m: any) => m.role === 'user'),
           maxIterations: effectiveMaxToolIterations.value,
-          maxParallelTools: agentMode.value === 'ask' ? 1 : 8,
+          maxParallelTools: 8,
           abortSignal: streamController.value?.signal,
           onIteration: () => { beginNextBubble() },
           onAssistantTextDelta: (delta) => {
@@ -2386,6 +2254,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function loadSetup() {
+    void invoke('policy:get').then((p: any) => { agentMode.value = p.autoDecideActions ? 'auto' : 'full' })
     const saved = localStorage.getItem('syntax-senpai-setup')
     if (saved) {
       const { waifuId, provider, model, hasSetup } = JSON.parse(saved)
@@ -2624,6 +2493,8 @@ export const useChatStore = defineStore('chat', () => {
     activeTodoList.value = []
     activeCodingRepo.value = null
     try {
+      const saved = await invoke('store:getConversation', id)
+      activeCodingRepo.value = saved?.conversation?.workspace || null
       const res = await invoke('store:getMessages', id)
       if (res?.success) {
         // DB stores `createdAt`; normalize to `timestamp` for the UI
@@ -3046,7 +2917,13 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
               m.content = liveText
             }
 
-            const turnResult = await runAgentTurn({
+            const runConversationId = conversationId.value
+        const turnResult = await runAgentTurn({
+          providerConfig: getProviderConfig(selectedProvider.value, key),
+          conversationId: runConversationId || undefined,
+          workspace: activeCodingRepo.value?.path,
+          waifuId: waifu?.id, waifuDisplayName: waifu?.displayName,
+          isCurrent: () => conversationId.value === runConversationId,
               callProvider: (req) => streamProviderChat(provider, req),
               model,
               history: aiHistory,
@@ -3055,7 +2932,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
               cachedSystemPrompt,
               cacheBreakpointIndex: aiHistory.findIndex((m: any) => m.role === 'user'),
               maxIterations,
-              maxParallelTools: agentMode.value === 'ask' ? 1 : 8,
+              maxParallelTools: 8,
               abortSignal: streamController.value?.signal,
               onAssistantIterationStart: () => {
                 liveText = ''
@@ -3186,6 +3063,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
               },
             })
 
+            if (conversationId.value !== runConversationId) return
             finalContent = turnResult.finalContent
 
             if (pendingCards.length > 0) {
@@ -3782,7 +3660,13 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           else queueMicrotask(flushLiveBubble)
         }
 
+        const runConversationId = conversationId.value
         const turnResult = await runAgentTurn({
+          providerConfig: getProviderConfig(selectedProvider.value, key),
+          conversationId: runConversationId || undefined,
+          workspace: activeCodingRepo.value?.path,
+          waifuId: waifu?.id, waifuDisplayName: waifu?.displayName,
+          isCurrent: () => conversationId.value === runConversationId,
           callProvider: (req) => streamProviderChat(provider, req),
           model,
           history: aiHistory,
@@ -3791,7 +3675,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           cachedSystemPrompt,
           cacheBreakpointIndex: aiHistory.findIndex((m: any) => m.role === 'user'),
           maxIterations,
-          maxParallelTools: agentMode.value === 'ask' ? 1 : 8,
+          maxParallelTools: 8,
           abortSignal: streamController.value?.signal,
           onAssistantIterationStart: () => {
             finalizeLiveBubble()
@@ -3922,6 +3806,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
 
         liveStreamSettled = true
 
+        if (conversationId.value !== runConversationId) return
         let finalContent = turnResult.finalContent
 
         if (pendingCards.length > 0) {
@@ -4367,38 +4252,9 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
         return
       }
 
-      // Replace messages with the compacted version
-      // Keep only the last user message + this compaction summary
-      const lastUserMsg = [...messages.value].reverse().find((m: any) => m.role === 'user' && !m.isProcessStep && !m.id.startsWith('tool-'))
-      const compactedId = `compacted-${Date.now()}`
-      const compactedMsg: Message = {
-        id: compactedId,
-        role: 'assistant',
-        content: `📦 **Conversation Compacted** — earlier context summarized for efficiency.\n\n${summary}`,
-        timestamp: now(),
-      }
+      if (conversationId.value) await invoke('store:updateConversation', conversationId.value, { summary })
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Checkpoint saved. Original conversation and run history are preserved.', type: 'success' } }))
 
-      messages.value = [
-        ...(lastUserMsg ? [lastUserMsg] : []),
-        compactedMsg,
-      ]
-      recentMessageId.value = compactedId
-
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Conversation compacted successfully! Context window freed up. 📦', type: 'success' } }))
-
-      // Save to DB if conversation exists
-      const convId = conversationId.value
-      if (convId) {
-        try {
-          // Clear old messages and save the compacted ones
-          await invoke('store:clearMessages', convId)
-          for (const msg of messages.value) {
-            await invoke('store:addMessage', convId, msg)
-          }
-        } catch (e) {
-          console.warn('Failed to save compacted messages:', e)
-        }
-      }
     } catch (err: any) {
       chatLog.error('compaction failed', { message: err instanceof Error ? err.message : String(err) })
       window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: `Compaction failed: ${err instanceof Error ? err.message : String(err)}`, type: 'error' } }))
@@ -4437,6 +4293,8 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     showCodeModal,
     codeModalMode,
     agentMode,
+    autoDecideActions,
+    setAutoDecideActions,
     selectedWaifu,
     affection,
     live2dExpression,
@@ -4464,8 +4322,6 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     subagentConcurrency,
     usageTotals,
     activeTodoList,
-    approveToolApproval,
-    denyToolApproval,
     pendingAttachments,
     userMemories,
     sidebarFilter,

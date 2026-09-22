@@ -115,3 +115,5 @@ plugins/.cache/
 
 # macOS
 .DS_Store
+
+apps/desktop/resources/native/syntax-computer

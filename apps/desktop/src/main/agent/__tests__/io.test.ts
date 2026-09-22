@@ -12,7 +12,10 @@ afterEach(async () => { for(const pm of managers.splice(0)) { pm.stopRun(); for(
 describe('command sessions', () => {
   it('streams output, accepts stdin and retains an exit result', async () => {
     const root=await temp(), pm=manager(root); const chunks: string[]=[]; pm.on('output',e=>chunks.push(e.chunk))
-    const s=pm.start('printf ready; read value; printf "-%s" "$value"',root)
+    const command = process.platform === 'win32'
+      ? '[Console]::Write("ready"); $value = [Console]::In.ReadLine(); [Console]::Write("-$value")'
+      : 'printf ready; read value; printf -- "-%s" "$value"'
+    const s=pm.start(command,root)
     await expect.poll(() => pm.read(s.id).output, { timeout: 3000 }).toContain('ready')
     pm.write(s.id,'unicode-你好\n'); await pm.wait(s.id,2000)
     expect(pm.read(s.id).output).toContain('unicode-你好'); expect(pm.read(s.id).exitCode).toBe(0); expect(chunks.length).toBeGreaterThan(1)

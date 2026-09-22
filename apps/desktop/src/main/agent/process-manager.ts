@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
+import { setTimeout as schedule } from 'node:timers'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -76,7 +77,9 @@ export class ProcessManager extends EventEmitter {
         else process.kill(-s.child.pid, 'SIGTERM')
       } catch { /* already exited */ }
       const pid = s.child.pid
-      setTimeout(() => { try { if (process.platform !== 'win32') process.kill(-pid, 'SIGKILL') } catch {} }, 1500).unref()
+      const killTimer = schedule(() => { try { if (process.platform !== 'win32') process.kill(-pid, 'SIGKILL') } catch {} }, 1500)
+      const unref = (killTimer as unknown as { unref?: () => void }).unref
+      if (unref) unref.call(killTimer)
     }
     if (!s.child) this.finish(id, null)
   }

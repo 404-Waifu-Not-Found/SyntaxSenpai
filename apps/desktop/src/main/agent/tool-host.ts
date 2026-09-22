@@ -8,7 +8,13 @@ import { invokeHost, resolveWorkspacePath } from './host'
 import { git } from './change-journal'
 const exec = promisify(execFile)
 const contracts = new Map(agentTools.map(tool => [tool.name, tool.execution!]))
-function canonical(file: string) { try { return fs.realpathSync(file) } catch { try { return path.join(fs.realpathSync(path.dirname(file)), path.basename(file)) } catch { return file } } }
+function canonical(file: string) {
+  try { return fs.realpathSync(file).split(path.sep).join('/') }
+  catch {
+    try { return path.join(fs.realpathSync(path.dirname(file)), path.basename(file)).split(path.sep).join('/') }
+    catch { return file.split(path.sep).join('/') }
+  }
+}
 export function executionMetadata(call: ToolCall, workspace: string): ToolExecutionMetadata {
   const args: any = call.arguments
   const contract = contracts.get(call.name) || { access: 'write', scope: 'workspace' }

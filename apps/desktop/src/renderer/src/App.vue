@@ -34,6 +34,7 @@ import ChatBubble from './components/ChatBubble.vue'
 import SubagentPanel from './components/SubagentPanel.vue'
 import AppAvatar from './components/AppAvatar.vue'
 import Live2DAvatar from './components/Live2DAvatar.vue'
+import DesktopPetOverlay from './components/DesktopPetOverlay.vue'
 import TypingDots from './components/TypingDots.vue'
 import MessageSkeleton from './components/MessageSkeleton.vue'
 import QrPairModal from './components/QrPairModal.vue'
@@ -44,7 +45,7 @@ import WorkspacePanel from './components/WorkspacePanel.vue'
 import { useWorkspaceStore, codingIntent } from './stores/workspace'
 import { useBrowserStore } from './stores/browser'
 import type { ActiveCodingRepo } from './types/coding-session'
-import { gameSession, applyGameSessionMove, closeGameSession } from './game/session'
+import { gameSession, applyGameSessionMove, closeGameSession, startGameSession } from './game/session'
 import { gameMoveLabel } from '@syntax-senpai/game-engine'
 
 const store = useChatStore()
@@ -1025,6 +1026,7 @@ function applyWindowPresentationState(result: any) {
 }
 
 async function refreshOverlayWindowMode() {
+  loadDesktopPetPreferences()
   try {
     const result = await invoke('window:getViewState')
     if (result?.success) {
@@ -1044,6 +1046,15 @@ async function toggleOverlayWindowMode() {
   } else {
     showToast(result?.error || t('toast.overlayWindowFailed'), 'error')
   }
+}
+
+async function restoreNormalWindow() {
+  if (!overlayWindow.value.enabled) return
+  await toggleOverlayWindowMode()
+}
+
+function openPetMiniGame() {
+  if (!gameSession.open) startGameSession('tictactoe', { difficulty: 'balanced' })
 }
 
 async function toggleFullscreenWindowMode() {
@@ -1422,8 +1433,38 @@ function applyPreset(preset: typeof colorPresets[0]) {
 const sidebarOpen = ref(true)
 const showSettings = ref(false)
 const showLive2DPanel = ref(false)
+const desktopPetLocked = ref(false)
+const desktopPetBubbleOpacity = ref(92)
+let desktopPetPreferencesLoaded = false
+
+function loadDesktopPetPreferences() {
+  if (desktopPetPreferencesLoaded) return
+  desktopPetPreferencesLoaded = true
+  try {
+    const parsed = JSON.parse(localStorage.getItem('syntax-senpai-desktop-pet') || '{}')
+    if (typeof parsed.locked === 'boolean') desktopPetLocked.value = parsed.locked
+    if (typeof parsed.opacity === 'number') desktopPetBubbleOpacity.value = Math.min(Math.max(parsed.opacity, 0), 100)
+  } catch {
+    /* best effort */
+  }
+}
+
+watch([desktopPetLocked, desktopPetBubbleOpacity], ([locked, opacity]) => {
+  try {
+    localStorage.setItem('syntax-senpai-desktop-pet', JSON.stringify({ locked, opacity }))
+  } catch {
+    /* best effort */
+  }
+})
 
 const currentWaifuLive2D = computed(() => (store.selectedWaifu?.avatar as any)?.live2dModel ?? null)
+const latestAssistantMessage = computed(() => {
+  for (let index = store.messages.length - 1; index >= 0; index -= 1) {
+    const message = store.messages[index]
+    if (message.role === 'assistant' && message.content?.trim()) return message.content
+  }
+  return ''
+})
 
 // ── Floating Live2D panel placement ─────────────────────────────────────────
 const LIVE2D_PANEL_STORAGE_KEY = 'syntax-senpai-live2d-panel'
@@ -4902,7 +4943,7 @@ async function handleImportData() {
                 <button class="btn-secondary flex-1 text-xs" @click="resetLive2DPanelLayout">
                   Reset Live2D layout
                 </button>
-                <button class="btn-secondary flex-1 text-xs" @click="showLive2DPanel = true">
+                <button class="btn-secondary flex-1 text-xs" @click="toggleOverlayWindowMode">
                   Show avatar panel
                 </button>
               </div>
@@ -5367,7 +5408,7 @@ async function handleImportData() {
     v-if="store.isSetup"
     :class="[
       'relative flex h-screen w-screen',
-      compactChatLayout ? 'compact-chat-shell overlay-window-shell overflow-visible p-2.5' : 'overflow-hidden',
+      compactChatLayout ? 'desktop-pet-shell overflow-visible' : 'overflow-hidden',
     ]"
     :style="appShellStyle"
   >
@@ -5601,11 +5642,11 @@ async function handleImportData() {
             v-if="currentWaifuLive2D"
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
-            :title="showLive2DPanel ? 'Hide avatar' : 'Show Live2D avatar'"
-            :aria-label="showLive2DPanel ? 'Hide avatar' : 'Show Live2D avatar'"
-            @click="showLive2DPanel = !showLive2DPanel"
+            :title="overlayWindow.enabled ? 'Restore normal window' : 'Open desktop pet'"
+            :aria-label="overlayWindow.enabled ? 'Restore normal window' : 'Open desktop pet'"
+            @click="toggleOverlayWindowMode"
           >
-            <PhUserCircle :size="18" weight="regular" aria-hidden="true" />
+            <span class="text-xs font-bold">宠</span>
           </button>
           <button
             class="btn-ghost p-2"
@@ -6141,7 +6182,7 @@ async function handleImportData() {
         leave-to-class="opacity-0 scale-90 translate-y-4"
       >
         <div
-          v-if="showLive2DPanel && currentWaifuLive2D"
+          v-if="false && showLive2DPanel && currentWaifuLive2D"
           class="live2d-panel fixed z-[60] rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-black/30 backdrop-blur-sm select-none touch-none"
           :class="[
             live2dPanelDragging || live2dCharacterDragging ? 'cursor-grabbing' : '',
@@ -6215,6 +6256,36 @@ async function handleImportData() {
           <div class="absolute bottom-0 right-0 z-20 h-4 w-4 cursor-nwse-resize" data-live2d-panel-control @pointerdown="beginLive2DPanelResize($event, 'se')" />
         </div>
       </Transition>
+    </Teleport>
+
+    <Teleport to="body">
+      <DesktopPetOverlay
+        v-if="overlayWindow.enabled && currentWaifuLive2D"
+        :model-path="currentWaifuLive2D.modelJsonPath"
+        :model-name="store.selectedWaifu?.displayName"
+        :expression="latestSentimentExpression"
+        :expression-revision="store.live2dExpressionRevision"
+        :motion-map="currentWaifuLive2D.expressionMotions"
+        :model-width="live2dPanelWidth"
+        :model-height="live2dPanelHeight"
+        :model-scale="live2dCharacterScale"
+        :model-offset-x="live2dCharacterOffset.x"
+        :model-offset-y="live2dCharacterOffset.y"
+        :render-scale="live2dRenderScale"
+        :locked="desktopPetLocked"
+        :bubble-opacity="desktopPetBubbleOpacity"
+        :latest-message="latestAssistantMessage"
+        :input-value="store.inputValue"
+        :loading="store.isLoading"
+        @update:locked="desktopPetLocked = $event"
+        @update:bubble-opacity="desktopPetBubbleOpacity = $event"
+        @update:model-scale="live2dCharacterScale = $event; saveLive2DPanelLayout()"
+        @update:input-value="store.inputValue = $event"
+        @send="store.sendMessage(store.inputValue)"
+        @mini-game="openPetMiniGame"
+        @reset-layout="resetLive2DPanelLayout"
+        @reset-window="restoreNormalWindow"
+      />
     </Teleport>
   </div>
 </template>
@@ -6411,6 +6482,18 @@ async function handleImportData() {
 
 .compact-chat-shell .sidebar-open {
   width: 14rem;
+}
+
+.desktop-pet-shell {
+  box-sizing: border-box;
+  padding: 0;
+  overflow: visible;
+  background: transparent !important;
+  pointer-events: none;
+}
+
+.desktop-pet-shell > * {
+  display: none !important;
 }
 
 .compact-chat-shell :deep(.chat-bubble-shell) {

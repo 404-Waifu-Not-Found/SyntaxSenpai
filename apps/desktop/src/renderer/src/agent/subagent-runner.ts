@@ -21,7 +21,7 @@ import {
   DISPATCH_SUBAGENTS_TOOL_NAME,
   BROWSER_TOOLS,
 } from '../agent-tools'
-import { runAgentTurn, type ProviderChatCaller, type SideEffectResult } from './run-turn'
+import { runAgentSession, type ProviderChatCaller, type SideEffectResult } from './run-turn'
 
 export const SUBAGENT_DEFAULT_MAX_ITERATIONS = 6
 export const SUBAGENT_DEFAULT_CONCURRENCY = 4
@@ -288,7 +288,7 @@ export async function dispatchSubagents(opts: DispatchSubagentsOptions): Promise
     })
 
     try {
-      const result = await runAgentTurn({
+      const result = await runAgentSession({
         callProvider: opts.callProvider,
         model: opts.model,
         history,

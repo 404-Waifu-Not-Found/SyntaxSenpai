@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+// pixi-live2d-display uses Pixi's generated shader paths. The v6 unsafe-eval
+// package must be explicitly installed into Pixi's ShaderSystem before the
+// renderer is created; importing it for side effects alone is not enough.
+import { install as installUnsafeEval } from '@pixi/unsafe-eval'
 
 // pixi.js and pixi-live2d-display are loaded lazily so a missing Cubism
 // Core does not crash the whole renderer.
@@ -287,6 +291,10 @@ async function initModel() {
     // model. By picking the submodule that matches the model we sidestep
     // the Cubism 2 dependency entirely.
     const PIXI = await import('pixi.js')
+    const shaderSystem = (PIXI as any).ShaderSystem
+    if (shaderSystem) {
+      installUnsafeEval({ ShaderSystem: shaderSystem })
+    }
     const modelUrl = props.modelPath
     const isCubism4 = modelUrl.includes('.model3.json')
 

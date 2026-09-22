@@ -1,3 +1,4 @@
+import { registerHostHandler, resolveWorkspacePath, hostContext } from '../agent/host'
 const electronModule = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -166,7 +167,7 @@ export function registerPluginsIpc() {
   // promise resolves. First sendMessage happens well after activation.
   initPluginRegistry()
 
-  ipcMain.handle('plugins:list', () => {
+  registerHostHandler('plugins:list', () => {
     try {
       const pluginDir = resolvePluginDir()
       const manifests = listPluginManifests(pluginDir)
@@ -176,7 +177,7 @@ export function registerPluginsIpc() {
     }
   })
 
-  ipcMain.handle('plugins:setDisabled', (_e: any, name: string, disabled: boolean) => {
+  registerHostHandler('plugins:setDisabled', (_e: any, name: string, disabled: boolean) => {
     try {
       if (typeof name !== 'string' || !name) {
         return { success: false, error: 'Plugin name is required' }
@@ -191,7 +192,7 @@ export function registerPluginsIpc() {
     }
   })
 
-  ipcMain.handle('plugins:listTools', () => {
+  registerHostHandler('plugins:listTools', () => {
     try {
       return { success: true, tools: pluginRegistry.getDefinitions() }
     } catch (err: any) {
@@ -199,7 +200,7 @@ export function registerPluginsIpc() {
     }
   })
 
-  ipcMain.handle(
+  registerHostHandler(
     'plugins:execTool',
     async (_e: any, toolName: string, toolArgs: Record<string, unknown>) => {
       try {

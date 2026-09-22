@@ -1,0 +1,21 @@
+{
+  "name": "@syntax-senpai/agent-session",
+  "version": "0.0.1",
+  "description": "Shared headless-friendly agent session orchestration",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run --environment node"
+  },
+  "dependencies": {
+    "@syntax-senpai/ai-core": "workspace:*",
+    "@syntax-senpai/waifu-core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.3"
+  }
+}

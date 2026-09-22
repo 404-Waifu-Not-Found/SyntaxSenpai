@@ -1,3 +1,4 @@
+import { runAgentTurn } from './agent-run';
 /**
  * Runtime helpers for end-to-end AI calling.
  *
@@ -59,7 +60,7 @@ export interface StreamMessageOptions {
   signal?: AbortSignal;
 }
 
-export type ToolExecutionResult =
+export type LegacyToolExecutionResult =
   | string
   | {
       content: string;
@@ -68,7 +69,7 @@ export type ToolExecutionResult =
 
 export type ToolExecutor = (
   toolCall: ToolCall
-) => Promise<ToolExecutionResult>;
+) => Promise<LegacyToolExecutionResult>;
 
 export interface SendMessageResult {
   response: ChatResponse;
@@ -139,120 +140,36 @@ export class AIChatRuntime {
       createdAt: new Date().toISOString(),
     });
 
-    const maxToolIterations =
-      options.maxToolIterations ?? this.defaults.maxToolIterations ?? 6;
-
+    const messages = initialMessages;
     const emitter = new TraceEmitter();
     if (options.onTrace) emitter.on(options.onTrace);
-    emitter.emit({ type: "turn_start", iteration: 0, userText: options.text });
-
-    const messages = initialMessages;
-    let lastResponse: ChatResponse | null = null;
-    const callFingerprints = new Map<string, number>();
-
+    emitter.emit({ type: 'turn_start', iteration: 0, userText: options.text });
+    let lastResponse: ChatResponse | undefined;
+    let iteration = 0;
     try {
-      for (let iteration = 0; iteration <= maxToolIterations; iteration += 1) {
-        const request = this.buildRequest(messages, {
-          tools: options.tools,
-          systemPrompt: options.systemPrompt,
-          cachedSystemPrompt: options.cachedSystemPrompt,
-          signal: options.signal,
-          temperature: options.temperature,
-          maxTokens: options.maxTokens,
-        });
-
-        const response = await this.chatWithRetry(
-          request,
-          options.retry,
-          options.signal,
-          emitter,
-          iteration
-        );
-        lastResponse = response;
-
-        messages.push({
-          id: response.id || createId("assistant"),
-          role: "assistant",
-          content: response.content,
-          toolCalls: response.toolCalls,
-          reasoningContent: response.reasoningContent,
-          createdAt: new Date().toISOString(),
-        });
-
-        if (response.content && typeof response.content === "string" && response.content.trim()) {
-          emitter.emit({ type: "thought", iteration, text: stringContent(response.content) });
-        }
-
-        if (!response.toolCalls || response.toolCalls.length === 0) {
-          emitter.emit({
-            type: "final_answer",
-            iteration,
-            text: stringContent(response.content),
-          });
-          return { response, messages };
-        }
-
-        if (!toolExecutor || iteration === maxToolIterations) {
-          return { response, messages };
-        }
-
-        for (const toolCall of response.toolCalls) {
-          emitter.emit({ type: "action", iteration, toolCall });
-
-          const fingerprint = fingerprintToolCall(toolCall);
-          const priorCount = callFingerprints.get(fingerprint) ?? 0;
-          callFingerprints.set(fingerprint, priorCount + 1);
-
-          let normalized: { content: string; isError: boolean };
-          if (priorCount >= 1) {
-            // Model is repeating the exact same tool call. Short-circuit
-            // without executing and tell it plainly to stop and answer.
-            const guidance =
-              `[runtime loop-guard] You already called ${toolCall.name} with these exact arguments ` +
-              `${priorCount + 1} time(s) this turn. Repeating it will not produce a different result. ` +
-              `Stop calling tools and reply to the user with what you currently know, stating any limitation.`;
-            normalized = { content: guidance, isError: true };
-            emitter.emit({
-              type: "observation",
-              iteration,
-              toolCallId: toolCall.id,
-              content: normalized.content,
-              isError: true,
-            });
-          } else {
-            const toolResult = await toolExecutor(toolCall);
-            normalized = normalizeToolResult(toolResult);
-            emitter.emit({
-              type: "observation",
-              iteration,
-              toolCallId: toolCall.id,
-              content: normalized.content,
-              isError: normalized.isError,
-            });
-          }
-
-          messages.push({
-            id: createId("tool"),
-            role: "tool",
-            content: normalized.content,
-            toolCallId: toolCall.id,
-            createdAt: new Date().toISOString(),
-          });
-        }
-      }
-
-      if (!lastResponse) {
-        throw new ProviderError("unknown", "No AI response was generated", { retryable: false });
-      }
-
-      return { response: lastResponse, messages };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      emitter.emit({ type: "error", iteration: 0, message });
-      throw err;
-    } finally {
-      emitter.emit({ type: "turn_end", iterations: messages.length });
-    }
+      const result = await runAgentTurn({
+        model: this.defaults.model || this.provider.supportedModels[0]?.id || '',
+        history: messages, tools: toolExecutor ? options.tools || [] : [],
+        systemPrompt: options.systemPrompt ?? this.defaults.systemPrompt ?? '',
+        cachedSystemPrompt: options.cachedSystemPrompt ?? this.defaults.cachedSystemPrompt,
+        maxIterations: options.maxToolIterations ?? this.defaults.maxToolIterations ?? 6,
+        abortSignal: options.signal,
+        onIteration: value => { iteration = value },
+        callProvider: async req => {
+          lastResponse = await this.chatWithRetry({ ...req, temperature: options.temperature ?? this.defaults.temperature, maxTokens: options.maxTokens ?? this.defaults.maxTokens }, options.retry, options.signal, emitter, iteration);
+          return lastResponse;
+        },
+        executeTool: async tc => {
+          emitter.emit({ type: 'action', iteration, toolCall: tc });
+          const normalized = normalizeToolResult(await toolExecutor!(tc));
+          emitter.emit({ type: 'observation', iteration, toolCallId: tc.id, content: normalized.content, isError: normalized.isError });
+          return normalized.isError ? `Error: ${normalized.content}` : normalized.content;
+        },
+      });
+      const response: ChatResponse = { ...(lastResponse || { id: createId('assistant'), usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, finishReason: 'stop' }), content: result.finalContent };
+      emitter.emit({ type: 'final_answer', iteration, text: response.content });
+      return { response, messages };
+    } finally { emitter.emit({ type: 'turn_end', iterations: iteration + 1 }); }
   }
 
   async *streamMessage(options: StreamMessageOptions): AsyncIterable<StreamChunk> {
@@ -412,7 +329,7 @@ function getRequired(
   return value;
 }
 
-function normalizeToolResult(result: ToolExecutionResult): {
+function normalizeToolResult(result: LegacyToolExecutionResult): {
   content: string;
   isError: boolean;
 } {

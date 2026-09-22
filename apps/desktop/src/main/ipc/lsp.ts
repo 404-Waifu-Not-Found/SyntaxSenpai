@@ -1,3 +1,4 @@
+import { registerHostHandler, resolveWorkspacePath, hostContext } from '../agent/host'
 /**
  * LSP IPC — exposes language-server diagnostics & hover to the renderer agent.
  *
@@ -33,7 +34,7 @@ export function registerLspIpc() {
   if (registered) return
   registered = true
 
-  ipcMain.handle('lsp:diagnostics', async (_e: any, filePath: string) => {
+  registerHostHandler('lsp:diagnostics', async (_e: any, filePath: string) => {
     try {
       const { diagnostics, root } = await lspDiagnostics(String(filePath || ''))
       const items = diagnostics
@@ -53,7 +54,7 @@ export function registerLspIpc() {
     }
   })
 
-  ipcMain.handle('lsp:hover', async (_e: any, filePath: string, line: number, character: number) => {
+  registerHostHandler('lsp:hover', async (_e: any, filePath: string, line: number, character: number) => {
     try {
       // The renderer passes 1-based line/column (matching read_file); LSP is 0-based.
       const lspLine = Math.max(0, (Number(line) || 1) - 1)

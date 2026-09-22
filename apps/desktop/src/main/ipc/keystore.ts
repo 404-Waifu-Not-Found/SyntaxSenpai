@@ -10,6 +10,33 @@ try {
 const SERVICE = 'syntax-senpai-keys'
 let registered = false
 
+export async function exportStoredApiKeys(): Promise<Record<string, string>> {
+  if (!keytar || typeof keytar.findCredentials !== 'function') return {}
+  const credentials = await keytar.findCredentials(SERVICE)
+  return Object.fromEntries(
+    (Array.isArray(credentials) ? credentials : [])
+      .filter((entry: any) => typeof entry?.account === 'string' && typeof entry?.password === 'string')
+      .map((entry: any) => [entry.account, entry.password]),
+  )
+}
+
+export async function importStoredApiKeys(keys: unknown): Promise<{ imported: string[]; skipped: string[] }> {
+  if (!keytar) throw new Error('keytar not available')
+  const imported: string[] = []
+  const skipped: string[] = []
+  if (!keys || typeof keys !== 'object' || Array.isArray(keys)) return { imported, skipped }
+
+  for (const [provider, secret] of Object.entries(keys as Record<string, unknown>)) {
+    if (!/^[a-z0-9._-]{1,80}$/i.test(provider) || typeof secret !== 'string' || !secret) {
+      skipped.push(provider)
+      continue
+    }
+    await keytar.setPassword(SERVICE, provider, secret)
+    imported.push(provider)
+  }
+  return { imported, skipped }
+}
+
 export function registerKeystoreIpc() {
   if (registered) return
   registered = true
@@ -39,6 +66,14 @@ export function registerKeystoreIpc() {
       if (!keytar) throw new Error('keytar not available')
       const deleted = await keytar.deletePassword(SERVICE, provider)
       return { success: true, deleted }
+    } catch (err: any) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('keystore:export', async () => {
+    try {
+      return { success: true, keys: await exportStoredApiKeys() }
     } catch (err: any) {
       return { success: false, error: err instanceof Error ? err.message : String(err) }
     }

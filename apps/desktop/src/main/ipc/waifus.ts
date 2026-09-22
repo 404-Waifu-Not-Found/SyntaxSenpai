@@ -9,6 +9,7 @@ import {
   ensureDir,
   extractZipSafely,
   findLive2DModelJson,
+  repairLive2DModelReferences,
   slugifyModelName,
 } from '@syntax-senpai/agent-tools'
 import {
@@ -64,6 +65,27 @@ function readWaifuFile(id: string): Record<string, unknown> | null {
 export function registerWaifusIpc() {
   if (registered) return
   registered = true
+
+  // Older imports could contain legacy-encoded filenames written as
+  // replacement characters. Repair those folders before the renderer tries
+  // to instantiate the assigned model.
+  try {
+    if (fs.existsSync(live2dDir())) {
+      const queue = [live2dDir()]
+      while (queue.length > 0) {
+        const dir = queue.shift()!
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, entry.name)
+          if (entry.isDirectory()) queue.push(full)
+          else if (entry.isFile() && /\.model3?\.json$/i.test(entry.name)) {
+            repairLive2DModelReferences(full)
+          }
+        }
+      }
+    }
+  } catch {
+    // A repair is best-effort; the import flow still handles new models.
+  }
 
   ipcMain.handle('waifus:list', async () => {
     try {

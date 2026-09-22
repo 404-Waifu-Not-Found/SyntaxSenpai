@@ -55,10 +55,12 @@ import { registerSearchIpc } from './ipc/search'
 import { registerLspIpc } from './ipc/lsp'
 import { registerSpotifyIpc } from './ipc/spotify'
 import { registerExportIpc } from './ipc/export'
+import { registerFullBackupIpc } from './ipc/full-backup'
 import { registerWsIpc } from './ipc/ws'
 import { registerPluginsIpc } from './ipc/plugins'
 import { registerWaifusIpc } from './ipc/waifus'
-import { registerStrictModeIpc } from './ipc/strict-mode'
+import { registerPolicyIpc } from './agent/policy'
+import { registerRunService } from './agent/run-service'
 import { registerLogIpc } from './ipc/log'
 import { registerRepositoryIpc } from './ipc/repository'
 import { registerSkillsIpc } from './ipc/skills'
@@ -73,7 +75,10 @@ const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow: any = null
 let gameWindow: any = null
+let live2dWindow: any = null
 let pendingGameSnapshot: any = null
+let pendingLive2DSession: any = null
+let pendingLive2DSpeech: any = null
 let tray: any = null
 let currentWindowFrameless = false
 
@@ -439,6 +444,84 @@ function createGameWindow(snapshot?: any) {
   gameWindow.focus()
 }
 
+function listLive2DDisplays() {
+  return screen.getAllDisplays().map((display: any, index: number) => ({
+    id: String(display.id),
+    label: display.id === screen.getPrimaryDisplay().id ? 'Main display' : `Display ${index + 1}`,
+    primary: display.id === screen.getPrimaryDisplay().id,
+    bounds: {
+      x: display.bounds.x,
+      y: display.bounds.y,
+      width: display.bounds.width,
+      height: display.bounds.height,
+    },
+    scaleFactor: display.scaleFactor,
+  }))
+}
+
+function sendLive2DEvent(channel: string, payload: any) {
+  if (!live2dWindow || live2dWindow.isDestroyed() || live2dWindow.webContents.isLoadingMainFrame()) return
+  live2dWindow.webContents.send(channel, payload)
+}
+
+function createLive2DWindow(session: any) {
+  pendingLive2DSession = session
+  const displays = listLive2DDisplays()
+  const selected = displays.find((display: any) => display.id === String(session?.displayId))
+    || displays.find((display: any) => display.primary)
+    || displays[0]
+  if (!selected) throw new Error('No display is available for immersive Live2D mode')
+
+  const bounds = selected.bounds
+  if (live2dWindow && !live2dWindow.isDestroyed()) {
+    if (live2dWindow.isFullScreen()) live2dWindow.setFullScreen(false)
+    live2dWindow.setBounds(bounds)
+    live2dWindow.show()
+    live2dWindow.setFullScreen(true)
+    live2dWindow.focus()
+    sendLive2DEvent('live2d:session', pendingLive2DSession)
+    if (pendingLive2DSpeech) sendLive2DEvent('live2d:speech', pendingLive2DSpeech)
+    return selected
+  }
+
+  live2dWindow = new BrowserWindow({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    title: 'SyntaxSenpai Live2D',
+    frame: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#071511',
+    resizable: false,
+    minimizable: true,
+    fullscreenable: true,
+    acceptFirstMouse: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+
+  live2dWindow.webContents.on('did-finish-load', () => {
+    sendLive2DEvent('live2d:session', pendingLive2DSession)
+    if (pendingLive2DSpeech) sendLive2DEvent('live2d:speech', pendingLive2DSpeech)
+    live2dWindow?.setFullScreen(true)
+  })
+  live2dWindow.on('closed', () => {
+    live2dWindow = null
+    mainWindow?.webContents.send('live2d:window-closed')
+  })
+
+  if (isDev) live2dWindow.loadURL('http://localhost:5173/live2d.html')
+  else live2dWindow.loadFile(join(__dirname, '../renderer/live2d.html'))
+  live2dWindow.show()
+  live2dWindow.focus()
+  return selected
+}
+
 function createWindow(forcedMode?: WindowMode): void {
   if (!windowState) windowState = loadWindowState()
   const mode = forcedMode
@@ -687,6 +770,76 @@ ipcMain.on('game:move', (_e: any, move: string) => {
   }
 })
 
+ipcMain.handle('live2d:listDisplays', () => {
+  try {
+    return { success: true, displays: listLive2DDisplays() }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+ipcMain.handle('live2d:openImmersive', (_e: any, session: any) => {
+  try {
+    if (!session || typeof session.modelPath !== 'string' || !session.modelPath.trim()) {
+      throw new Error('A Live2D model must be assigned before opening immersive mode')
+    }
+    const display = createLive2DWindow({
+      modelPath: session.modelPath,
+      displayName: String(session.displayName || 'Live2D'),
+      expression: String(session.expression || 'neutral'),
+      expressionRevision: Number(session.expressionRevision || 0),
+      motionMap: session.motionMap && typeof session.motionMap === 'object' ? session.motionMap : {},
+      modelScale: Number.isFinite(Number(session.modelScale)) ? Number(session.modelScale) : 1,
+      displayId: session.displayId == null ? undefined : String(session.displayId),
+    })
+    return { success: true, displayId: display.id, displays: listLive2DDisplays() }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+ipcMain.handle('live2d:closeImmersive', () => {
+  try {
+    if (live2dWindow && !live2dWindow.isDestroyed()) live2dWindow.close()
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+ipcMain.handle('live2d:exitFullscreen', () => {
+  try {
+    if (live2dWindow && !live2dWindow.isDestroyed() && live2dWindow.isFullScreen()) {
+      live2dWindow.setFullScreen(false)
+    }
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+ipcMain.handle('live2d:window-ready', () => {
+  sendLive2DEvent('live2d:session', pendingLive2DSession)
+  if (pendingLive2DSpeech) sendLive2DEvent('live2d:speech', pendingLive2DSpeech)
+  return { success: true }
+})
+
+ipcMain.handle('live2d:speech', (_e: any, payload: any) => {
+  try {
+    const text = String(payload?.text || '').trim()
+    if (!text) return { success: false, error: 'Speech text is empty' }
+    pendingLive2DSpeech = {
+      text: text.slice(0, 600),
+      expression: String(payload?.expression || 'neutral'),
+      createdAt: Date.now(),
+    }
+    sendLive2DEvent('live2d:speech', pendingLive2DSpeech)
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
 app.whenReady().then(() => {
   windowState = loadWindowState()
 
@@ -694,18 +847,49 @@ app.whenReady().then(() => {
   // from userData via fetch() regardless of whether the window was loaded
   // from the Vite dev server (http://) or a file:// origin (production).
   // Maps userdata://<relative-path> to <userData>/<relative-path>.
-  const { protocol, net } = electronModule
-  const { pathToFileURL: ptfu } = require('node:url')
-  protocol.handle('userdata', (request: any) => {
-    const relPath = decodeURIComponent(
-      request.url.replace(/^userdata:\/\//, '').split(/[?#]/, 1)[0],
-    ).replace(/^\/+/, '')
-    const userDataRoot = resolve(app.getPath('userData'))
-    const absPath = resolve(userDataRoot, relPath)
-    if (absPath !== userDataRoot && !absPath.startsWith(`${userDataRoot}${sep}`)) {
+  const { protocol } = electronModule
+  const contentTypes: Record<string, string> = {
+    '.json': 'application/json; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.moc3': 'application/octet-stream',
+    '.motion3.json': 'application/json; charset=utf-8',
+    '.exp3.json': 'application/json; charset=utf-8',
+    '.physics3.json': 'application/json; charset=utf-8',
+    '.cdi3.json': 'application/json; charset=utf-8',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+  }
+  protocol.handle('userdata', async (request: any) => {
+    try {
+      // URL parsing is important here: Chromium percent-encodes non-ASCII
+      // model filenames before the request reaches the custom protocol.
+      // Reading the file directly also avoids net.fetch(file://...) returning
+      // ERR_UNEXPECTED for binary assets such as .moc3 and large textures.
+      const parsed = new URL(request.url)
+      const relPath = decodeURIComponent(`${parsed.host}${parsed.pathname}`).replace(/^\/+/, '')
+      const userDataRoot = resolve(app.getPath('userData'))
+      const absPath = resolve(userDataRoot, relPath)
+      if (absPath === userDataRoot || !absPath.startsWith(`${userDataRoot}${sep}`)) {
+        return new Response('Not found', { status: 404 })
+      }
+
+      const body = await fs.promises.readFile(absPath)
+      const lowerPath = absPath.toLowerCase()
+      const contentType = Object.entries(contentTypes)
+        .find(([extension]) => lowerPath.endsWith(extension))?.[1]
+        ?? 'application/octet-stream'
+      return new Response(body, {
+        status: 200,
+        headers: {
+          'Content-Type': contentType,
+          'Cache-Control': 'no-store',
+        },
+      })
+    } catch {
       return new Response('Not found', { status: 404 })
     }
-    return net.fetch(ptfu(absPath).toString())
   })
 
   createWindow()
@@ -729,10 +913,12 @@ app.whenReady().then(() => {
   registerLspIpc()
   registerSpotifyIpc()
   registerExportIpc()
+  registerFullBackupIpc()
   registerWsIpc()
   registerPluginsIpc()
   registerWaifusIpc()
-  registerStrictModeIpc()
+  registerPolicyIpc()
+  registerRunService()
   registerLogIpc()
   registerRepositoryIpc()
   registerSkillsIpc()

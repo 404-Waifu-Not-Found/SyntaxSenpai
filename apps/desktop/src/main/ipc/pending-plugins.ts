@@ -1,3 +1,4 @@
+import { registerHostHandler, resolveWorkspacePath, hostContext } from '../agent/host'
 /**
  * Pending-plugins IPC — AI-authored tool proposals awaiting user approval.
  *
@@ -73,7 +74,7 @@ export function registerPendingPluginsIpc() {
   if (registered) return
   registered = true
 
-  ipcMain.handle('pending-plugins:list', async () => {
+  registerHostHandler('pending-plugins:list', async () => {
     try {
       const dir = pendingDir()
       if (!fs.existsSync(dir)) return { success: true, directory: dir, pending: [] }
@@ -91,7 +92,7 @@ export function registerPendingPluginsIpc() {
 
   // Called by the propose_tool agent tool. Validates inputs, writes the
   // pending bundle atomically, and returns the written paths.
-  ipcMain.handle(
+  registerHostHandler(
     'pending-plugins:write',
     async (
       _e: any,
@@ -145,7 +146,7 @@ export function registerPendingPluginsIpc() {
     },
   )
 
-  ipcMain.handle('pending-plugins:approve', async (_e: any, slug: string) => {
+  registerHostHandler('pending-plugins:approve', async (_e: any, slug: string) => {
     try {
       if (!isValidSlug(slug)) return { success: false, error: 'Invalid slug' }
       const srcDir = path.join(pendingDir(), slug)
@@ -165,7 +166,7 @@ export function registerPendingPluginsIpc() {
     }
   })
 
-  ipcMain.handle('pending-plugins:reject', async (_e: any, slug: string) => {
+  registerHostHandler('pending-plugins:reject', async (_e: any, slug: string) => {
     try {
       if (!isValidSlug(slug)) return { success: false, error: 'Invalid slug' }
       const dir = path.join(pendingDir(), slug)

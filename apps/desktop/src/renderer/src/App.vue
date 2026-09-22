@@ -215,6 +215,7 @@ watch(
     const content = String(last.content)
     last.sentiment = classifySentiment(content)
     voice.speak(content, store.selectedWaifuId, store.selectedWaifu, last.sentiment?.expression)
+    showLive2DSpeech(content, last.sentiment?.expression || 'neutral')
   },
 )
 const rainbowToggleBg = computed(() => {
@@ -1503,8 +1504,81 @@ function applyPreset(preset: typeof colorPresets[0]) {
 const sidebarOpen = ref(true)
 const showSettings = ref(false)
 const showLive2DPanel = ref(false)
+const live2dSpeechBubble = ref('')
+let live2dSpeechTimer: number | null = null
+
+type Live2DDisplayOption = {
+  id: string
+  label: string
+  primary: boolean
+  bounds: { x: number; y: number; width: number; height: number }
+  scaleFactor: number
+}
+
+const live2dDisplays = ref<Live2DDisplayOption[]>([])
+const selectedLive2DDisplayId = ref('')
+const live2dImmersiveOpening = ref(false)
 
 const currentWaifuLive2D = computed(() => (store.selectedWaifu?.avatar as any)?.live2dModel ?? null)
+
+function showLive2DSpeech(text: string, expression: string) {
+  const trimmed = String(text || '').trim()
+  if (!trimmed) return
+  live2dSpeechBubble.value = trimmed.slice(0, 600)
+  if (live2dSpeechTimer !== null) window.clearTimeout(live2dSpeechTimer)
+  live2dSpeechTimer = window.setTimeout(() => {
+    live2dSpeechBubble.value = ''
+    live2dSpeechTimer = null
+  }, Math.min(12000, Math.max(4500, trimmed.length * 55)))
+  void invoke('live2d:speech', {
+    text: trimmed,
+    expression,
+  })
+}
+
+async function refreshLive2DDisplays() {
+  try {
+    const result = await invoke('live2d:listDisplays')
+    if (!result?.success) return
+    live2dDisplays.value = Array.isArray(result.displays) ? result.displays : []
+    if (!live2dDisplays.value.some((display) => display.id === selectedLive2DDisplayId.value)) {
+      selectedLive2DDisplayId.value = live2dDisplays.value.find((display) => !display.primary)?.id
+        || live2dDisplays.value[0]?.id
+        || ''
+    }
+  } catch {
+    live2dDisplays.value = []
+  }
+}
+
+async function openImmersiveLive2D() {
+  if (!currentWaifuLive2D.value?.modelJsonPath) {
+    showToast('Assign a Live2D model before opening immersive mode.', 'error')
+    return
+  }
+  live2dImmersiveOpening.value = true
+  try {
+    const result = await invoke('live2d:openImmersive', {
+      modelPath: currentWaifuLive2D.value.modelJsonPath,
+      displayName: store.selectedWaifu?.displayName || 'Live2D',
+      expression: latestSentimentExpression.value,
+      expressionRevision: store.live2dExpressionRevision,
+      motionMap: currentWaifuLive2D.value.expressionMotions || {},
+      modelScale: 1,
+      displayId: selectedLive2DDisplayId.value || undefined,
+    })
+    if (result?.success) {
+      live2dDisplays.value = Array.isArray(result.displays) ? result.displays : live2dDisplays.value
+      showToast('Immersive Live2D opened on the selected display.', 'success')
+    } else {
+      showToast(result?.error || 'Could not open immersive Live2D.', 'error')
+    }
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  } finally {
+    live2dImmersiveOpening.value = false
+  }
+}
 
 // ── Floating Live2D panel placement ─────────────────────────────────────────
 const LIVE2D_PANEL_STORAGE_KEY = 'syntax-senpai-live2d-panel'
@@ -1981,7 +2055,7 @@ watch(
       refreshCustomWaifus()
     }
     if (tab === 'general') {
-      refreshStrictMode()
+
       refreshOverlayWindowMode()
     }
   },
@@ -1989,7 +2063,7 @@ watch(
 const showAgent = ref(false)
 const showModelPicker = ref(false)
 const providerModels = ref<Record<string, Array<{ id: string; displayName: string }>>>({})
-type AgentMode = 'ask' | 'auto' | 'full'
+type AgentMode = 'auto' | 'full'
 const agentMode = computed({
   get: () => store.agentMode as AgentMode,
   set: (v: AgentMode) => store.setAgentMode(v),
@@ -2005,6 +2079,7 @@ const newMemoryKey = ref('')
 const newMemoryValue = ref('')
 const newMemoryCategory = ref('general')
 const toast = ref<{ message: string; type: 'success' | 'error'; visible: boolean }>({ message: '', type: 'success', visible: false })
+const dataTransferBusy = ref(false)
 const showStartupSplash = ref(true)
 const appReady = ref(false)
 const startupAnimDone = ref(false)
@@ -2521,6 +2596,7 @@ onMounted(() => {
     // Refresh Cubism Core install status so the Live2D tab can show it
     // immediately without a round-trip when first opened.
     refreshCubismCoreStatus()
+    refreshLive2DDisplays()
     // Preload the Tavily key so Settings → AI shows it without opening keystore.
     loadTavilyApiKey()
     if (store.isSetup) {
@@ -2983,70 +3059,29 @@ function exportConversationMarkdown() {
 }
 
 async function handleExportData() {
+  dataTransferBusy.value = true
   try {
-    const conversationsRes = await invoke('store:listConversations')
-    const allConversations = conversationsRes?.success ? (conversationsRes.conversations || []) : []
+    const localStorageSnapshot: Record<string, string> = {}
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i)
+      if (key) localStorageSnapshot[key] = localStorage.getItem(key) || ''
+    }
 
-    const conversations = await Promise.all(
-      allConversations.map(async (conversation: any) => {
-        const res = await invoke('store:getMessages', conversation.id)
-        return {
-          ...conversation,
-          messages: res?.success ? (res.messages || []) : [],
-        }
-      }),
-    )
-
-    const payload = {
-      schemaVersion: 1,
-      app: 'SyntaxSenpai',
-      exportedAt: new Date().toISOString(),
-      security: {
-        apiKeysIncluded: false,
-        notes: [
-          'API keys are stored separately in the secure keystore and are excluded from exports.',
-          'The current in-memory API key field is not serialized.',
-        ],
-      },
-      settings: {
-        locale: locale.value,
-        theme: theme.value,
-        setup: readLocalStorageJson('syntax-senpai-setup'),
-        groupChat: readLocalStorageJson('syntax-senpai-group-chat'),
-        providerPreferences: readLocalStorageJson('syntax-senpai-provider-preferences'),
-        agentMode: localStorage.getItem('syntax-senpai-agent-mode') || store.agentMode,
-        webSearchEnabled: store.webSearchEnabled,
-        overlayWindowEnabled: overlayWindow.value.enabled,
-        proactiveChatEnabled: store.proactiveChatEnabled,
-        proactiveChatIdleFollowUpEnabled: store.proactiveChatIdleFollowUpEnabled,
-        proactiveChatOnlineGreetingEnabled: store.proactiveChatOnlineGreetingEnabled,
-        proactiveChatWorkHoursEnabled: store.proactiveChatWorkHoursEnabled,
-        proactiveChatWorkHoursStart: store.proactiveChatWorkHoursStart,
-        proactiveChatWorkHoursEnd: store.proactiveChatWorkHoursEnd,
-        proactiveChatDoNotDisturbEnabled: store.proactiveChatDoNotDisturbEnabled,
-        proactiveChatDoNotDisturbStart: store.proactiveChatDoNotDisturbStart,
-        proactiveChatDoNotDisturbEnd: store.proactiveChatDoNotDisturbEnd,
-        proactiveChatIntervalMinutes: store.proactiveChatIntervalMinutes,
-        proactiveChatTemperature: store.proactiveChatTemperature,
-        proactiveChatLongGapHours: store.proactiveChatLongGapHours,
-        affection: readLocalStorageJson('syntax-senpai-affection'),
-        apiTelemetryHistory: readLocalStorageJson(API_TELEMETRY_HISTORY_STORAGE_KEY),
-        enableTimeoutsAndIterationCaps: store.enableTimeoutsAndIterationCaps,
-        maxToolIterations: store.maxToolIterations,
-        apiSpikeThresholdMs: store.apiSpikeThresholdMs,
-      },
-      data: {
-        selectedWaifuId: store.selectedWaifuId,
-        selectedProvider: store.selectedProvider,
-        selectedModel: store.selectedModel,
-        conversations,
-        memories: store.userMemories,
-      },
+    const collected = await invoke('backup:collectFull', {
+      localStorage: localStorageSnapshot,
+      selectedWaifuId: store.selectedWaifuId,
+      selectedProvider: store.selectedProvider,
+      selectedModel: store.selectedModel,
+      providerModels: providerModels.value,
+    })
+    if (!collected?.success) {
+      showToast(collected?.error || t('toast.exportFailed'), 'error')
+      return
     }
 
     const result = await invoke(
       'export:saveJson',
-      payload,
+      collected.payload,
       `syntax-senpai-export-${new Date().toISOString().slice(0, 10)}.json`,
     )
 
@@ -3060,10 +3095,13 @@ async function handleExportData() {
     }
   } catch (err: any) {
     showToast(err?.message || t('toast.exportFailed'), 'error')
+  } finally {
+    dataTransferBusy.value = false
   }
 }
 
 async function handleImportData() {
+  dataTransferBusy.value = true
   try {
     const result = await invoke('export:openJson')
     if (!result?.success) {
@@ -3080,6 +3118,40 @@ async function handleImportData() {
         return
       }
       throw err
+    }
+
+    if (payload.exportKind === 'full-backup') {
+      const confirmed = window.confirm(
+        'Import this full backup? It will replace chats, skills, custom waifus, Live2D files, settings, and provider API keys.',
+      )
+      if (!confirmed) return
+
+      const restored = await invoke('backup:restoreFull', result.payload)
+      if (!restored?.success) {
+        showToast(restored?.error || t('toast.importFailed'), 'error')
+        return
+      }
+
+      const settings = restored.settings || payload.data?.settings || {}
+      const snapshot = settings.localStorage
+      if (snapshot && typeof snapshot === 'object') {
+        for (const key of Object.keys(localStorage)) {
+          if (key.startsWith('syntax-senpai-')) localStorage.removeItem(key)
+        }
+        for (const [key, value] of Object.entries(snapshot)) {
+          if (typeof value === 'string') localStorage.setItem(key, value)
+        }
+      }
+      if (settings.selectedWaifuId) store.selectedWaifuId = settings.selectedWaifuId
+      if (settings.selectedProvider) store.selectedProvider = settings.selectedProvider
+      if (settings.selectedModel) store.selectedModel = settings.selectedModel
+
+      showToast(
+        `Full backup imported: ${restored.imported?.conversations || 0} chats, ${restored.imported?.skills || 0} skills, ${restored.imported?.live2dFiles || 0} Live2D files, and ${restored.imported?.apiKeys?.length || 0} API keys. Reloading…`,
+        'success',
+      )
+      window.setTimeout(() => window.location.reload(), 350)
+      return
     }
 
     const importedConversations = Array.isArray(payload?.data?.conversations) ? payload.data.conversations : []
@@ -3130,9 +3202,7 @@ async function handleImportData() {
     if (payload?.settings?.providerPreferences) {
       localStorage.setItem('syntax-senpai-provider-preferences', JSON.stringify(payload.settings.providerPreferences))
     }
-    if (payload?.settings?.agentMode) {
-      store.setAgentMode(payload.settings.agentMode)
-    }
+    if (payload?.settings?.executionPolicy?.version === 2) store.setAutoDecideActions(payload.settings.executionPolicy.autoDecideActions === true)
     if (typeof payload?.settings?.webSearchEnabled === 'boolean') {
       store.setWebSearchEnabled(payload.settings.webSearchEnabled)
     }
@@ -3259,6 +3329,8 @@ async function handleImportData() {
     showToast(t('toast.importSaved'), 'success')
   } catch (err: any) {
     showToast(err?.message || t('toast.importFailed'), 'error')
+  } finally {
+    dataTransferBusy.value = false
   }
 }
 </script>
@@ -3487,7 +3559,7 @@ async function handleImportData() {
                   v-for="tab in settingsTabs"
                   :key="tab.id"
                   :class="['settings-nav-btn relative z-[1] h-9', settingsTab === tab.id && 'settings-nav-btn-active']"
-                  @click="settingsTab = tab.id; if (tab.id === 'mobile') checkMobilePairingStatus(); if (tab.id === 'live2d') refreshCubismCoreStatus()"
+                  @click="settingsTab = tab.id; if (tab.id === 'mobile') checkMobilePairingStatus(); if (tab.id === 'live2d') { refreshCubismCoreStatus(); refreshLive2DDisplays() }"
                 >
                   <span class="text-base leading-none shrink-0">
                     <component :is="tab.icon" :size="20" weight="regular" aria-hidden="true" />
@@ -3892,35 +3964,10 @@ async function handleImportData() {
             </div>
 
             <div class="settings-card">
-              <div class="flex items-start justify-between gap-4 mb-2">
-                <div>
-                  <div class="text-sm font-semibold text-neutral-200">Strict mode (agent sandbox)</div>
-                  <p class="mt-1 text-xs text-neutral-400">
-                    Run every agent shell command against a user-managed allowlist and write a JSONL audit trail. Blocks anything not explicitly allowed.
-                  </p>
-                </div>
-                <button
-                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
-                  :style="{ background: strictMode.enabled ? 'linear-gradient(90deg,#ef4444,#f97316)' : '#404040' }"
-                  :aria-label="`${strictMode.enabled ? 'Disable' : 'Enable'} strict mode`"
-                  @click="toggleStrictMode"
-                >
-                  <span
-                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
-                    :style="{ transform: strictMode.enabled ? 'translateX(20px)' : 'translateX(0)' }"
-                  />
-                </button>
-              </div>
-
-              <div v-if="strictMode.enabled" class="mt-2 flex items-center justify-between gap-2">
-                <p class="text-[11px] text-neutral-500">
-                  Manage the allowlist on the AI tab. Audit log:
-                  <span class="font-mono text-neutral-400 break-all">{{ strictMode.auditLog }}</span>
-                </p>
-                <button class="btn-secondary text-xs shrink-0" aria-label="Open audit log file" @click="openAuditLog">
-                  View log
-                </button>
-              </div>
+          <label class="flex items-center justify-between gap-4 rounded-xl border border-neutral-700 p-4 mb-6">
+            <span><strong>Auto decide</strong><span class="block text-xs text-neutral-400 mt-1">Off: execute directly. On: the agent reviews actions automatically.</span></span>
+            <input type="checkbox" class="w-5 h-5" :checked="store.autoDecideActions" @change="store.setAutoDecideActions(($event.target as HTMLInputElement).checked)" />
+          </label>
             </div>
           </div>
 
@@ -4049,15 +4096,15 @@ async function handleImportData() {
                 </p>
               </div>
               <div class="grid grid-cols-2 gap-3">
-                <button class="btn-secondary w-full" @click="handleExportData">
-                  {{ t('settings.exportButton') }}
+                <button class="btn-secondary w-full" :disabled="dataTransferBusy" @click="handleExportData">
+                  {{ dataTransferBusy ? 'Preparing backup…' : 'Export full backup' }}
                 </button>
-                <button class="btn-secondary w-full" @click="handleImportData">
-                  {{ t('settings.importButton') }}
+                <button class="btn-secondary w-full" :disabled="dataTransferBusy" @click="handleImportData">
+                  {{ dataTransferBusy ? 'Working…' : 'Import full backup' }}
                 </button>
               </div>
               <p class="mt-3 text-[11px] text-neutral-500">
-                {{ t('settings.importDescription') }}
+                Full backups include all app settings, chats and memories, skills, custom waifus, model-provider preferences, API keys, and Live2D model files. API keys are included in plaintext inside the backup file.
               </p>
             </div>
 
@@ -4084,249 +4131,6 @@ async function handleImportData() {
               </button>
             </div>
 
-            <!-- Agent command allowlist -->
-            <div class="settings-card">
-              <div class="flex items-center justify-between mb-1">
-                <div>
-                  <h3 class="text-sm font-bold text-white">Command Allowlist</h3>
-                  <p class="text-xs text-neutral-400">Commands the agent may run without a destructive-action dialog.</p>
-                </div>
-                <button
-                  class="text-xs text-primary-400 hover:text-primary-300 font-semibold"
-                  @click="showAllowlist = !showAllowlist; showAllowlist && loadAllowlist()"
-                >
-                  {{ showAllowlist ? 'Hide' : 'Manage' }}
-                </button>
-              </div>
-              <Transition
-                enter-active-class="transition-all duration-150"
-                leave-active-class="transition-all duration-100"
-                enter-from-class="opacity-0 -translate-y-1"
-                leave-to-class="opacity-0 -translate-y-1"
-              >
-                <div v-if="showAllowlist" class="mt-3">
-                  <div class="flex gap-2 mb-3">
-                    <input
-                      v-model="newAllowCmd"
-                      placeholder="command name (e.g. pnpm)"
-                      class="input-field text-sm flex-1"
-                      @keydown.enter="addToAllowlist"
-                    >
-                    <button class="btn-primary text-sm px-4" @click="addToAllowlist">Add</button>
-                  </div>
-                  <div class="space-y-1 max-h-36 overflow-y-auto">
-                    <div
-                      v-for="cmd in agentAllowlist"
-                      :key="cmd"
-                      class="flex items-center justify-between px-3 py-1.5 rounded-lg bg-neutral-800/40 border border-neutral-700/30 group"
-                    >
-                      <code class="text-xs text-emerald-400 font-mono">{{ cmd }}</code>
-                      <button
-                        class="text-xs text-neutral-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all duration-150"
-                        @click="removeFromAllowlist(cmd)"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                    <div v-if="agentAllowlist.length === 0" class="text-xs text-neutral-500 text-center py-2">
-                      No commands in allowlist
-                    </div>
-                  </div>
-                </div>
-              </Transition>
-            </div>
-          </div>
-
-          <!-- Metrics Tab: telemetry -->
-          <div v-if="settingsTab === 'metrics'">
-            <div class="settings-card">
-              <div class="mb-3">
-                <div class="flex items-center justify-between gap-3">
-                  <div>
-                    <h3 class="text-sm font-bold text-white">{{ t('settings.metricsTitle') }}</h3>
-                    <p class="text-xs text-neutral-400">
-                      {{ t('settings.metricsDescription') }}
-                    </p>
-                  </div>
-                  <span
-                    class="rounded-full px-2.5 py-1 text-[11px] font-semibold"
-                    :class="store.apiTelemetryAlert.active ? 'bg-red-500/20 text-red-200' : 'bg-emerald-500/20 text-emerald-200'"
-                  >
-                    {{ t('settings.metricsThreshold') }}: {{ formatDuration(store.apiSpikeThresholdMs).value }} {{ formatDuration(store.apiSpikeThresholdMs).unit }}
-                  </span>
-                </div>
-              </div>
-
-              <div class="mb-4 rounded-xl border border-neutral-800/60 bg-neutral-900/55 p-3">
-                <div class="flex items-start justify-between gap-4">
-                  <div>
-                    <div class="font-semibold text-neutral-200">Enable timeouts and iterations cap</div>
-                    <div class="mt-1 text-xs text-neutral-500">
-                      Off by default. When enabled, retries on timeout/network failures, response-time alerts, and tool/subagent iteration caps are enforced.
-                    </div>
-                  </div>
-                  <button
-                    class="relative h-6 w-11 shrink-0 cursor-pointer rounded-full transition-all duration-300"
-                    :style="{ background: store.enableTimeoutsAndIterationCaps ? 'linear-gradient(90deg,#22c55e,#06b6d4)' : '#404040' }"
-                    :aria-label="`${store.enableTimeoutsAndIterationCaps ? 'Disable' : 'Enable'} timeouts and iterations cap`"
-                    @click="store.setEnableTimeoutsAndIterationCaps(!store.enableTimeoutsAndIterationCaps)"
-                  >
-                    <span
-                      class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
-                      :style="{ transform: store.enableTimeoutsAndIterationCaps ? 'translateX(20px)' : 'translateX(0)' }"
-                    />
-                  </button>
-                </div>
-              </div>
-
-              <div class="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-                <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
-                  <div class="font-semibold text-neutral-200">{{ t('settings.maxIterations') }}</div>
-                  <div class="mt-1 text-xs text-neutral-500">
-                    {{ t('settings.maxIterationsDescription') }}
-                    <span v-if="!store.enableTimeoutsAndIterationCaps" class="text-amber-300"> Disabled until caps are enabled.</span>
-                  </div>
-                  <input
-                    class="input-field mt-3"
-                    type="number"
-                    min="1"
-                    max="24"
-                    :disabled="!store.enableTimeoutsAndIterationCaps"
-                    :value="store.maxToolIterations"
-                    @change="store.setMaxToolIterations(Number(($event.target as HTMLInputElement).value))"
-                  >
-                </label>
-                <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
-                  <div class="font-semibold text-neutral-200">{{ t('settings.responseThreshold') }}</div>
-                  <div class="mt-1 text-xs text-neutral-500">
-                    {{ t('settings.responseThresholdDescription') }}
-                    <span v-if="!store.enableTimeoutsAndIterationCaps" class="text-amber-300"> Disabled until caps are enabled.</span>
-                  </div>
-                  <input
-                    class="input-field mt-3"
-                    type="number"
-                    min="250"
-                    max="60000"
-                    step="250"
-                    :disabled="!store.enableTimeoutsAndIterationCaps"
-                    :value="store.apiSpikeThresholdMs"
-                    @change="store.setApiSpikeThresholdMs(Number(($event.target as HTMLInputElement).value))"
-                  >
-                </label>
-                <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
-                  <div class="font-semibold text-neutral-200">Subagent iteration cap</div>
-                  <div class="mt-1 text-xs text-neutral-500">
-                    Max iterations each dispatched subagent gets before it must stop. Lower = cheaper, higher = more thorough. Default 6.
-                    <span v-if="!store.enableTimeoutsAndIterationCaps" class="text-amber-300"> Disabled until caps are enabled.</span>
-                  </div>
-                  <input
-                    class="input-field mt-3"
-                    type="number"
-                    min="3"
-                    max="12"
-                    :disabled="!store.enableTimeoutsAndIterationCaps"
-                    :value="store.subagentMaxIterations"
-                    @change="store.setSubagentMaxIterations(Number(($event.target as HTMLInputElement).value))"
-                  >
-                </label>
-                <label class="rounded-xl bg-neutral-900/55 p-3 text-sm">
-                  <div class="font-semibold text-neutral-200">Subagent concurrency</div>
-                  <div class="mt-1 text-xs text-neutral-500">How many subagents run in parallel per dispatch. Lower = friendlier to rate limits. Default 4.</div>
-                  <input
-                    class="input-field mt-3"
-                    type="number"
-                    min="1"
-                    max="8"
-                    :value="store.subagentConcurrency"
-                    @change="store.setSubagentConcurrency(Number(($event.target as HTMLInputElement).value))"
-                  >
-                </label>
-              </div>
-
-              <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-                <div class="rounded-xl bg-neutral-900/55 p-3">
-                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsLatest') }}</div>
-                  <div class="mt-2 text-xl font-bold text-white">{{ formatDuration(telemetryStats.latest).value }}<span v-if="telemetryStats.latest !== null" class="ml-1 text-xs text-neutral-400">{{ formatDuration(telemetryStats.latest).unit }}</span></div>
-                </div>
-                <div class="rounded-xl bg-neutral-900/55 p-3">
-                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsAverage') }}</div>
-                  <div class="mt-2 text-xl font-bold text-white">{{ formatDuration(telemetryStats.average).value }}<span v-if="telemetryStats.average !== null" class="ml-1 text-xs text-neutral-400">{{ formatDuration(telemetryStats.average).unit }}</span></div>
-                </div>
-                <div class="rounded-xl bg-neutral-900/55 p-3">
-                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsP95') }}</div>
-                  <div class="mt-2 text-xl font-bold text-white">{{ formatDuration(telemetryStats.p95).value }}<span v-if="telemetryStats.p95 !== null" class="ml-1 text-xs text-neutral-400">{{ formatDuration(telemetryStats.p95).unit }}</span></div>
-                </div>
-                <div class="rounded-xl bg-neutral-900/55 p-3">
-                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsAlerts') }}</div>
-                  <div class="mt-2 text-xl font-bold" :class="store.apiTelemetryAlert.active ? 'text-red-300' : 'text-white'">{{ telemetryStats.alertCount }}</div>
-                </div>
-              </div>
-
-              <div class="mt-4 rounded-xl bg-neutral-900/55 p-3">
-                <div class="mb-3 flex items-center justify-between">
-                  <div class="text-[11px] uppercase tracking-[0.16em] text-neutral-500">{{ t('settings.metricsHistory') }}</div>
-                  <div v-if="store.apiTelemetryAlert.active" class="text-xs font-semibold text-red-300">
-                    {{ store.apiTelemetryAlert.message }}
-                  </div>
-                </div>
-
-                <div v-if="telemetryHistory.length > 0" class="space-y-3">
-                  <div class="flex h-24 items-end gap-2">
-                    <div
-                      v-for="sample in telemetryHistory.slice(-16)"
-                      :key="sample.id"
-                      class="flex-1 rounded-t-md transition-all"
-                      :class="sample.alert ? 'bg-red-400/80' : 'bg-cyan-400/80'"
-                      :style="{ height: telemetryBarHeight(sample.totalMs) }"
-                      :title="`${sample.provider} ${sample.model}: ${formatDuration(sample.totalMs).value} ${formatDuration(sample.totalMs).unit}`"
-                    />
-                  </div>
-                  <div class="max-h-36 space-y-2 overflow-y-auto pr-1">
-                    <div
-                      v-for="sample in store.apiTelemetryHistory.slice(0, 6)"
-                      :key="sample.id"
-                      class="flex items-center justify-between rounded-lg bg-black/20 px-3 py-2 text-xs"
-                    >
-                      <div class="min-w-0">
-                        <div class="truncate font-semibold text-neutral-200">{{ sample.provider }} · {{ sample.model }}</div>
-                        <div class="text-neutral-500">{{ new Date(sample.measuredAt).toLocaleTimeString() }}</div>
-                      </div>
-                      <div class="ml-3 text-right">
-                        <div :class="sample.alert ? 'text-red-300' : 'text-cyan-200'">{{ formatDuration(sample.totalMs).value }} {{ formatDuration(sample.totalMs).unit }}</div>
-                        <div class="text-neutral-500">{{ sample.roundTrips }} calls</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div v-else class="py-4 text-sm text-neutral-500">
-                  {{ t('settings.metricsEmpty') }}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Shared Save/Cancel footer for General/AI/Data/Metrics -->
-          <div
-            v-if="['general', 'ai', 'data', 'metrics'].includes(settingsTab)"
-            class="flex gap-2"
-          >
-            <button class="btn-secondary flex-1" @click="showSettings = false">
-              {{ t('settings.cancel') }}
-            </button>
-            <button
-              class="btn-primary flex-1"
-              @click="handleSetup(store.apiKey)"
-            >
-              {{ t('settings.save') }}
-            </button>
-            <button class="btn-ghost flex-1" @click="startDemoMode">
-              {{ t('settings.skipDemo') }}
-            </button>
-          </div>
-
-          <!-- Theme Tab -->
-          <div v-if="settingsTab === 'theme'">
             <!-- Color Presets -->
             <div class="settings-card">
               <div class="mb-3">
@@ -5303,6 +5107,35 @@ async function handleImportData() {
           <div v-if="settingsTab === 'live2d'">
             <div class="settings-card mb-3">
               <div class="mb-3">
+                <h3 class="text-sm font-bold text-white">Immersive display</h3>
+                <p class="text-xs text-neutral-400">
+                  Move the current Live2D model into a borderless fullscreen window on another monitor. Assistant replies appear as speech bubbles in that window.
+                </p>
+              </div>
+              <label class="block text-xs font-semibold text-neutral-300 mb-1" for="live2d-display-select">Target display</label>
+              <select
+                id="live2d-display-select"
+                v-model="selectedLive2DDisplayId"
+                class="input-field"
+                :disabled="live2dDisplays.length === 0"
+              >
+                <option v-if="live2dDisplays.length === 0" value="">No display information available</option>
+                <option v-for="display in live2dDisplays" :key="display.id" :value="display.id">
+                  {{ display.label }} — {{ display.bounds.width }} × {{ display.bounds.height }}{{ display.primary ? ' (Primary)' : '' }}
+                </option>
+              </select>
+              <div class="mt-3 flex gap-2">
+                <button class="btn-secondary flex-1 text-xs" :disabled="live2dImmersiveOpening || !currentWaifuLive2D" @click="openImmersiveLive2D">
+                  {{ live2dImmersiveOpening ? 'Opening…' : 'Open immersive window' }}
+                </button>
+                <button class="btn-secondary text-xs" @click="refreshLive2DDisplays">
+                  Refresh displays
+                </button>
+              </div>
+            </div>
+
+            <div class="settings-card mb-3">
+              <div class="mb-3">
                 <h3 class="text-sm font-bold text-white">Live2D resolution</h3>
                 <p class="text-xs text-neutral-400">
                   Choose the floating avatar window size. This changes the Live2D canvas resolution; character scale and position stay separate.
@@ -5682,80 +5515,10 @@ async function handleImportData() {
             {{ t('agent.description') }}
           </p>
 
-          <div class="space-y-3 mb-6">
-            <!-- Ask before running -->
-            <button
-              :class="[
-                'w-full text-left rounded-xl p-4 border-2 transition-all duration-200',
-                agentMode === 'ask'
-                  ? 'border-primary-500/60 bg-primary-500/10'
-                  : 'border-neutral-700/40 bg-neutral-800/30 hover:border-neutral-600/60',
-              ]"
-              @click="saveAgentMode('ask')"
-            >
-              <div class="flex items-center gap-3">
-                <span class="text-xl">🔔</span>
-                <div>
-                  <div class="text-sm font-semibold text-white">
-                    {{ t('agent.askTitle') }}
-                  </div>
-                  <div class="text-xs text-neutral-400 mt-0.5">
-                    {{ t('agent.askDesc') }}
-                  </div>
-                </div>
-                <div v-if="agentMode === 'ask'" class="ml-auto w-2 h-2 rounded-full bg-primary-400" />
-              </div>
-            </button>
-
-            <!-- Auto + common commands -->
-            <button
-              :class="[
-                'w-full text-left rounded-xl p-4 border-2 transition-all duration-200',
-                agentMode === 'auto'
-                  ? 'border-primary-500/60 bg-primary-500/10'
-                  : 'border-neutral-700/40 bg-neutral-800/30 hover:border-neutral-600/60',
-              ]"
-              @click="saveAgentMode('auto')"
-            >
-              <div class="flex items-center gap-3">
-                <span class="text-xl">⚡</span>
-                <div>
-                  <div class="text-sm font-semibold text-white">
-                    {{ t('agent.autoTitle') }}
-                  </div>
-                  <div class="text-xs text-neutral-400 mt-0.5">
-                    {{ t('agent.autoDesc') }}
-                  </div>
-                </div>
-                <div v-if="agentMode === 'auto'" class="ml-auto w-2 h-2 rounded-full bg-primary-400" />
-              </div>
-            </button>
-
-            <!-- Full access -->
-            <button
-              :class="[
-                'w-full text-left rounded-xl p-4 border-2 transition-all duration-200',
-                agentMode === 'full'
-                  ? 'border-red-500/60 bg-red-500/10'
-                  : 'border-neutral-700/40 bg-neutral-800/30 hover:border-neutral-600/60',
-              ]"
-              @click="saveAgentMode('full')"
-            >
-              <div class="flex items-center gap-3">
-                <span class="text-xl">🔓</span>
-                <div>
-                  <div class="text-sm font-semibold text-white">
-                    {{ t('agent.fullTitle') }}
-                  </div>
-                  <div class="text-xs text-neutral-400 mt-0.5">
-                    {{ t('agent.fullDesc') }}
-                  </div>
-                </div>
-                <div v-if="agentMode === 'full'" class="ml-auto w-2 h-2 rounded-full bg-red-400" />
-              </div>
-            </button>
-          </div>
-
+          <label class="flex items-center justify-between gap-4 rounded-xl border border-neutral-700 p-4 mb-6">
+            <span><strong>Auto decide</strong><span class="block text-xs text-neutral-400 mt-1">Off: execute directly. On: the agent reviews actions automatically.</span></span>
+            <input type="checkbox" class="w-5 h-5" :checked="store.autoDecideActions" @change="store.setAutoDecideActions(($event.target as HTMLInputElement).checked)" />
+          </label>
           <button class="btn-secondary w-full" @click="showAgent = false">
             {{ t('settings.cancel') }}
           </button>
@@ -6363,35 +6126,6 @@ async function handleImportData() {
                 :recent="group.msg.id === store.recentMessageId"
                 :show-copy="group.msg.role === 'assistant'"
               />
-              <div
-                v-if="group.msg.pendingApproval"
-                :class="[
-                  'mt-2 flex gap-2 rounded-xl border border-amber-400/25 bg-amber-400/10 p-2',
-                  compactChatLayout ? 'max-w-[260px]' : 'max-w-md',
-                ]"
-              >
-                <template v-if="group.msg.pendingApproval.status === 'pending'">
-                  <button
-                    class="btn-primary flex-1 text-xs"
-                    @click="store.approveToolApproval(group.msg.pendingApproval.id)"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    class="btn-secondary flex-1 text-xs text-rose-300"
-                    @click="store.denyToolApproval(group.msg.pendingApproval.id)"
-                  >
-                    Deny
-                  </button>
-                </template>
-                <div
-                  v-else
-                  class="w-full text-center text-xs font-semibold"
-                  :class="group.msg.pendingApproval.status === 'approved' ? 'text-emerald-300' : 'text-rose-300'"
-                >
-                  {{ group.msg.pendingApproval.status === 'approved' ? 'Approved' : 'Denied' }}
-                </div>
-              </div>
               <SubagentPanel
                 v-if="group.msg.subagents && group.msg.subagents.length > 0"
                 :subagents="group.msg.subagents"
@@ -6675,6 +6409,11 @@ async function handleImportData() {
             <div class="flex items-center gap-1" data-live2d-panel-control>
               <button
                 class="text-[11px] leading-none px-1.5 py-1 rounded text-white/60 hover:text-white/90 hover:bg-white/10"
+                title="Open immersive Live2D window"
+                @click.stop="openImmersiveLive2D"
+              >Immersive</button>
+              <button
+                class="text-[11px] leading-none px-1.5 py-1 rounded text-white/60 hover:text-white/90 hover:bg-white/10"
                 title="Reset avatar position and scale"
                 @click.stop="resetLive2DPanelLayout"
               >Reset</button>
@@ -6703,6 +6442,15 @@ async function handleImportData() {
               :render-scale="live2dRenderScale"
             />
           </div>
+          <Transition name="live2d-speech-bubble">
+            <div
+              v-if="live2dSpeechBubble"
+              class="absolute left-3 right-3 top-12 z-10 rounded-xl border border-white/15 bg-neutral-900/85 px-3 py-2 text-center text-[11px] leading-snug text-white shadow-xl backdrop-blur-md"
+              aria-live="polite"
+            >
+              {{ live2dSpeechBubble }}
+            </div>
+          </Transition>
           <div
             class="live2d-scale-control absolute left-3 right-8 bottom-3 z-10 flex items-center gap-2 rounded-lg border border-white/10 bg-black/55 px-2.5 py-2 backdrop-blur-sm cursor-default"
             data-live2d-panel-control
@@ -6752,6 +6500,15 @@ async function handleImportData() {
 }
 .process-panel-chevron {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.live2d-speech-bubble-enter-active,
+.live2d-speech-bubble-leave-active {
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.live2d-speech-bubble-enter-from,
+.live2d-speech-bubble-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 .process-panel-steps :deep(.chat-bubble-shell) {
   max-width: 100%;

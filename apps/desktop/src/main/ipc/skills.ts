@@ -1,3 +1,4 @@
+import { registerHostHandler, resolveWorkspacePath, hostContext } from '../agent/host'
 const electronModule = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -308,7 +309,7 @@ export function registerSkillsIpc() {
   if (registered) return
   registered = true
 
-  ipcMain.handle('skills:list', async () => {
+  registerHostHandler('skills:list', async () => {
     try {
       return { success: true, ...listSkillsFromDisk() }
     } catch (err: any) {
@@ -316,7 +317,7 @@ export function registerSkillsIpc() {
     }
   })
 
-  ipcMain.handle('skills:read', async (_e: any, slug: string) => {
+  registerHostHandler('skills:read', async (_e: any, slug: string) => {
     try {
       const skill = readSkillBody(slug)
       if (!skill) return { success: false, error: 'Skill not found' }
@@ -328,7 +329,7 @@ export function registerSkillsIpc() {
 
   // Called by the create_skill agent tool via the existing agent IPC
   // bridge. Returns the path written so the caller can echo it back.
-  ipcMain.handle(
+  registerHostHandler(
     'skills:write',
     async (_e: any, payload: { slug: string; name: string; description: string; body: string }) => {
       try {
@@ -359,7 +360,7 @@ export function registerSkillsIpc() {
   // waifu's skill folder and external skill collections (VoltAgent,
   // Anthropic, etc.) share the same `SKILL.md` + frontmatter shape, so
   // importing is "find every SKILL.md, copy its whole directory in".
-  ipcMain.handle(
+  registerHostHandler(
     'skills:import',
     async (e: any, payload: { source: string; overwrite?: boolean }) => {
       try {
@@ -392,7 +393,7 @@ export function registerSkillsIpc() {
     },
   )
 
-  ipcMain.handle('skills:delete', async (_e: any, slug: string) => {
+  registerHostHandler('skills:delete', async (_e: any, slug: string) => {
     try {
       if (!isValidSkillSlug(slug)) return { success: false, error: 'Invalid slug' }
       const dir = path.dirname(skillPath(slug))

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { WaifuCommunicationStyle, WaifuPersonalityTraits } from '@syntax-senpai/waifu-core'
+import { useI18n } from '../composables/use-i18n'
 
 type CellValue = 0 | 1 | 2
 type Player = 1 | 2
@@ -45,6 +46,7 @@ const emit = defineEmits<{
   commentary: [message: string]
   close: []
 }>()
+const { locale, t } = useI18n()
 
 const BOARD_SIZE = 15
 const CENTER_INDEX = Math.floor(BOARD_SIZE / 2)
@@ -149,11 +151,11 @@ const gameOver = computed(() => winner.value !== 0 || isDraw.value)
 const winningCellKeys = computed(() => new Set(winningLine.value.map((cell) => `${cell.row}:${cell.col}`)))
 const historyNewestFirst = computed(() => [...moveHistory.value].reverse())
 const currentTurnLabel = computed(() => {
-  if (winner.value === 1) return '黑棋获胜'
-  if (winner.value === 2) return '白棋获胜'
-  if (isDraw.value) return '平局'
-  if (aiThinking.value) return `${waifuName.value}思考中…`
-  return '轮到你落子'
+  if (winner.value === 1) return t('gomoku.blackWins')
+  if (winner.value === 2) return t('gomoku.whiteWins')
+  if (isDraw.value) return t('gomoku.draw')
+  if (aiThinking.value) return t('gomoku.thinking', { name: waifuName.value })
+  return t('gomoku.yourTurn')
 })
 
 function resetBoardState() {
@@ -188,6 +190,17 @@ function buildCommentary(kind: CommentaryKind, move?: MoveEntry): string {
   const subject = thirdPerson.value ? waifuName.value : self
   const style = styleProfile.value
   const sparkle = style.musical ? '♪' : emoji
+  if (locale.value !== 'zh') {
+    const key = `gomoku.commentary.${kind}`
+    const line = t(key, {
+      self,
+      subject,
+      turn: String(move?.turn ?? commentaryCounters.value[kind] + 1),
+      emoji: sparkle,
+    })
+    commentaryCounters.value[kind] += 1
+    return line
+  }
   const soften = (line: string) => {
     if (style.cute && !/[♪~💕🌸💗💖]$/.test(line)) return `${line}${sparkle}`
     if (style.elegant && !/[。！？♪~]$/.test(line)) return `${line}。`
@@ -461,13 +474,12 @@ function runAiTurn() {
 function playHumanMove(row: number, col: number) {
   if (aiThinking.value || gameOver.value || board.value[row][col] !== 0) return
 
-  const move = commitMove(row, col, 1)
+  commitMove(row, col, 1)
   if (finalizeMove(1, row, col)) return
 
-  publishCommentary('playerMove', move)
   aiThinking.value = true
   clearAiTimer()
-  aiMoveTimer = setTimeout(() => runAiTurn(), 260)
+  aiMoveTimer = setTimeout(() => runAiTurn(), 850)
 }
 
 function cellStoneClass(value: CellValue): string {
@@ -502,11 +514,11 @@ onBeforeUnmount(() => {
       <div class="min-w-0">
         <div class="flex items-center gap-2 text-lg font-semibold text-white">
           <span aria-hidden="true">⚫⚪</span>
-          <span>Gomoku</span>
+          <span>{{ t('games.gomoku') }}</span>
           <span class="rounded-full bg-white/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-neutral-300">15 × 15</span>
         </div>
         <p class="mt-1 text-xs text-neutral-400 sm:text-sm">
-          You are black. {{ waifuName }} plays white with a deterministic heuristic AI.
+          {{ t('gomoku.subtitle', { name: waifuName }) }}
         </p>
       </div>
       <div class="flex items-center gap-2">
@@ -518,12 +530,12 @@ onBeforeUnmount(() => {
           class="btn-ghost px-3 py-1.5 text-xs"
           @click="resetGame"
         >
-          Reset
+          {{ t('games.reset') }}
         </button>
         <button
           type="button"
           class="btn-ghost px-3 py-1.5 text-xs"
-          aria-label="Close Gomoku panel"
+          :aria-label="t('games.close')"
           @click="emit('close')"
         >
           ✕
@@ -557,7 +569,7 @@ onBeforeUnmount(() => {
                   'gomoku-cell-last': isLastMove(rowIndex - 1, colIndex - 1),
                 }"
                 :disabled="gameOver || aiThinking || board[rowIndex - 1][colIndex - 1] !== 0"
-                :aria-label="`Play ${formatCoordinate(rowIndex - 1, colIndex - 1)}`"
+                :aria-label="`${t('gomoku.yourTurn')}: ${formatCoordinate(rowIndex - 1, colIndex - 1)}`"
                 @click="playHumanMove(rowIndex - 1, colIndex - 1)"
               >
                 <span
@@ -575,8 +587,8 @@ onBeforeUnmount(() => {
       <aside class="flex min-h-0 flex-col gap-4">
         <div class="flex min-h-0 flex-1 flex-col rounded-2xl border border-white/10 bg-white/[0.04] p-4">
           <div class="mb-3 flex items-center justify-between gap-2">
-            <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-400">Live chat</div>
-            <span class="text-[11px] text-neutral-500">personality output</span>
+            <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-400">{{ t('gomoku.liveChat') }}</div>
+            <span class="text-[11px] text-neutral-500">{{ t('gomoku.personalityOutput') }}</span>
           </div>
           <div class="min-h-40 flex-1 space-y-3 overflow-y-auto pr-1" aria-live="polite">
             <div
@@ -595,7 +607,7 @@ onBeforeUnmount(() => {
                 ]"
               >
                 <div v-if="bubble.speaker !== 'user'" class="mb-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/50">
-                  {{ bubble.speaker === 'system' ? 'Game' : waifuName }}
+                  {{ bubble.speaker === 'system' ? t('gomoku.game') : waifuName }}
                 </div>
                 {{ bubble.text }}
               </div>

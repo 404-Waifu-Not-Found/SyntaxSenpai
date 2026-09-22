@@ -20,6 +20,7 @@ import RepositoryPickerModal from './components/RepositoryPickerModal.vue'
 import SakuraPetals from './components/SakuraPetals.vue'
 import BrowserPanel from './components/BrowserPanel.vue'
 import GomokuGame from './components/GomokuGame.vue'
+import FateRouletteGame from './components/FateRouletteGame.vue'
 import { useBrowserStore } from './stores/browser'
 import type { ActiveCodingRepo } from './types/coding-session'
 
@@ -1458,6 +1459,14 @@ const sidebarOpen = ref(true)
 const showSettings = ref(false)
 const showLive2DPanel = ref(false)
 const showGomokuPanel = ref(false)
+const showFateRoulettePanel = ref(false)
+const showGamePicker = ref(false)
+
+function openMiniGame(game: 'gomoku' | 'fate-roulette') {
+  showGamePicker.value = false
+  showGomokuPanel.value = game === 'gomoku'
+  showFateRoulettePanel.value = game === 'fate-roulette'
+}
 
 function shouldOpenGomokuForMessage(message: string): boolean {
   const normalized = message.trim().toLowerCase()
@@ -1466,9 +1475,20 @@ function shouldOpenGomokuForMessage(message: string): boolean {
   return /(五子棋|棋盘|下棋|对弈|来一局|陪我下|陪.*下棋|玩.*棋|gomoku)/i.test(normalized)
 }
 
+function shouldOpenFateRouletteForMessage(message: string): boolean {
+  const normalized = message.trim().toLowerCase()
+  if (!normalized) return false
+  if (/(关闭|关掉|不要|别|不想|stop|close).{0,8}(命运转轮|能量轮盘|轮盘游戏|fate roulette)/i.test(normalized)) return false
+  return /(命运转轮|能量轮盘|轮盘对局|轮盘游戏|玩.*轮盘|来一局.*轮盘|fate roulette)/i.test(normalized)
+}
+
 function submitChatMessage() {
   const message = store.inputValue
-  if (shouldOpenGomokuForMessage(message)) showGomokuPanel.value = true
+  if (shouldOpenFateRouletteForMessage(message)) {
+    openMiniGame('fate-roulette')
+  } else if (shouldOpenGomokuForMessage(message)) {
+    openMiniGame('gomoku')
+  }
   store.sendMessage(message)
 }
 
@@ -2457,6 +2477,8 @@ function onGlobalKeydown(e: KeyboardEvent) {
     if (showCompactStatusDetails.value) { showCompactStatusDetails.value = false; e.preventDefault(); return }
     if (showRenameConversationModal.value) { closeRenameConversationModal(); e.preventDefault(); return }
     if (showShortcuts.value) { showShortcuts.value = false; e.preventDefault(); return }
+    if (showGamePicker.value) { showGamePicker.value = false; e.preventDefault(); return }
+    if (showFateRoulettePanel.value) { showFateRoulettePanel.value = false; e.preventDefault(); return }
     if (showGomokuPanel.value) { showGomokuPanel.value = false; e.preventDefault(); return }
     if (showSettings.value) { showSettings.value = false; e.preventDefault(); return }
     if (showAgent.value) { showAgent.value = false; e.preventDefault(); return }
@@ -6086,13 +6108,13 @@ async function handleImportData() {
             🌐
           </button>
           <button
-            :class="['btn-ghost p-2', showGomokuPanel ? 'bg-white/10' : '']"
+            :class="['btn-ghost p-2', showGamePicker || showGomokuPanel || showFateRoulettePanel ? 'bg-white/10' : '']"
             :style="ghostButtonStyle"
-            :title="showGomokuPanel ? 'Close Gomoku' : 'Open Gomoku'"
-            :aria-label="showGomokuPanel ? 'Close Gomoku' : 'Open Gomoku'"
-            @click="showGomokuPanel = !showGomokuPanel"
+            :title="t('games.center')"
+            :aria-label="t('games.openCenter')"
+            @click="showGamePicker = true"
           >
-            ⚫
+            🎮
           </button>
           <button
             class="btn-ghost p-2"
@@ -6444,6 +6466,62 @@ async function handleImportData() {
           {{ t('input.dropHint') }}
         </div>
 
+        <Teleport to="body">
+          <Transition
+            enter-active-class="transition-all duration-200 ease-out"
+            enter-from-class="opacity-0"
+            leave-active-class="transition-all duration-150 ease-in"
+            leave-to-class="opacity-0"
+          >
+            <div
+              v-if="showGamePicker"
+              class="fixed inset-0 z-[72] flex items-center justify-center bg-black/65 p-4 backdrop-blur-md"
+              @click.self="showGamePicker = false"
+            >
+              <div class="w-full max-w-3xl rounded-3xl border border-white/10 bg-[#10121d]/96 p-5 shadow-2xl sm:p-7">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <div class="text-xs font-semibold uppercase tracking-[0.2em] text-violet-300">{{ t('games.playTogether') }}</div>
+                    <h2 class="mt-1 text-2xl font-semibold text-white">{{ t('games.center') }}</h2>
+                    <p class="mt-2 text-sm text-neutral-400">{{ t('games.centerSubtitle', { name: store.selectedWaifu?.displayName || '' }) }}</p>
+                  </div>
+                  <button class="btn-ghost px-3 py-2" type="button" :aria-label="t('games.close')" @click="showGamePicker = false">✕</button>
+                </div>
+
+                <div class="mt-6 grid gap-4 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    class="group rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-left transition-all duration-200 hover:-translate-y-1 hover:border-amber-300/35 hover:bg-amber-300/[0.07]"
+                    @click="openMiniGame('gomoku')"
+                  >
+                    <div class="flex items-center justify-between">
+                      <span class="text-4xl">⚫⚪</span>
+                      <span class="rounded-full bg-amber-300/10 px-2.5 py-1 text-[10px] uppercase tracking-wider text-amber-200">{{ t('games.strategy') }}</span>
+                    </div>
+                    <h3 class="mt-4 text-lg font-semibold text-white">{{ t('games.gomoku') }}</h3>
+                    <p class="mt-2 text-sm leading-6 text-neutral-400">{{ t('games.gomokuDescription') }}</p>
+                    <div class="mt-4 text-xs font-medium text-amber-200/80">{{ t('games.startGomoku') }}</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    class="group rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-left transition-all duration-200 hover:-translate-y-1 hover:border-violet-300/35 hover:bg-violet-300/[0.07]"
+                    @click="openMiniGame('fate-roulette')"
+                  >
+                    <div class="flex items-center justify-between">
+                      <span class="text-4xl">✦</span>
+                      <span class="rounded-full bg-violet-300/10 px-2.5 py-1 text-[10px] uppercase tracking-wider text-violet-200">{{ t('games.mindGame') }}</span>
+                    </div>
+                    <h3 class="mt-4 text-lg font-semibold text-white">{{ t('games.fate') }}</h3>
+                    <p class="mt-2 text-sm leading-6 text-neutral-400">{{ t('games.fateDescription') }}</p>
+                    <div class="mt-4 text-xs font-medium text-violet-200/80">{{ t('games.startFate') }}</div>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </Transition>
+        </Teleport>
+
         <GomokuGame
           v-if="showGomokuPanel"
           :class="compactChatLayout ? 'mb-2' : 'mb-3'"
@@ -6455,6 +6533,19 @@ async function handleImportData() {
           :personality="store.selectedWaifu?.personalityTraits"
           :communication-style="store.selectedWaifu?.communicationStyle"
           @close="showGomokuPanel = false"
+        />
+
+        <FateRouletteGame
+          v-if="showFateRoulettePanel"
+          :waifu-display-name="store.selectedWaifu?.displayName"
+          :backstory="store.selectedWaifu?.backstory"
+          :system-prompt-template="store.selectedWaifu?.systemPromptTemplate"
+          :catchphrases="store.selectedWaifu?.catchphrases"
+          :tags="store.selectedWaifu?.tags"
+          :personality="store.selectedWaifu?.personalityTraits"
+          :communication-style="store.selectedWaifu?.communicationStyle"
+          :dialogue-generator="store.generateGameDialogue"
+          @close="showFateRoulettePanel = false"
         />
 
         <!-- Coding-mode pill -->

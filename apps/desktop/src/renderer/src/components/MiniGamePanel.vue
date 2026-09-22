@@ -19,7 +19,14 @@ const emit = defineEmits<{
 
 type ConnectBoard = Array<Array<'empty' | 'human' | 'agent'>>
 type ChessPiece = { type: string; color: 'w' | 'b' } | null
-type ChessBoard = { cells: ChessPiece[][]; check: boolean; fen: string }
+type ChessSquareMove = { from: string; to: string }
+type ChessBoard = {
+  cells: ChessPiece[][]
+  check: boolean
+  fen: string
+  legalMoves?: ChessSquareMove[]
+  lastMove?: ChessSquareMove | null
+}
 
 const selectedSquare = ref<string | null>(null)
 
@@ -53,11 +60,33 @@ const chessCells = computed(() => {
       square: `${file}${rank}`,
       piece: board.cells[sourceRow]?.[sourceColumn] ?? null,
       dark: (displayRow + displayColumn) % 2 === 1,
+      displayRow,
+      displayColumn,
+      file,
+      rank,
+      last: board.lastMove?.from === `${file}${rank}` || board.lastMove?.to === `${file}${rank}`,
     }
   })
 })
 
 const chessPieceLabel = (piece: ChessPiece) => piece ? piece.type.toUpperCase() : ''
+
+const chessLegalTargets = computed(() => {
+  const board = props.snapshot?.board as ChessBoard | undefined
+  const selected = selectedSquare.value
+  if (!selected) return new Set<string>()
+  return new Set((board?.legalMoves ?? [])
+    .filter((move) => move.from === selected)
+    .map((move) => move.to))
+})
+
+function connectColumnOpen(column: number) {
+  return connectBoard.value[0]?.[column] === 'empty'
+}
+
+function emitConnectMove(column: number) {
+  if (connectColumnOpen(column)) emitMove(String(column))
+}
 
 function canMove() {
   return !!props.snapshot && props.snapshot.status === 'playing' && props.snapshot.turn === 'human' && !props.busy
@@ -69,10 +98,24 @@ function emitMove(move: string) {
 
 function chooseChessSquare(square: string) {
   if (!canMove()) return
+  const cell = chessCells.value.find((candidate) => candidate.square === square)
+  const humanSide = props.snapshot?.humanSide
+
   if (!selectedSquare.value) {
-    selectedSquare.value = square
+    if (cell?.piece?.color === humanSide) selectedSquare.value = square
     return
   }
+
+  if (cell?.piece?.color === humanSide) {
+    selectedSquare.value = selectedSquare.value === square ? null : square
+    return
+  }
+
+  if (!chessLegalTargets.value.has(square)) {
+    selectedSquare.value = null
+    return
+  }
+
   if (selectedSquare.value === square) {
     selectedSquare.value = null
     return
@@ -142,29 +185,43 @@ watch(() => props.snapshot?.lastMove, () => {
         </div>
 
         <div v-else-if="snapshot.kind === 'connect4'" class="mx-auto w-full max-w-[34rem]">
-          <div class="mb-2 grid grid-cols-7 gap-1">
+          <div class="mb-2 grid grid-cols-7 gap-1" aria-label="Connect Four columns">
             <button
               v-for="column in 7"
               :key="column"
               type="button"
               class="rounded-md py-1 text-xs text-slate-400 transition hover:bg-cyan-300/10 hover:text-cyan-200 disabled:cursor-default disabled:opacity-40"
-              :disabled="!connectBoard[0]?.[column - 1] || connectBoard[0][column - 1] !== 'empty' || !canMove()"
+              :class="connectColumnOpen(column - 1) && canMove() ? 'bg-white/[0.03]' : ''"
+              :disabled="!connectColumnOpen(column - 1) || !canMove()"
               :aria-label="`Drop in column ${column}`"
-              @click="emitMove(String(column - 1))"
+              @click="emitConnectMove(column - 1)"
             >
-              {{ column }}
+              <span class="sr-only">Drop in </span>{{ column }}
             </button>
           </div>
-          <div class="grid grid-cols-7 gap-2 rounded-2xl border border-cyan-300/20 bg-blue-950/70 p-3 sm:gap-3 sm:p-4">
+          <div class="grid grid-cols-7 gap-2 rounded-2xl border border-cyan-300/20 bg-blue-950/70 p-3 sm:gap-3 sm:p-4" aria-label="Connect Four board">
             <template v-for="(row, rowIndex) in connectBoard" :key="rowIndex">
-              <span
+              <button
                 v-for="(cell, columnIndex) in row"
                 :key="`${rowIndex}-${columnIndex}`"
-                class="aspect-square rounded-full border border-white/10 shadow-inner"
+                type="button"
+                class="group relative aspect-square rounded-full border border-white/10 shadow-inner transition-transform hover:scale-105 disabled:cursor-default disabled:hover:scale-100"
                 :class="cell === 'human' ? 'bg-red-400 shadow-red-300/30' : cell === 'agent' ? 'bg-yellow-300 shadow-yellow-200/30' : 'bg-slate-900/80'"
+                :disabled="!connectColumnOpen(columnIndex) || !canMove()"
                 :aria-label="`Row ${rowIndex + 1}, column ${columnIndex + 1}`"
-              />
+                @click="emitConnectMove(columnIndex)"
+              >
+                <span
+                  v-if="cell === 'empty' && connectColumnOpen(columnIndex) && canMove()"
+                  class="pointer-events-none absolute inset-1 rounded-full border border-dashed border-cyan-200/50 opacity-0 transition-opacity group-hover:opacity-100"
+                  aria-hidden="true"
+                />
+              </button>
             </template>
+          </div>
+          <div class="mt-3 flex justify-center gap-5 text-[11px] text-slate-400">
+            <span class="flex items-center gap-1.5"><i class="h-2.5 w-2.5 rounded-full bg-red-400" aria-hidden="true" />You</span>
+            <span class="flex items-center gap-1.5"><i class="h-2.5 w-2.5 rounded-full bg-yellow-300" aria-hidden="true" />Agent</span>
           </div>
         </div>
 
@@ -178,22 +235,38 @@ watch(() => props.snapshot?.lastMove, () => {
               :class="[
                 cell.dark ? 'bg-emerald-950/80' : 'bg-emerald-100/90 text-slate-900',
                 selectedSquare === cell.square ? 'ring-2 ring-inset ring-cyan-300' : '',
+                chessLegalTargets.has(cell.square) ? 'after:absolute after:h-3 after:w-3 after:rounded-full after:bg-cyan-300/80' : '',
+                cell.last ? 'shadow-[inset_0_0_0_999px_rgba(34,211,238,0.15)]' : '',
                 canMove() ? 'hover:bg-cyan-300/40' : 'cursor-default',
               ]"
               :disabled="!canMove()"
               :aria-label="`${cell.square}${cell.piece ? `, ${cell.piece.color === 'w' ? 'white' : 'black'} ${cell.piece.type}` : ', empty'}`"
               @click="chooseChessSquare(cell.square)"
             >
-              <span :class="cell.piece?.color === 'w' ? 'text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)]' : 'text-slate-950'">
-                {{ chessPieceLabel(cell.piece) }}
+              <span
+                v-if="cell.piece"
+                class="relative z-[1] flex h-[72%] w-[72%] items-center justify-center rounded-full border-2"
+                :class="cell.piece.color === 'w'
+                  ? 'border-white/80 bg-slate-100 text-slate-900 shadow-[0_2px_5px_rgba(0,0,0,0.45)]'
+                  : 'border-slate-700 bg-slate-900 text-white shadow-[0_2px_5px_rgba(0,0,0,0.65)]'"
+              >
+                <svg viewBox="0 0 40 40" class="h-full w-full p-1.5" aria-hidden="true">
+                  <circle cx="20" cy="20" r="14" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".35" />
+                  <text x="20" y="26" text-anchor="middle" font-size="15" font-weight="700" fill="currentColor">{{ chessPieceLabel(cell.piece) }}</text>
+                </svg>
               </span>
+              <span v-if="cell.displayColumn === 0" class="pointer-events-none absolute left-1 top-0.5 text-[9px] font-medium opacity-60">{{ cell.rank }}</span>
+              <span v-if="cell.displayRow === 7" class="pointer-events-none absolute bottom-0.5 right-1 text-[9px] font-medium opacity-60">{{ cell.file }}</span>
             </button>
           </div>
+          <p class="border-t border-white/10 bg-white/[0.03] px-3 py-2 text-center text-[11px] text-slate-400">
+            Select one of your pieces, then select a highlighted destination.
+          </p>
         </div>
 
         <div class="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] text-slate-400">
           <span v-if="snapshot.status === 'playing'">
-            {{ snapshot.kind === 'chess' ? `You play ${snapshot.humanSide === 'w' ? 'White' : 'Black'}` : 'You are the cyan side' }}
+            {{ snapshot.kind === 'chess' ? `You play ${snapshot.humanSide === 'w' ? 'White' : 'Black'}` : snapshot.kind === 'connect4' ? 'You are Red' : 'You are the cyan side' }}
           </span>
           <span v-else-if="snapshot.status === 'draw'">Draw</span>
           <span v-else>{{ snapshot.winner === 'human' ? 'You win' : 'Agent wins' }}</span>

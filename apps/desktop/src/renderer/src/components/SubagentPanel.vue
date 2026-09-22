@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { PhRobot } from '@phosphor-icons/vue'
 import type { SubagentSnapshot, SubagentStatus } from '../agent/subagent-runner'
 
 const props = defineProps<{
@@ -58,7 +59,7 @@ const summary = computed(() => {
 <template>
   <div v-if="subagents.length > 0" class="subagent-panel mt-2 rounded-xl border border-white/10 bg-neutral-900/50 backdrop-blur-sm">
     <div class="px-3 py-2 border-b border-white/5 text-xs text-neutral-400 flex items-center gap-2">
-      <span>🤖 Subagents</span>
+      <span class="inline-flex items-center gap-1"><PhRobot :size="14" weight="regular" aria-hidden="true" /> Subagents</span>
       <span>·</span>
       <span>{{ summary.total }} total</span>
       <span v-if="summary.running > 0" class="text-blue-300">{{ summary.running }} running</span>

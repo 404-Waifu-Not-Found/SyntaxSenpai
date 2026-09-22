@@ -28,6 +28,16 @@ export interface VoiceProfile {
   maxChars: number;
 }
 
+export type TtsEmotionToken =
+  | "neutral"
+  | "cheerful"
+  | "excited"
+  | "calm"
+  | "hesitant"
+  | "shy"
+  | "firm"
+  | "sad";
+
 const DEFAULT_PROFILE: VoiceProfile = {
   pitch: 1,
   rate: 1,
@@ -98,8 +108,24 @@ const PROFILES: Record<string, VoiceProfile> = {
   },
 };
 
+export const WAIFU_EXPRESSION_TO_TTS_EMOTION: Record<WaifuExpression, TtsEmotionToken> = {
+  happy: "cheerful",
+  excited: "excited",
+  thinking: "calm",
+  confused: "hesitant",
+  embarrassed: "shy",
+  determined: "firm",
+  sad: "sad",
+  neutral: "neutral",
+};
+
 export function getVoiceProfile(waifuId: string): VoiceProfile {
   return PROFILES[waifuId] ?? DEFAULT_PROFILE;
+}
+
+export function mapExpressionToTtsEmotion(expression: WaifuExpression | undefined): TtsEmotionToken {
+  if (!expression) return "neutral";
+  return WAIFU_EXPRESSION_TO_TTS_EMOTION[expression] ?? "neutral";
 }
 
 /**
@@ -132,3 +158,4 @@ export function trimForSpeech(text: string, maxChars: number): string {
   const boundary = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("! "), slice.lastIndexOf("? "));
   return boundary > maxChars * 0.5 ? slice.slice(0, boundary + 1) : slice + "…";
 }
+import type { WaifuExpression } from "./types.js";

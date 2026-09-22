@@ -40,6 +40,8 @@
       "@syntax-senpai/storage/*": ["./packages/storage/src/*"],
       "@syntax-senpai/wechat-ilink": ["./packages/wechat-ilink/src"],
       "@syntax-senpai/wechat-ilink/*": ["./packages/wechat-ilink/src/*"],
+      "@syntax-senpai/game-engine": ["./packages/game-engine/src"],
+      "@syntax-senpai/game-engine/*": ["./packages/game-engine/src/*"],
 
       "@proj-airi/*": [
         "./packages/ui/packages/*/src",

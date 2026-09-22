@@ -1,3 +1,4 @@
+import { registerHostHandler } from '../agent/host'
 const { ipcMain } = require('electron')
 const fs = require('fs').promises
 const path = require('path')
@@ -29,7 +30,7 @@ export function registerChatIpc() {
     memoryStore = storage.createMemoryStore(dbPath)
   }
 
-  ipcMain.handle('store:createConversation', async (_event: IpcMainInvokeEvent, waifuId: string, title: string) => {
+  registerHostHandler('store:createConversation', async (_event: IpcMainInvokeEvent, waifuId: string, title: string) => {
     try {
       const conv = await store.createConversation(waifuId, title)
       return { success: true, conversation: conv }
@@ -38,7 +39,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:listConversations', async (_event: IpcMainInvokeEvent, waifuId: string) => {
+  registerHostHandler('store:listConversations', async (_event: IpcMainInvokeEvent, waifuId: string) => {
     try {
       const convs = await store.listConversations(waifuId)
       return { success: true, conversations: convs }
@@ -47,7 +48,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:addMessage', async (_event: IpcMainInvokeEvent, conversationId: string, message: any) => {
+  registerHostHandler('store:addMessage', async (_event: IpcMainInvokeEvent, conversationId: string, message: any) => {
     try {
       await store.addMessage(conversationId, message)
       return { success: true }
@@ -56,7 +57,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:getMessages', async (_event: IpcMainInvokeEvent, conversationId: string) => {
+  registerHostHandler('store:getMessages', async (_event: IpcMainInvokeEvent, conversationId: string) => {
     try {
       const msgs = await store.getMessages(conversationId)
       return { success: true, messages: msgs }
@@ -65,7 +66,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:clearMessages', async (_event: IpcMainInvokeEvent, conversationId: string) => {
+  registerHostHandler('store:clearMessages', async (_event: IpcMainInvokeEvent, conversationId: string) => {
     try {
       await store.deleteMessages(conversationId)
       if (typeof store.updateConversation === 'function') {
@@ -77,7 +78,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:deleteMessage', async (_event: IpcMainInvokeEvent, conversationId: string, messageId: string) => {
+  registerHostHandler('store:deleteMessage', async (_event: IpcMainInvokeEvent, conversationId: string, messageId: string) => {
     try {
       if (typeof (store as any).deleteMessage === 'function') {
         await (store as any).deleteMessage(conversationId, messageId)
@@ -88,7 +89,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:deleteConversation', async (_event: IpcMainInvokeEvent, conversationId: string) => {
+  registerHostHandler('store:deleteConversation', async (_event: IpcMainInvokeEvent, conversationId: string) => {
     try {
       await store.deleteConversation(conversationId)
       return { success: true }
@@ -97,7 +98,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:updateConversation', async (_event: IpcMainInvokeEvent, id: string, updates: any) => {
+  registerHostHandler('store:updateConversation', async (_event: IpcMainInvokeEvent, id: string, updates: any) => {
     try {
       if (typeof store.updateConversation === 'function') {
         await store.updateConversation(id, updates)
@@ -109,7 +110,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:getConversation', async (_event: IpcMainInvokeEvent, id: string) => {
+  registerHostHandler('store:getConversation', async (_event: IpcMainInvokeEvent, id: string) => {
     try {
       if (typeof store.getConversation === 'function') {
         const conv = await store.getConversation(id)
@@ -121,7 +122,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:toggleFavorite', async (_event: IpcMainInvokeEvent, id: string) => {
+  registerHostHandler('store:toggleFavorite', async (_event: IpcMainInvokeEvent, id: string) => {
     try {
       if (typeof store.toggleFavorite === 'function') {
         const favorited = await store.toggleFavorite(id)
@@ -135,7 +136,7 @@ export function registerChatIpc() {
 
   // ── AI Memory IPC handlers ──
 
-  ipcMain.handle('memory:set', async (_event: IpcMainInvokeEvent, key: string, value: string, category?: string) => {
+  registerHostHandler('memory:set', async (_event: IpcMainInvokeEvent, key: string, value: string, category?: string) => {
     try {
       await memoryStore.setMemory(key, value, category)
       return { success: true }
@@ -144,7 +145,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('memory:get', async (_event: IpcMainInvokeEvent, key: string) => {
+  registerHostHandler('memory:get', async (_event: IpcMainInvokeEvent, key: string) => {
     try {
       const entry = await memoryStore.getMemory(key)
       return { success: true, entry }
@@ -153,7 +154,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('memory:getAll', async () => {
+  registerHostHandler('memory:getAll', async () => {
     try {
       const entries = await memoryStore.getAllMemories()
       return { success: true, entries }
@@ -162,7 +163,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('memory:getByCategory', async (_event: IpcMainInvokeEvent, category: string) => {
+  registerHostHandler('memory:getByCategory', async (_event: IpcMainInvokeEvent, category: string) => {
     try {
       const entries = await memoryStore.getMemoriesByCategory(category)
       return { success: true, entries }
@@ -171,7 +172,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('memory:delete', async (_event: IpcMainInvokeEvent, key: string) => {
+  registerHostHandler('memory:delete', async (_event: IpcMainInvokeEvent, key: string) => {
     try {
       await memoryStore.deleteMemory(key)
       return { success: true }
@@ -180,7 +181,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('memory:clear', async () => {
+  registerHostHandler('memory:clear', async () => {
     try {
       await memoryStore.clearAllMemories()
       return { success: true }
@@ -189,7 +190,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:searchConversations', async (_event: IpcMainInvokeEvent, query: string) => {
+  registerHostHandler('store:searchConversations', async (_event: IpcMainInvokeEvent, query: string) => {
     try {
       const convs = await store.listConversations()
       if (!query || query.trim().length < 2) {
@@ -215,7 +216,7 @@ export function registerChatIpc() {
     }
   })
 
-  ipcMain.handle('store:replaceSnapshot', async (_event: IpcMainInvokeEvent, payload: any) => {
+  registerHostHandler('store:replaceSnapshot', async (_event: IpcMainInvokeEvent, payload: any) => {
     try {
       const { chatPath, memoryPath } = resolveDataPaths()
       const conversations = Array.isArray(payload?.conversations) ? payload.conversations : []

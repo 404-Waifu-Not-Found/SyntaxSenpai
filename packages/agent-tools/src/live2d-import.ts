@@ -159,7 +159,17 @@ export function copyDirRecursive(src: string, dest: string): void {
  * created on demand but not counted).
  */
 export function extractZipSafely(zipPath: string, destDir: string): number {
-  const zip = new AdmZip(zipPath);
+  const legacyFilenameDecoder = new TextDecoder("gb18030");
+  const zip = new AdmZip(zipPath, {
+    decoder: {
+      efs: false,
+      encode: (value: string) => Buffer.from(value, "utf8"),
+      decode: (value: Buffer) => {
+        const utf8 = value.toString("utf8");
+        return utf8.includes("\uFFFD") ? legacyFilenameDecoder.decode(value) : utf8;
+      },
+    },
+  });
   ensureDir(destDir);
   const resolvedDest = path.resolve(destDir);
   let written = 0;
@@ -198,6 +208,79 @@ export function extractZipSafely(zipPath: string, destDir: string): number {
     }
   }
   return written;
+}
+
+const LIVE2D_REFERENCE_SUFFIXES = [
+  ".model3.json",
+  ".model.json",
+  ".physics3.json",
+  ".cdi3.json",
+  ".moc3",
+  ".8192",
+];
+
+function collectLive2DReferences(value: unknown, key = ""): string[] {
+  if (typeof value === "string" && (key === "Moc" || key === "Physics" || key === "DisplayInfo" || key === "Textures" || key === "File")) {
+    return [value];
+  }
+  if (Array.isArray(value)) return value.flatMap((item) => collectLive2DReferences(item, key));
+  if (value && typeof value === "object") {
+    return Object.entries(value).flatMap(([childKey, childValue]) => collectLive2DReferences(childValue, childKey));
+  }
+  return [];
+}
+
+function live2DReferenceSuffix(name: string): string {
+  const lower = name.toLowerCase();
+  return LIVE2D_REFERENCE_SUFFIXES.find((suffix) => lower.endsWith(suffix)) ?? path.extname(lower);
+}
+
+export function repairLive2DModelReferences(modelJsonPath: string): number {
+  if (!fs.existsSync(modelJsonPath)) return 0;
+  const root = path.dirname(modelJsonPath);
+  let model: unknown;
+  try {
+    model = JSON.parse(fs.readFileSync(modelJsonPath, "utf8"));
+  } catch {
+    return 0;
+  }
+  let repaired = 0;
+  for (const reference of collectLive2DReferences(model)) {
+    if (!reference || reference.includes("://") || path.isAbsolute(reference)) continue;
+    const expected = path.resolve(root, reference);
+    const relative = path.relative(root, expected);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) continue;
+    let currentDir = root;
+    for (const segment of relative.split(path.sep)) {
+      const target = path.join(currentDir, segment);
+      if (fs.existsSync(target)) {
+        currentDir = target;
+        continue;
+      }
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(currentDir, { withFileTypes: true });
+      } catch {
+        break;
+      }
+      const isDirectorySegment = target !== expected;
+      const expectedSuffix = live2DReferenceSuffix(segment);
+      const candidates = entries
+        .filter((entry) => entry.name.includes("\uFFFD"))
+        .filter((entry) => entry.name.toLowerCase().endsWith(expectedSuffix))
+        .filter((entry) => isDirectorySegment ? entry.isDirectory() : entry.isFile())
+        .map((entry) => path.join(currentDir, entry.name));
+      if (candidates.length !== 1) break;
+      try {
+        fs.renameSync(candidates[0], target);
+        repaired += 1;
+        currentDir = target;
+      } catch {
+        break;
+      }
+    }
+  }
+  return repaired;
 }
 
 /**

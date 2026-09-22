@@ -9,17 +9,31 @@
   },
   "main": "dist/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "node scripts/build-native.mjs && electron-vite dev",
     "start": "electron dist/main/index.js",
-    "build": "electron-vite build",
+    "build": "node scripts/build-native.mjs && electron-vite build",
     "typecheck": "vue-tsc --noEmit",
     "test:unit": "vitest run --environment node",
+    "test:evaluation": "vitest run --config vitest.evaluation.config.ts --reporter verbose",
     "lint": "eslint . --ext .ts,.vue",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "build:native": "node scripts/build-native.mjs"
   },
   "dependencies": {
+    "@codemirror/lang-css": "^6.3.1",
+    "@codemirror/lang-html": "^6.4.12",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/merge": "^6.12.2",
+    "@codemirror/state": "^6.7.5",
+    "@codemirror/view": "^6.43.12",
+    "@phosphor-icons/vue": "^2.2.0",
     "@syntax-senpai/agent-tools": "workspace:*",
     "@syntax-senpai/ai-core": "workspace:*",
+    "@syntax-senpai/game-engine": "workspace:*",
     "@syntax-senpai/logger": "workspace:*",
     "@syntax-senpai/storage": "workspace:*",
     "@syntax-senpai/ui": "workspace:*",
@@ -29,20 +43,23 @@
     "@syntax-senpai/wechat-ilink": "workspace:*",
     "@syntax-senpai/ws-protocol": "workspace:*",
     "@vueuse/core": "^14.2.1",
+    "diff": "^9.0.0",
     "electron-squirrel-startup": "^1.0.1",
     "html-to-image": "^1.11.13",
     "keytar": "^7.9.0",
-    "pixi.js": "^6.5.10",
-    "pixi-live2d-display": "^0.4.0",
     "pinia": "^3.0.2",
+    "pixi-live2d-display": "^0.4.0",
+    "pixi.js": "^6.5.10",
+    "qrcode": "^1.5.3",
     "vue": "^3.5.13",
-    "ws": "^8.21.0",
-    "qrcode": "^1.5.3"
+    "ws": "^8.21.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/diff": "^8.0.0",
     "@types/node": "^20.0.0",
-    "@types/ws": "^8.5.0",
     "@types/qrcode": "^1.5.5",
+    "@types/ws": "^8.5.0",
     "@unocss/reset": "^66.6.7",
     "@vitejs/plugin-vue": "^6.0.5",
     "electron": "^39.8.5",
@@ -74,9 +91,15 @@
       }
     ],
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.developer-tools",
-      "icon": "build/icon.icns"
+      "icon": "build/icon.icns",
+      "binaries": [
+        "resources/native/syntax-computer"
+      ]
     },
     "win": {
       "icon": "build/icon.ico"

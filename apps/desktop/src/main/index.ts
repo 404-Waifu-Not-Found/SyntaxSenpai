@@ -19,8 +19,9 @@ if (typeof electronModule === 'string') {
 }
 
 const { app, BrowserWindow, ipcMain, clipboard, globalShortcut, Tray, Menu, nativeImage, screen, protocol: earlyProtocol } = electronModule
-const { join } = require('path')
+const { join, resolve, sep } = require('path')
 const fs = require('fs')
+if (process.env.SYNTAX_SENPAI_DATA_DIR) { fs.mkdirSync(process.env.SYNTAX_SENPAI_DATA_DIR, { recursive: true }); app.setPath('userData', process.env.SYNTAX_SENPAI_DATA_DIR) }
 
 // Register `userdata://` as a standard, fetch-capable, secure scheme BEFORE
 // app is ready. Without this, the scheme is treated as opaque — relative URL
@@ -58,11 +59,13 @@ import { registerExportIpc } from './ipc/export'
 import { registerWsIpc } from './ipc/ws'
 import { registerPluginsIpc } from './ipc/plugins'
 import { registerWaifusIpc } from './ipc/waifus'
-import { registerStrictModeIpc } from './ipc/strict-mode'
+import { registerPolicyIpc } from './agent/policy'
+import { registerRunService } from './agent/run-service'
 import { registerLogIpc } from './ipc/log'
 import { registerRepositoryIpc } from './ipc/repository'
 import { registerSkillsIpc } from './ipc/skills'
 import { registerPendingPluginsIpc } from './ipc/pending-plugins'
+import { registerTtsIpc } from './ipc/tts'
 import { registerWechatIpc, autoResumeBot as autoResumeWechatBot } from './ipc/wechat'
 import { registerBrowserIpc, isAllowedBrowserUrl, BROWSER_PARTITION } from './ipc/browser'
 import { startWsServer } from './ws-server'
@@ -71,6 +74,8 @@ import { mainLogger } from './logger'
 const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow: any = null
+let gameWindow: any = null
+let pendingGameSnapshot: any = null
 let tray: any = null
 let currentWindowFrameless = false
 
@@ -384,6 +389,58 @@ function registerGlobalShortcuts() {
   }
 }
 
+function sendGameSnapshot(snapshot: any) {
+  pendingGameSnapshot = snapshot ?? null
+  if (!gameWindow || gameWindow.isDestroyed()) return
+  if (gameWindow.webContents.isLoadingMainFrame()) return
+  gameWindow.webContents.send('game:session', pendingGameSnapshot)
+}
+
+function createGameWindow(snapshot?: any) {
+  if (snapshot) pendingGameSnapshot = snapshot
+
+  if (gameWindow && !gameWindow.isDestroyed()) {
+    gameWindow.show()
+    gameWindow.focus()
+    sendGameSnapshot(pendingGameSnapshot)
+    return
+  }
+
+  gameWindow = new BrowserWindow({
+    width: 960,
+    height: 800,
+    minWidth: 680,
+    minHeight: 600,
+    title: 'SyntaxSenpai Games',
+    backgroundColor: '#071511',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+
+  gameWindow.webContents.on('did-finish-load', () => {
+    if (pendingGameSnapshot) gameWindow?.webContents.send('game:session', pendingGameSnapshot)
+  })
+
+  gameWindow.on('closed', () => {
+    gameWindow = null
+    pendingGameSnapshot = null
+    mainWindow?.webContents.send('game:window-closed')
+  })
+
+  if (isDev) {
+    gameWindow.loadURL('http://localhost:5173/game.html')
+  } else {
+    gameWindow.loadFile(join(__dirname, '../renderer/game.html'))
+  }
+  gameWindow.show()
+  gameWindow.focus()
+}
+
 function createWindow(forcedMode?: WindowMode): void {
   if (!windowState) windowState = loadWindowState()
   const mode = forcedMode
@@ -599,6 +656,39 @@ ipcMain.handle('window:setOverlayMode', (_e: any, enabled: boolean) => {
   }
 })
 
+// Game sessions are authoritative in the main renderer because the agent
+// tools run there. The dedicated game window is a view/controller surface:
+// snapshots flow out to it and human moves flow back to the main renderer.
+ipcMain.handle('game:openWindow', (_e: any, snapshot: any) => {
+  try {
+    createGameWindow(snapshot)
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+ipcMain.handle('game:getSession', () => pendingGameSnapshot)
+
+ipcMain.handle('game:closeWindow', () => {
+  try {
+    if (gameWindow && !gameWindow.isDestroyed()) gameWindow.close()
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+ipcMain.on('game:session:update', (_e: any, snapshot: any) => {
+  sendGameSnapshot(snapshot)
+})
+
+ipcMain.on('game:move', (_e: any, move: string) => {
+  if (typeof move === 'string' && move.trim()) {
+    mainWindow?.webContents.send('game:move', move)
+  }
+})
+
 app.whenReady().then(() => {
   windowState = loadWindowState()
 
@@ -606,12 +696,44 @@ app.whenReady().then(() => {
   // from userData via fetch() regardless of whether the window was loaded
   // from the Vite dev server (http://) or a file:// origin (production).
   // Maps userdata://<relative-path> to <userData>/<relative-path>.
-  const { protocol, net } = electronModule
-  const { pathToFileURL: ptfu } = require('node:url')
-  protocol.handle('userdata', (request: any) => {
-    const relPath = decodeURIComponent(request.url.replace(/^userdata:\/\//, ''))
-    const absPath = join(app.getPath('userData'), relPath)
-    return net.fetch(ptfu(absPath).toString())
+  const { protocol } = electronModule
+  const contentTypes: Record<string, string> = {
+    '.json': 'application/json; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.moc3': 'application/octet-stream',
+    '.motion3.json': 'application/json; charset=utf-8',
+    '.exp3.json': 'application/json; charset=utf-8',
+    '.physics3.json': 'application/json; charset=utf-8',
+    '.cdi3.json': 'application/json; charset=utf-8',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+  }
+  protocol.handle('userdata', async (request: any) => {
+    try {
+      const parsed = new URL(request.url)
+      const relPath = decodeURIComponent(`${parsed.host}${parsed.pathname}`).replace(/^\/+/, '')
+      const userDataRoot = resolve(app.getPath('userData'))
+      const absPath = resolve(userDataRoot, relPath)
+      if (absPath === userDataRoot || !absPath.startsWith(`${userDataRoot}${sep}`)) {
+        return new Response('Not found', { status: 404 })
+      }
+      const body = await fs.promises.readFile(absPath)
+      const lowerPath = absPath.toLowerCase()
+      const contentType = Object.entries(contentTypes)
+        .find(([extension]) => lowerPath.endsWith(extension))?.[1]
+        ?? 'application/octet-stream'
+      return new Response(body, {
+        status: 200,
+        headers: {
+          'Content-Type': contentType,
+          'Cache-Control': 'no-store',
+        },
+      })
+    } catch {
+      return new Response('Not found', { status: 404 })
+    }
   })
 
   createWindow()
@@ -638,11 +760,13 @@ app.whenReady().then(() => {
   registerWsIpc()
   registerPluginsIpc()
   registerWaifusIpc()
-  registerStrictModeIpc()
+  registerPolicyIpc()
+  registerRunService()
   registerLogIpc()
   registerRepositoryIpc()
   registerSkillsIpc()
   registerPendingPluginsIpc()
+  registerTtsIpc()
   registerWechatIpc()
   registerBrowserIpc()
   startWsServer().catch((err) => mainLogger.error({ err }, 'ws-server failed to start'))

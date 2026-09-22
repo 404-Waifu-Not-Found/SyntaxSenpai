@@ -59,6 +59,7 @@ export type JsonSchema = JsonSchemaProperty;
  * Tool definition sent to the AI provider
  */
 export interface ToolDefinition {
+  execution?: { access: "read" | "write"; scope: "file" | "workspace" | "network" | "desktop" | "process"; lane?: "tool" | "process" | "desktop" };
   name: string;
   description: string;
   parameters: JsonSchema;

@@ -666,6 +666,8 @@ ipcMain.handle('game:openWindow', (_e: any, snapshot: any) => {
   }
 })
 
+ipcMain.handle('game:getSession', () => pendingGameSnapshot)
+
 ipcMain.handle('game:closeWindow', () => {
   try {
     if (gameWindow && !gameWindow.isDestroyed()) gameWindow.close()

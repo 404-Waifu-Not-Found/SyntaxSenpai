@@ -25,6 +25,11 @@ let removeSessionListener: (() => void) | undefined
 
 onMounted(() => {
   removeSessionListener = getIpc()?.on('game:session', handleSession)
+  void getIpc()?.invoke('game:getSession').then((pending: GameSnapshot | null) => {
+    if (pending) handleSession(pending)
+  }).catch(() => {
+    // The main process may be closing during app shutdown.
+  })
 })
 
 onUnmounted(() => {

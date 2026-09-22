@@ -9,6 +9,8 @@ import { createLogger } from '../composables/logger'
 import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, SET_EXPRESSION_TOOL_NAME, TODO_WRITE_TOOL_NAME, TODO_READ_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, GAME_START_TOOL_NAME, GAME_MOVE_TOOL_NAME, GAME_STATE_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, CARD_MARKER_FENCE, consumePendingBrowserScreenshot, modelSupportsVision, type AgentMode, type RenderCardPayload, type RenderCardType, type TodoItem } from '../agent-tools'
 import { useBrowserStore } from './browser'
 import { runAgentTurn, type SideEffectResult } from '../agent/run-turn'
+import { detectGameLaunchIntent } from '../game/intent'
+import { startGameSession } from '../game/session'
 import {
   dispatchSubagents,
   type SubagentSnapshot,
@@ -458,6 +460,10 @@ function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: s
   // 这段提示词专门约束 agent 如何选工具、何时停止重试以及何时必须先验证结果。
   return `\n\n[Agent Behavior]
 You can act on the user's machine through tools. Your goal is to actually finish the task, verified, not to sound like you finished it.
+
+Game UI rule:
+- When the user asks to play Tic-Tac-Toe, Connect Four, or chess, call game_start immediately before replying. This opens a separate, interactable desktop game window. Never replace it with an ASCII board or instructions to type a square number. After game_start, briefly acknowledge that the window is open and let the user play by clicking it.
+- When a human move makes it the agent's turn, call game_move with move="best" and then make a brief remark. The game engine is authoritative; never invent a board or move.
 
 Tool selection — use the dedicated tool, not a shell workaround:
 - terminal → running programs, git, installs, diagnostics, network checks, realtime data via public APIs, command-line verification. NOT for reading, editing, searching, or listing files.
@@ -3568,6 +3574,27 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
       // Refresh sidebar immediately so the new conversation is visible
       if (isNewConversation) await loadConversations()
 
+      // A clear game request should always produce the playable desktop GUI,
+      // even when a provider chooses to answer conversationally instead of
+      // emitting game_start. Game-originated events are excluded so a human
+      // click does not restart the session that is already open.
+      const gameIntent = opts.source === 'game' ? null : detectGameLaunchIntent(trimmedText)
+      let launchedGame: ReturnType<typeof startGameSession> | null = null
+      if (gameIntent) {
+        try {
+          launchedGame = startGameSession(gameIntent.kind, {
+            difficulty: gameIntent.difficulty,
+            humanSide: gameIntent.humanSide,
+            humanStarts: gameIntent.humanStarts,
+          })
+        } catch (err) {
+          chatLog.warn('failed to open requested game window', {
+            kind: gameIntent.kind,
+            message: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+
       const key = await keyManager.getKey(selectedProvider.value)
       const providerConfig = getProviderConfig(selectedProvider.value, key)
       const waifu = selectedWaifu.value
@@ -3598,6 +3625,9 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
       systemPrompt += activeCodingRepo.value
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(trimmedText)
+      if (launchedGame) {
+        systemPrompt += `\n\n[Game UI already open]\nThe app has already opened the separate playable ${launchedGame.kind} window for this request. Do not call game_start again and do not render an ASCII board. Briefly tell the user the window is ready, then wait for their click. The authoritative opening state is ${JSON.stringify(launchedGame)}.`
+      }
 
       const browserStore = useBrowserStore()
       const visionCapable = modelSupportsVision(model)

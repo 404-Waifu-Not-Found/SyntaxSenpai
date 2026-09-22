@@ -696,18 +696,44 @@ app.whenReady().then(() => {
   // from userData via fetch() regardless of whether the window was loaded
   // from the Vite dev server (http://) or a file:// origin (production).
   // Maps userdata://<relative-path> to <userData>/<relative-path>.
-  const { protocol, net } = electronModule
-  const { pathToFileURL: ptfu } = require('node:url')
-  protocol.handle('userdata', (request: any) => {
-    const relPath = decodeURIComponent(
-      request.url.replace(/^userdata:\/\//, '').split(/[?#]/, 1)[0],
-    ).replace(/^\/+/, '')
-    const userDataRoot = resolve(app.getPath('userData'))
-    const absPath = resolve(userDataRoot, relPath)
-    if (absPath !== userDataRoot && !absPath.startsWith(`${userDataRoot}${sep}`)) {
+  const { protocol } = electronModule
+  const contentTypes: Record<string, string> = {
+    '.json': 'application/json; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.moc3': 'application/octet-stream',
+    '.motion3.json': 'application/json; charset=utf-8',
+    '.exp3.json': 'application/json; charset=utf-8',
+    '.physics3.json': 'application/json; charset=utf-8',
+    '.cdi3.json': 'application/json; charset=utf-8',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+  }
+  protocol.handle('userdata', async (request: any) => {
+    try {
+      const parsed = new URL(request.url)
+      const relPath = decodeURIComponent(`${parsed.host}${parsed.pathname}`).replace(/^\/+/, '')
+      const userDataRoot = resolve(app.getPath('userData'))
+      const absPath = resolve(userDataRoot, relPath)
+      if (absPath === userDataRoot || !absPath.startsWith(`${userDataRoot}${sep}`)) {
+        return new Response('Not found', { status: 404 })
+      }
+      const body = await fs.promises.readFile(absPath)
+      const lowerPath = absPath.toLowerCase()
+      const contentType = Object.entries(contentTypes)
+        .find(([extension]) => lowerPath.endsWith(extension))?.[1]
+        ?? 'application/octet-stream'
+      return new Response(body, {
+        status: 200,
+        headers: {
+          'Content-Type': contentType,
+          'Cache-Control': 'no-store',
+        },
+      })
+    } catch {
       return new Response('Not found', { status: 404 })
     }
-    return net.fetch(ptfu(absPath).toString())
   })
 
   createWindow()

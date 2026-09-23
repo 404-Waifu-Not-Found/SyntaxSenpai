@@ -41,6 +41,18 @@ describe('minigame engines', () => {
     expect(game.applyMove(move!, 'agent').moveCount).toBe(2)
   })
 
+  it('searches strong chess moves without changing the live position', () => {
+    const game = createGameController('chess', { difficulty: 'strong' })
+    game.applyMove('e2e4', 'human')
+    const before = game.snapshot()
+    const move = game.bestMove()
+
+    expect(move).toBeTruthy()
+    expect(before.legalMoves).toContain(move)
+    expect(game.snapshot()).toEqual(before)
+    expect(game.applyMove(move!, 'agent').moveCount).toBe(2)
+  })
+
   it('lets the engine open when the user elects to play second', () => {
     const game = createGameController('tictactoe', { humanStarts: false })
     expect(game.snapshot().turn).toBe('agent')

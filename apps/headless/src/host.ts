@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { createGameController, type GameController, type GameDifficulty, type GameKind } from '@syntax-senpai/game-engine/dist/index.js'
+import { createGameController, type GameController, type GameDifficulty, type GameKind, type GameSnapshot } from '@syntax-senpai/game-engine/dist/index.js'
 import type { AgentSessionHost } from '@syntax-senpai/agent-session/dist/index.js'
 import type { ToolCall } from '@syntax-senpai/ai-core/dist/index.js'
 import { agentTools } from '@syntax-senpai/agent-tools/dist/catalog.js'
@@ -18,6 +18,33 @@ export interface HeadlessState {
   expression: string | null
   clipboard?: string
   effects: Array<Record<string, unknown>>
+}
+
+export interface HumanGameMoveResult {
+  humanSnapshot: GameSnapshot
+  snapshot: GameSnapshot
+  agentMove: string | null
+}
+
+export interface HeadlessHost extends AgentSessionHost {
+  state: HeadlessState
+  playHumanMove(move: string): HumanGameMoveResult
+  getGameSnapshot(): GameSnapshot | null
+}
+
+// Do not advertise desktop-only integrations or simulated interactions as
+// working headless tools. Read-only HTML navigation remains available.
+const unavailableTools = new Set([
+  'lsp_diagnostics', 'lsp_hover',
+  'browser_act', 'browser_click', 'browser_type', 'browser_scroll', 'browser_wait', 'browser_screenshot',
+  'spotify_now_playing', 'spotify_control',
+  'wechat_list_peers', 'wechat_send', 'send_multi_messages',
+  'propose_tool', 'dispatch_subagents',
+  'process_read', 'process_write', 'process_stop',
+])
+
+export function isHeadlessToolAvailable(name: string): boolean {
+  return !unavailableTools.has(name) && !name.startsWith('computer_')
 }
 
 function argsOf(call: ToolCall): Record<string, any> {
@@ -253,15 +280,30 @@ async function terminal(command: string, cwd: string): Promise<string> {
   }
 }
 
-export function createHeadlessHost(options: { cwd?: string; state?: HeadlessState } = {}): AgentSessionHost & { state: HeadlessState } {
+export function createHeadlessHost(options: { cwd?: string; state?: HeadlessState } = {}): HeadlessHost {
   const cwd = options.cwd || process.cwd()
   const state = options.state || { todos: [], affection: 50, expression: null, clipboard: '', effects: [] }
   let game: GameController | null = null
   const browser = new HeadlessBrowser()
   const skillsRoot = path.join(cwd, '.syntax-senpai-headless', 'skills')
 
-  const host: AgentSessionHost & { state: HeadlessState } = {
+  const host: HeadlessHost = {
     state,
+    getGameSnapshot: () => game?.snapshot() ?? null,
+    playHumanMove(move) {
+      if (!game) throw new Error('No minigame is currently open.')
+      const humanSnapshot = game.applyMove(move, 'human')
+      state.effects.push({ type: 'game_session', action: 'human_move', snapshot: humanSnapshot })
+      let snapshot = humanSnapshot
+      let agentMove: string | null = null
+      if (humanSnapshot.turn === 'agent') {
+        agentMove = game.bestMove()
+        if (!agentMove) throw new Error('The engine has no legal move in this position.')
+        snapshot = game.applyMove(agentMove, 'agent')
+        state.effects.push({ type: 'game_session', action: 'agent_move', snapshot })
+      }
+      return { humanSnapshot, snapshot, agentMove }
+    },
     conversation: {
       getTitle: () => state.title,
       rename: async (title) => {
@@ -283,6 +325,7 @@ export function createHeadlessHost(options: { cwd?: string; state?: HeadlessStat
       username: os.userInfo().username,
     },
     async executeTool(call) {
+      if (!isHeadlessToolAvailable(call.name)) return `Error: ${call.name} is not available in the headless host.`
       const args = argsOf(call)
       try {
         switch (call.name) {
@@ -369,10 +412,6 @@ export function createHeadlessHost(options: { cwd?: string; state?: HeadlessStat
               await fs.rm(tempRoot, { recursive: true, force: true })
             }
           }
-          case 'lsp_diagnostics':
-            return `No diagnostics — the language server reports ${args.path} as clean.`
-          case 'lsp_hover':
-            return `No hover info at ${args.path}:${args.line}:${args.column} — the symbol wasn't recognized, or the server is still indexing.`
           case 'clipboard_read':
             return state.clipboard ? `Clipboard contents (${state.clipboard.length} chars):\n${state.clipboard}` : '(clipboard is empty)'
           case 'clipboard_write':
@@ -463,7 +502,7 @@ export function createHeadlessHost(options: { cwd?: string; state?: HeadlessStat
           }
           case 'tool_search': {
             const query = String(args.query || '').toLowerCase()
-            const matches = agentTools.filter((tool) => `${tool.name} ${tool.description}`.toLowerCase().includes(query)).slice(0, 20)
+            const matches = agentTools.filter((tool) => isHeadlessToolAvailable(tool.name) && `${tool.name} ${tool.description}`.toLowerCase().includes(query)).slice(0, 20)
             return matches.length ? `Matching tools:\n${matches.map((tool) => `- ${tool.name}: ${tool.description}`).join('\n')}` : `No optional tools matched "${args.query}".`
           }
           case 'spotify_now_playing':

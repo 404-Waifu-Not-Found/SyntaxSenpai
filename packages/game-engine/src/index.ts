@@ -166,6 +166,18 @@ class TicTacToeController implements GameController {
 type ConnectCell = 'empty' | 'human' | 'agent'
 const CONNECT_ROWS = 6
 const CONNECT_COLUMNS = 7
+const CONNECT_WINDOWS: readonly (readonly number[])[] = (() => {
+  const windows: number[][] = []
+  for (let row = 0; row < CONNECT_ROWS; row++) {
+    for (let column = 0; column < CONNECT_COLUMNS; column++) {
+      if (column <= CONNECT_COLUMNS - 4) windows.push([0, 1, 2, 3].map((offset) => row * CONNECT_COLUMNS + column + offset))
+      if (row <= CONNECT_ROWS - 4) windows.push([0, 1, 2, 3].map((offset) => (row + offset) * CONNECT_COLUMNS + column))
+      if (row <= CONNECT_ROWS - 4 && column <= CONNECT_COLUMNS - 4) windows.push([0, 1, 2, 3].map((offset) => (row + offset) * CONNECT_COLUMNS + column + offset))
+      if (row >= 3 && column <= CONNECT_COLUMNS - 4) windows.push([0, 1, 2, 3].map((offset) => (row - offset) * CONNECT_COLUMNS + column + offset))
+    }
+  }
+  return windows
+})()
 
 class ConnectFourController implements GameController {
   readonly kind = 'connect4' as const
@@ -293,14 +305,20 @@ class ConnectFourController implements GameController {
         if (cell === 'human') score -= column === 3 ? 5 : 1
       }
     }
-    for (const window of this.windows()) score += this.scoreWindow(window)
+    for (const window of CONNECT_WINDOWS) score += this.scoreWindow(window)
     return score
   }
 
-  private scoreWindow(window: ConnectCell[]): number {
-    const agent = window.filter((cell) => cell === 'agent').length
-    const human = window.filter((cell) => cell === 'human').length
-    const empty = window.filter((cell) => cell === 'empty').length
+  private scoreWindow(window: readonly number[]): number {
+    let agent = 0
+    let human = 0
+    let empty = 0
+    for (const index of window) {
+      const cell = this.cells[index]
+      if (cell === 'agent') agent++
+      else if (cell === 'human') human++
+      else empty++
+    }
     if (agent === 4) return 100000
     if (human === 4) return -100000
     if (agent === 3 && empty === 1) return 50
@@ -308,19 +326,6 @@ class ConnectFourController implements GameController {
     if (human === 3 && empty === 1) return -60
     if (human === 2 && empty === 2) return -10
     return 0
-  }
-
-  private windows(): ConnectCell[][] {
-    const result: ConnectCell[][] = []
-    for (let row = 0; row < CONNECT_ROWS; row++) {
-      for (let column = 0; column < CONNECT_COLUMNS; column++) {
-        if (column <= CONNECT_COLUMNS - 4) result.push([0, 1, 2, 3].map((offset) => this.cells[row * CONNECT_COLUMNS + column + offset]))
-        if (row <= CONNECT_ROWS - 4) result.push([0, 1, 2, 3].map((offset) => this.cells[(row + offset) * CONNECT_COLUMNS + column]))
-        if (row <= CONNECT_ROWS - 4 && column <= CONNECT_COLUMNS - 4) result.push([0, 1, 2, 3].map((offset) => this.cells[(row + offset) * CONNECT_COLUMNS + column + offset]))
-        if (row >= 3 && column <= CONNECT_COLUMNS - 4) result.push([0, 1, 2, 3].map((offset) => this.cells[(row - offset) * CONNECT_COLUMNS + column + offset]))
-      }
-    }
-    return result
   }
 
   private hasFour(row: number, column: number, side: ConnectCell): boolean {
@@ -419,33 +424,51 @@ class ChessController implements GameController {
     if (this.game.isGameOver() || (this.game.turn() === this.humanSide ? 'human' : 'agent') !== 'agent') return null
     if (this.difficulty === 'casual') return randomItem(this.game.moves())
     const depth = this.difficulty === 'strong' ? 3 : 2
-    const moves = this.game.moves({ verbose: true })
+    // Search on one copy. Reconstructing a Chess instance from FEN at every
+    // node dominated move time, especially on the strong setting.
+    const position = new Chess(this.game.fen())
+    const moves = this.orderMoves(position.moves({ verbose: true }))
     let best: ChessMove | null = null
     let bestScore = -Infinity
+    let alpha = -Infinity
     for (const move of moves) {
-      const child = new Chess(this.game.fen())
-      child.move({ from: move.from, to: move.to, promotion: move.promotion })
-      const score = this.search(child, depth - 1, false)
+      position.move({ from: move.from, to: move.to, promotion: move.promotion })
+      const score = this.search(position, depth - 1, false, alpha, Infinity)
+      position.undo()
       if (score > bestScore) {
         bestScore = score
         best = move
       }
+      alpha = Math.max(alpha, bestScore)
     }
     return best?.san ?? null
   }
 
-  private search(position: Chess, depth: number, maximizing: boolean): number {
+  private search(position: Chess, depth: number, maximizing: boolean, alpha: number, beta: number): number {
     if (position.isCheckmate()) return position.turn() === this.humanSide ? 100000 : -100000
     if (position.isGameOver() || depth <= 0) return this.evaluate(position)
-    const moves = position.moves({ verbose: true })
+    const moves = this.orderMoves(position.moves({ verbose: true }))
     let result = maximizing ? -Infinity : Infinity
     for (const move of moves) {
-      const child = new Chess(position.fen())
-      child.move({ from: move.from, to: move.to, promotion: move.promotion })
-      const score = this.search(child, depth - 1, !maximizing)
+      position.move({ from: move.from, to: move.to, promotion: move.promotion })
+      const score = this.search(position, depth - 1, !maximizing, alpha, beta)
+      position.undo()
       result = maximizing ? Math.max(result, score) : Math.min(result, score)
+      if (maximizing) alpha = Math.max(alpha, result)
+      else beta = Math.min(beta, result)
+      if (alpha >= beta) break
     }
     return result
+  }
+
+  private orderMoves(moves: ChessMove[]): ChessMove[] {
+    const values: Record<PieceSymbol, number> = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 }
+    return moves.sort((a, b) => {
+      const score = (move: ChessMove) =>
+        (move.captured ? 10_000 + values[move.captured] - values[move.piece] / 10 : 0) +
+        (move.promotion ? values[move.promotion] : 0)
+      return score(b) - score(a)
+    })
   }
 
   private evaluate(position: Chess): number {

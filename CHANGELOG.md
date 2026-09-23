@@ -12,6 +12,9 @@ Format roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Desktop full backup/import for chats, settings, skills, waifus, provider keys, and Live2D files.
 
 ### Fixed
+- Strong chess move selection now searches one position with make/undo and alpha-beta pruning, preserving search depth while cutting opening move latency.
+- Headless now accepts human game moves and engine replies, omits failed turns from later history, rejects exhausted scripted fixtures, and stops reporting fake language-server/browser interactions.
+- Headless JSONL responses now default to per-turn message/effect deltas; request `includeHistory` for full state.
 - WeChat image upload now handles full URLs and opaque upload parameters, reports structured upload failures, and can fall back to chunked text when image delivery fails. Live peer delivery still needs verification.
 
 ### Documentation

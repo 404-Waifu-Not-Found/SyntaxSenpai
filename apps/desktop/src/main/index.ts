@@ -56,6 +56,7 @@ import { registerSearchIpc } from './ipc/search'
 import { registerLspIpc } from './ipc/lsp'
 import { registerSpotifyIpc } from './ipc/spotify'
 import { registerExportIpc } from './ipc/export'
+import { registerFullBackupIpc } from './ipc/full-backup'
 import { registerWsIpc } from './ipc/ws'
 import { registerPluginsIpc } from './ipc/plugins'
 import { registerWaifusIpc } from './ipc/waifus'
@@ -74,8 +75,9 @@ import { mainLogger } from './logger'
 const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow: any = null
-let gameWindow: any = null
-let pendingGameSnapshot: any = null
+let live2dWindow: any = null
+let pendingLive2DSession: any = null
+let pendingLive2DSpeech: any = null
 let tray: any = null
 let currentWindowFrameless = false
 
@@ -389,31 +391,59 @@ function registerGlobalShortcuts() {
   }
 }
 
-function sendGameSnapshot(snapshot: any) {
-  pendingGameSnapshot = snapshot ?? null
-  if (!gameWindow || gameWindow.isDestroyed()) return
-  if (gameWindow.webContents.isLoadingMainFrame()) return
-  gameWindow.webContents.send('game:session', pendingGameSnapshot)
+function listLive2DDisplays() {
+  return screen.getAllDisplays().map((display: any, index: number) => ({
+    id: String(display.id),
+    label: display.id === screen.getPrimaryDisplay().id ? 'Main display' : `Display ${index + 1}`,
+    primary: display.id === screen.getPrimaryDisplay().id,
+    bounds: {
+      x: display.bounds.x,
+      y: display.bounds.y,
+      width: display.bounds.width,
+      height: display.bounds.height,
+    },
+    scaleFactor: display.scaleFactor,
+  }))
 }
 
-function createGameWindow(snapshot?: any) {
-  if (snapshot) pendingGameSnapshot = snapshot
+function sendLive2DEvent(channel: string, payload: any) {
+  if (!live2dWindow || live2dWindow.isDestroyed() || live2dWindow.webContents.isLoadingMainFrame()) return
+  live2dWindow.webContents.send(channel, payload)
+}
 
-  if (gameWindow && !gameWindow.isDestroyed()) {
-    gameWindow.show()
-    gameWindow.focus()
-    sendGameSnapshot(pendingGameSnapshot)
-    return
+function createLive2DWindow(session: any) {
+  pendingLive2DSession = session
+  const displays = listLive2DDisplays()
+  const selected = displays.find((display: any) => display.id === String(session?.displayId))
+    || displays.find((display: any) => display.primary)
+    || displays[0]
+  if (!selected) throw new Error('No display is available for immersive Live2D mode')
+
+  const bounds = selected.bounds
+  if (live2dWindow && !live2dWindow.isDestroyed()) {
+    if (live2dWindow.isFullScreen()) live2dWindow.setFullScreen(false)
+    live2dWindow.setBounds(bounds)
+    live2dWindow.show()
+    live2dWindow.setFullScreen(true)
+    live2dWindow.focus()
+    sendLive2DEvent('live2d:session', pendingLive2DSession)
+    if (pendingLive2DSpeech) sendLive2DEvent('live2d:speech', pendingLive2DSpeech)
+    return selected
   }
 
-  gameWindow = new BrowserWindow({
-    width: 960,
-    height: 800,
-    minWidth: 680,
-    minHeight: 600,
-    title: 'SyntaxSenpai Games',
-    backgroundColor: '#071511',
+  live2dWindow = new BrowserWindow({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    title: 'SyntaxSenpai Live2D',
+    frame: false,
     autoHideMenuBar: true,
+    backgroundColor: '#071511',
+    resizable: false,
+    minimizable: true,
+    fullscreenable: true,
+    acceptFirstMouse: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -422,23 +452,21 @@ function createGameWindow(snapshot?: any) {
     },
   })
 
-  gameWindow.webContents.on('did-finish-load', () => {
-    if (pendingGameSnapshot) gameWindow?.webContents.send('game:session', pendingGameSnapshot)
+  live2dWindow.webContents.on('did-finish-load', () => {
+    sendLive2DEvent('live2d:session', pendingLive2DSession)
+    if (pendingLive2DSpeech) sendLive2DEvent('live2d:speech', pendingLive2DSpeech)
+    live2dWindow?.setFullScreen(true)
+  })
+  live2dWindow.on('closed', () => {
+    live2dWindow = null
+    mainWindow?.webContents.send('live2d:window-closed')
   })
 
-  gameWindow.on('closed', () => {
-    gameWindow = null
-    pendingGameSnapshot = null
-    mainWindow?.webContents.send('game:window-closed')
-  })
-
-  if (isDev) {
-    gameWindow.loadURL('http://localhost:5173/game.html')
-  } else {
-    gameWindow.loadFile(join(__dirname, '../renderer/game.html'))
-  }
-  gameWindow.show()
-  gameWindow.focus()
+  if (isDev) live2dWindow.loadURL('http://localhost:5173/live2d.html')
+  else live2dWindow.loadFile(join(__dirname, '../renderer/live2d.html'))
+  live2dWindow.show()
+  live2dWindow.focus()
+  return selected
 }
 
 function createWindow(forcedMode?: WindowMode): void {
@@ -460,6 +488,7 @@ function createWindow(forcedMode?: WindowMode): void {
     transparent: shouldUseTransparentWindow(mode),
     backgroundColor: shouldUseTransparentWindow(mode) ? '#00000000' : '#10131c',
     frame: !shouldUseFramelessWindow(mode),
+    hasShadow: mode !== 'overlay',
     maximizable: mode !== 'overlay',
     fullscreenable: mode !== 'overlay',
     minWidth: mode === 'overlay' ? OVERLAY_WINDOW_MIN_WIDTH : NORMAL_WINDOW_MIN_WIDTH,
@@ -480,6 +509,12 @@ function createWindow(forcedMode?: WindowMode): void {
     }
   })
   mainWindow = createdWindow
+
+  createdWindow.on('minimize', (event: any) => {
+    if (mode !== 'overlay') return
+    event.preventDefault()
+    createdWindow.showInactive()
+  })
 
   // Lock down every <webview> the renderer attaches: sandboxed guest, no
   // node, no preload, http(s) only, and only our persistent browser session.
@@ -650,42 +685,82 @@ ipcMain.handle('window:setOverlayMode', (_e: any, enabled: boolean) => {
   try {
     if (!mainWindow) createWindow()
     applyWindowMode(enabled ? 'overlay' : 'normal')
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setIgnoreMouseEvents(false)
+    }
     return { success: true, mode: windowState.mode, enabled: windowState.mode === 'overlay' }
   } catch (err: any) {
     return { success: false, error: err?.message || String(err) }
   }
 })
 
-// Game sessions are authoritative in the main renderer because the agent
-// tools run there. The dedicated game window is a view/controller surface:
-// snapshots flow out to it and human moves flow back to the main renderer.
-ipcMain.handle('game:openWindow', (_e: any, snapshot: any) => {
+ipcMain.handle('live2d:listDisplays', () => {
   try {
-    createGameWindow(snapshot)
+    return { success: true, displays: listLive2DDisplays() }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+ipcMain.handle('live2d:openImmersive', (_e: any, session: any) => {
+  try {
+    if (!session || typeof session.modelPath !== 'string' || !session.modelPath.trim()) {
+      throw new Error('A Live2D model must be assigned before opening immersive mode')
+    }
+    const display = createLive2DWindow({
+      modelPath: session.modelPath,
+      displayName: String(session.displayName || 'Live2D'),
+      expression: String(session.expression || 'neutral'),
+      expressionRevision: Number(session.expressionRevision || 0),
+      motionMap: session.motionMap && typeof session.motionMap === 'object' ? session.motionMap : {},
+      modelScale: Number.isFinite(Number(session.modelScale)) ? Number(session.modelScale) : 1,
+      displayId: session.displayId == null ? undefined : String(session.displayId),
+    })
+    return { success: true, displayId: display.id, displays: listLive2DDisplays() }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+ipcMain.handle('live2d:closeImmersive', () => {
+  try {
+    if (live2dWindow && !live2dWindow.isDestroyed()) live2dWindow.close()
     return { success: true }
   } catch (err: any) {
     return { success: false, error: err?.message || String(err) }
   }
 })
 
-ipcMain.handle('game:getSession', () => pendingGameSnapshot)
-
-ipcMain.handle('game:closeWindow', () => {
+ipcMain.handle('live2d:exitFullscreen', () => {
   try {
-    if (gameWindow && !gameWindow.isDestroyed()) gameWindow.close()
+    if (live2dWindow && !live2dWindow.isDestroyed() && live2dWindow.isFullScreen()) {
+      live2dWindow.setFullScreen(false)
+    }
     return { success: true }
   } catch (err: any) {
     return { success: false, error: err?.message || String(err) }
   }
 })
 
-ipcMain.on('game:session:update', (_e: any, snapshot: any) => {
-  sendGameSnapshot(snapshot)
+ipcMain.handle('live2d:window-ready', () => {
+  sendLive2DEvent('live2d:session', pendingLive2DSession)
+  if (pendingLive2DSpeech) sendLive2DEvent('live2d:speech', pendingLive2DSpeech)
+  return { success: true }
 })
 
-ipcMain.on('game:move', (_e: any, move: string) => {
-  if (typeof move === 'string' && move.trim()) {
-    mainWindow?.webContents.send('game:move', move)
+ipcMain.handle('live2d:speech', (_e: any, payload: any) => {
+  try {
+    const text = String(payload?.text || '').trim()
+    if (!text) return { success: false, error: 'Speech text is empty' }
+    pendingLive2DSpeech = {
+      text: text.slice(0, 600),
+      expression: String(payload?.expression || 'neutral'),
+      createdAt: Date.now(),
+    }
+    sendLive2DEvent('live2d:speech', pendingLive2DSpeech)
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
   }
 })
 
@@ -712,6 +787,10 @@ app.whenReady().then(() => {
   }
   protocol.handle('userdata', async (request: any) => {
     try {
+      // URL parsing is important here: Chromium percent-encodes non-ASCII
+      // model filenames before the request reaches the custom protocol.
+      // Reading the file directly also avoids net.fetch(file://...) returning
+      // ERR_UNEXPECTED for binary assets such as .moc3 and large textures.
       const parsed = new URL(request.url)
       const relPath = decodeURIComponent(`${parsed.host}${parsed.pathname}`).replace(/^\/+/, '')
       const userDataRoot = resolve(app.getPath('userData'))
@@ -719,6 +798,7 @@ app.whenReady().then(() => {
       if (absPath === userDataRoot || !absPath.startsWith(`${userDataRoot}${sep}`)) {
         return new Response('Not found', { status: 404 })
       }
+
       const body = await fs.promises.readFile(absPath)
       const lowerPath = absPath.toLowerCase()
       const contentType = Object.entries(contentTypes)
@@ -757,6 +837,7 @@ app.whenReady().then(() => {
   registerLspIpc()
   registerSpotifyIpc()
   registerExportIpc()
+  registerFullBackupIpc()
   registerWsIpc()
   registerPluginsIpc()
   registerWaifusIpc()

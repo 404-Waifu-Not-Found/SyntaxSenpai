@@ -1,8 +1,8 @@
 import { createApp } from 'vue'
-import GameWindow from './GameWindow.vue'
+import Live2DImmersive from './components/Live2DImmersive.vue'
 
 import '@unocss/reset/tailwind.css'
 import 'uno.css'
 import '@syntax-senpai/ui/main.css'
 
-createApp(GameWindow).mount('#app')
+createApp(Live2DImmersive).mount('#live2d-app')

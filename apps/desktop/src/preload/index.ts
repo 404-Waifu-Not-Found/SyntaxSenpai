@@ -1,8 +1,7 @@
 const electronModule = require('electron')
 const { contextBridge, ipcRenderer } = electronModule
 
-type Listener = (...args: any[]) => void
-const listeners = new Map<string, Map<Listener, Listener>>()
+const listeners = new Map<string, Map<Function, Function>>()
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {
     send: (channel: string, ...args: any[]) => ipcRenderer.send(channel, ...args),

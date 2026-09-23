@@ -36,7 +36,7 @@ import AppAvatar from './components/AppAvatar.vue'
 import Live2DAvatar from './components/Live2DAvatar.vue'
 import DesktopPetOverlay from './components/DesktopPetOverlay.vue'
 import TypingDots from './components/TypingDots.vue'
-import MessageSkeleton from './components/MessageSkeleton.vue'
+import MiniGamePanel from './components/MiniGamePanel.vue'
 import QrPairModal from './components/QrPairModal.vue'
 import RepositoryPickerModal from './components/RepositoryPickerModal.vue'
 import SakuraPetals from './components/SakuraPetals.vue'
@@ -47,8 +47,8 @@ import WorkspacePanel from './components/WorkspacePanel.vue'
 import { useWorkspaceStore, codingIntent } from './stores/workspace'
 import { useBrowserStore } from './stores/browser'
 import type { ActiveCodingRepo } from './types/coding-session'
-import { gameSession, applyGameSessionMove, closeGameSession, startGameSession } from './game/session'
-import { gameMoveLabel } from '@syntax-senpai/game-engine'
+import { gameSession, applyBestAgentMove, applyGameSessionMove, closeGameSession, startGameSession } from './game/session'
+import { gameMoveLabel, type GameKind } from '@syntax-senpai/game-engine'
 
 const store = useChatStore()
 const workspace = useWorkspaceStore()
@@ -67,13 +67,17 @@ async function handleGameUserMove(move: string) {
   gameSession.busy = true
   try {
     const before = gameSession.snapshot
-    const snapshot = applyGameSessionMove(move, 'human')
+    const humanSnapshot = applyGameSessionMove(move, 'human')
+    // The engine owns the next move, so gameplay cannot stall on a failed or
+    // missing provider tool call. The agent still comments on the result.
+    const snapshot = humanSnapshot.turn === 'agent' ? applyBestAgentMove() : humanSnapshot
     const label = gameMoveLabel(before.kind, move)
     await store.sendGameEvent(
       `[Minigame event] The user just played ${label} in ${before.kind}. ` +
-      `The authoritative game state after that move is ${JSON.stringify(snapshot)}. ` +
-      `Do not invent a board or move. If the game is still playing and the state says it is the agent turn, call game_move with move="best" so the built-in engine chooses the move. ` +
-      `Then make a brief in-character remark about the position. If the game is over, comment on the result and do not call game_move.`,
+      `The built-in engine has already replied when it was the agent's turn. ` +
+      `The authoritative current game state is ${JSON.stringify(snapshot)}. ` +
+      `Do not invent a board or move, and do not call game_move for this turn. ` +
+      `Make a brief in-character remark about the position or, if the game is over, the result.`,
     )
   } catch (err: any) {
     showToast(err?.message || String(err), 'error')
@@ -196,11 +200,14 @@ async function submitRenameConversation() {
 // old thread starts at the tail, not wherever they paged to in another chat.
 // Also drop any expanded process panels — those decisions don't carry across
 // conversations.
+let replyStartIndex = store.messages.length
 watch(
   () => store.conversationId,
   () => {
     visibleMessageCount.value = MESSAGE_WINDOW_INITIAL
     expandedProcessGroups.value = new Set()
+    replyStartIndex = store.messages.length
+    clearLive2DSpeech()
   },
 )
 
@@ -208,23 +215,28 @@ function sentimentEmoji(expression: Expression): string {
   return EXPRESSION_EMOJI[expression] ?? EXPRESSION_EMOJI.neutral
 }
 
-// After each new assistant message lands (streaming done), speak it in
-// the waifu's voice and attach a sentiment result so the avatar mood-pip
-// reflects what was just said. Fires once per finalized message.
+// Classify every reply in a completed turn. Speak the last reply so multiple
+// final bubbles do not interrupt one another's audio playback.
 watch(
-  () => [store.messages.length, store.isLoading] as const,
-  ([len, loading], prev) => {
-    if (loading) return
-    const prevLen = prev ? (prev as any)[0] : 0
-    if (len <= prevLen) return
-    const last: any = store.messages[len - 1]
-    if (!last || last.role !== 'assistant' || !last.content) return
-    // Process-step bubbles (tool calls, intermediate reasoning) shouldn't drive
-    // sentiment or TTS — only the final reply should.
-    if (last.isProcessStep || (typeof last.id === 'string' && last.id.startsWith('tool-'))) return
+  () => store.isLoading,
+  (loading) => {
+    if (loading) {
+      replyStartIndex = store.messages.length
+      clearLive2DSpeech()
+      return
+    }
+    const replies = store.messages.slice(replyStartIndex).filter((message) =>
+      message.role === 'assistant' && message.content && !message.isProcessStep && !message.id.startsWith('tool-'),
+    )
+    replyStartIndex = store.messages.length
+    for (const reply of replies) reply.sentiment = classifySentiment(reply.content)
+    const last = replies.at(-1)
+    if (!last) return
     const content = String(last.content)
-    last.sentiment = classifySentiment(content)
-    voice.speak(content, store.selectedWaifuId, store.selectedWaifu, last.sentiment?.expression)
+    voice.speak(content, last.waifuId || store.selectedWaifuId, store.selectedWaifu, last.sentiment?.expression)
+    for (const reply of replies) {
+      showLive2DSpeech(reply.content, reply.sentiment?.expression || 'neutral', replies.length > 1 ? 3800 : undefined)
+    }
   },
 )
 const rainbowToggleBg = computed(() => {
@@ -985,6 +997,16 @@ async function deleteCustomWaifu(id: string) {
 }
 
 const overlayWindow = ref<{ enabled: boolean }>({ enabled: false })
+const WARTHUNDER_ENABLED_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-enabled'
+const WARTHUNDER_PROVIDER_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-provider'
+const WARTHUNDER_MODEL_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-model'
+const warThunderCopilotEnabled = ref(localStorage.getItem(WARTHUNDER_ENABLED_STORAGE_KEY) === 'true')
+const warThunderCopilotProvider = ref(localStorage.getItem(WARTHUNDER_PROVIDER_STORAGE_KEY) || store.selectedProvider)
+const warThunderCopilotModel = ref(localStorage.getItem(WARTHUNDER_MODEL_STORAGE_KEY) || store.selectedModel)
+let warThunderPluginReady = false
+let warThunderEventTimer: ReturnType<typeof setInterval> | null = null
+let warThunderEventPollInFlight = false
+const handledWarThunderEvents = new Set<string>()
 const fullscreenWindow = ref<{ enabled: boolean }>({ enabled: false })
 const currentWindowBounds = ref<{ width: number; height: number } | null>(null)
 const showCompactHeaderMenu = ref(false)
@@ -1054,6 +1076,95 @@ async function restoreNormalWindow() {
   if (!overlayWindow.value.enabled) return
   await toggleOverlayWindowMode()
 }
+
+async function syncWarThunderCopilot() {
+  if (!warThunderPluginReady) return
+  try {
+    await invoke('plugins:execTool', 'warthunder_copilot_control', {
+      enabled: overlayWindow.value.enabled && warThunderCopilotEnabled.value,
+      provider: warThunderCopilotProvider.value,
+      model: warThunderCopilotModel.value,
+    })
+  } catch {
+    // The optional plugin may be disabled or still loading.
+  }
+}
+
+async function pollWarThunderEvents() {
+  if (warThunderEventPollInFlight || !warThunderPluginReady || !overlayWindow.value.enabled || !warThunderCopilotEnabled.value) return
+  warThunderEventPollInFlight = true
+  try {
+    const result = await invoke('plugins:execTool', 'warthunder_copilot_status', {})
+    const events = Array.isArray(result?.data?.derivedEvents) ? result.data.derivedEvents : []
+    for (const event of events) {
+      const id = String(event?.id || '')
+      if (!id || handledWarThunderEvents.has(id)) continue
+      handledWarThunderEvents.add(id)
+      const detail = event.type === 'kill'
+        ? `击杀事件：${event.killer || '玩家'} ${event.action || '击毁'} ${event.victim || '目标'}`
+        : event.type === 'award'
+          ? `战斗嘉奖：${event.raw}`
+          : event.type === 'proximity'
+            ? `${event.raw}，距离约 ${event.distance}`
+            : `技术告警：${event.raw}`
+      await store.sendWarThunderEvent(detail, warThunderCopilotProvider.value, warThunderCopilotModel.value)
+      if (handledWarThunderEvents.size > 500) {
+        const retained = Array.from(handledWarThunderEvents).slice(-250)
+        handledWarThunderEvents.clear()
+        retained.forEach((eventId) => handledWarThunderEvents.add(eventId))
+      }
+    }
+  } catch {
+    // The optional plugin may be disabled or unavailable.
+  } finally {
+    warThunderEventPollInFlight = false
+  }
+}
+
+function startWarThunderEventPolling() {
+  if (warThunderEventTimer) return
+  warThunderEventTimer = setInterval(() => void pollWarThunderEvents(), 1200)
+}
+
+function stopWarThunderEventPolling() {
+  if (!warThunderEventTimer) return
+  clearInterval(warThunderEventTimer)
+  warThunderEventTimer = null
+}
+
+function setWarThunderCopilotEnabled(enabled: boolean) {
+  warThunderCopilotEnabled.value = enabled
+  localStorage.setItem(WARTHUNDER_ENABLED_STORAGE_KEY, enabled ? 'true' : 'false')
+  void syncWarThunderCopilot()
+}
+
+function setWarThunderCopilotProvider(provider: string) {
+  warThunderCopilotProvider.value = provider
+  localStorage.setItem(WARTHUNDER_PROVIDER_STORAGE_KEY, provider)
+  const available = providerModels.value[provider] || providerMetadata.find((item) => item.id === provider)?.models || []
+  if (!available.some((model) => model.id === warThunderCopilotModel.value)) {
+    setWarThunderCopilotModel(available[0]?.id || '')
+  } else {
+    void syncWarThunderCopilot()
+  }
+}
+
+function setWarThunderCopilotModel(model: string) {
+  warThunderCopilotModel.value = model
+  localStorage.setItem(WARTHUNDER_MODEL_STORAGE_KEY, model)
+  void syncWarThunderCopilot()
+}
+
+const warThunderCopilotModels = computed(() =>
+  providerModels.value[warThunderCopilotProvider.value] ||
+  providerMetadata.find((item) => item.id === warThunderCopilotProvider.value)?.models ||
+  [],
+)
+
+watch(
+  () => [overlayWindow.value.enabled, warThunderCopilotEnabled.value, warThunderCopilotProvider.value, warThunderCopilotModel.value],
+  () => void syncWarThunderCopilot(),
+)
 
 function openPetMiniGame() {
   if (!gameSession.open) startGameSession('tictactoe', { difficulty: 'balanced' })
@@ -1435,15 +1546,30 @@ function applyPreset(preset: typeof colorPresets[0]) {
 const sidebarOpen = ref(true)
 const showSettings = ref(false)
 const showLive2DPanel = ref(false)
+const showGamePicker = ref(false)
 const showGomokuPanel = ref(false)
 const showFateRoulettePanel = ref(false)
-const showGamePicker = ref(false)
+const hasEmbeddedGame = computed(() => gameSession.open || showGomokuPanel.value || showFateRoulettePanel.value)
 
-function openMiniGame(game: 'gomoku' | 'fate-roulette') {
+function openMiniGame(game: GameKind | 'gomoku' | 'fate-roulette') {
   showGamePicker.value = false
-  showGomokuPanel.value = game === 'gomoku'
-  showFateRoulettePanel.value = game === 'fate-roulette'
+  showGomokuPanel.value = false
+  showFateRoulettePanel.value = false
+  if (game === 'gomoku' || game === 'fate-roulette') {
+    closeGameSession()
+    showGomokuPanel.value = game === 'gomoku'
+    showFateRoulettePanel.value = game === 'fate-roulette'
+  } else {
+    startGameSession(game)
+  }
 }
+
+watch(() => gameSession.open, (open) => {
+  if (open) {
+    showGomokuPanel.value = false
+    showFateRoulettePanel.value = false
+  }
+})
 
 function shouldOpenGomokuForMessage(message: string): boolean {
   const normalized = message.trim().toLowerCase()
@@ -1461,11 +1587,8 @@ function shouldOpenFateRouletteForMessage(message: string): boolean {
 
 function submitChatMessage() {
   const message = store.inputValue
-  if (shouldOpenFateRouletteForMessage(message)) {
-    openMiniGame('fate-roulette')
-  } else if (shouldOpenGomokuForMessage(message)) {
-    openMiniGame('gomoku')
-  }
+  if (shouldOpenFateRouletteForMessage(message)) openMiniGame('fate-roulette')
+  else if (shouldOpenGomokuForMessage(message)) openMiniGame('gomoku')
   store.sendMessage(message)
 }
 
@@ -1480,18 +1603,29 @@ function loadDesktopPetPreferences() {
     const parsed = JSON.parse(localStorage.getItem('syntax-senpai-desktop-pet') || '{}')
     if (typeof parsed.locked === 'boolean') desktopPetLocked.value = parsed.locked
     if (typeof parsed.opacity === 'number') desktopPetBubbleOpacity.value = Math.min(Math.max(parsed.opacity, 0), 100)
-  } catch {
-    /* best effort */
-  }
+  } catch { /* best effort */ }
 }
 
 watch([desktopPetLocked, desktopPetBubbleOpacity], ([locked, opacity]) => {
   try {
     localStorage.setItem('syntax-senpai-desktop-pet', JSON.stringify({ locked, opacity }))
-  } catch {
-    /* best effort */
-  }
+  } catch { /* best effort */ }
 })
+const live2dSpeechBubble = ref('')
+let live2dSpeechTimer: number | null = null
+const live2dSpeechQueue: Array<{ text: string; expression: string; durationMs: number }> = []
+
+type Live2DDisplayOption = {
+  id: string
+  label: string
+  primary: boolean
+  bounds: { x: number; y: number; width: number; height: number }
+  scaleFactor: number
+}
+
+const live2dDisplays = ref<Live2DDisplayOption[]>([])
+const selectedLive2DDisplayId = ref('')
+const live2dImmersiveOpening = ref(false)
 
 const currentWaifuLive2D = computed(() => (store.selectedWaifu?.avatar as any)?.live2dModel ?? null)
 const latestAssistantMessage = computed(() => {
@@ -1501,6 +1635,76 @@ const latestAssistantMessage = computed(() => {
   }
   return ''
 })
+
+function clearLive2DSpeech() {
+  if (live2dSpeechTimer !== null) window.clearTimeout(live2dSpeechTimer)
+  live2dSpeechTimer = null
+  live2dSpeechQueue.length = 0
+  live2dSpeechBubble.value = ''
+}
+
+function playNextLive2DSpeech() {
+  const next = live2dSpeechQueue.shift()
+  if (!next) {
+    live2dSpeechBubble.value = ''
+    live2dSpeechTimer = null
+    return
+  }
+  live2dSpeechBubble.value = next.text.slice(0, 600)
+  void invoke('live2d:speech', { text: next.text, expression: next.expression })
+  live2dSpeechTimer = window.setTimeout(playNextLive2DSpeech, next.durationMs)
+}
+
+function showLive2DSpeech(text: string, expression: string, durationMs?: number) {
+  const trimmed = String(text || '').trim()
+  if (!trimmed) return
+  live2dSpeechQueue.push({ text: trimmed, expression, durationMs: durationMs ?? Math.min(12000, Math.max(4500, trimmed.length * 55)) })
+  if (live2dSpeechTimer === null) playNextLive2DSpeech()
+}
+
+async function refreshLive2DDisplays() {
+  try {
+    const result = await invoke('live2d:listDisplays')
+    if (!result?.success) return
+    live2dDisplays.value = Array.isArray(result.displays) ? result.displays : []
+    if (!live2dDisplays.value.some((display) => display.id === selectedLive2DDisplayId.value)) {
+      selectedLive2DDisplayId.value = live2dDisplays.value.find((display) => !display.primary)?.id
+        || live2dDisplays.value[0]?.id
+        || ''
+    }
+  } catch {
+    live2dDisplays.value = []
+  }
+}
+
+async function openImmersiveLive2D() {
+  if (!currentWaifuLive2D.value?.modelJsonPath) {
+    showToast('Assign a Live2D model before opening immersive mode.', 'error')
+    return
+  }
+  live2dImmersiveOpening.value = true
+  try {
+    const result = await invoke('live2d:openImmersive', {
+      modelPath: currentWaifuLive2D.value.modelJsonPath,
+      displayName: store.selectedWaifu?.displayName || 'Live2D',
+      expression: latestSentimentExpression.value,
+      expressionRevision: store.live2dExpressionRevision,
+      motionMap: currentWaifuLive2D.value.expressionMotions || {},
+      modelScale: 1,
+      displayId: selectedLive2DDisplayId.value || undefined,
+    })
+    if (result?.success) {
+      live2dDisplays.value = Array.isArray(result.displays) ? result.displays : live2dDisplays.value
+      showToast('Immersive Live2D opened on the selected display.', 'success')
+    } else {
+      showToast(result?.error || 'Could not open immersive Live2D.', 'error')
+    }
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  } finally {
+    live2dImmersiveOpening.value = false
+  }
+}
 
 // ── Floating Live2D panel placement ─────────────────────────────────────────
 const LIVE2D_PANEL_STORAGE_KEY = 'syntax-senpai-live2d-panel'
@@ -1998,6 +2202,7 @@ const newMemoryKey = ref('')
 const newMemoryValue = ref('')
 const newMemoryCategory = ref('general')
 const toast = ref<{ message: string; type: 'success' | 'error'; visible: boolean }>({ message: '', type: 'success', visible: false })
+const dataTransferBusy = ref(false)
 const showStartupSplash = ref(true)
 const appReady = ref(false)
 const startupAnimDone = ref(false)
@@ -2006,8 +2211,6 @@ let removeMobileChatListener: (() => void) | null = null
 let removeWechatInboundListener: (() => void) | null = null
 let removeWechatStatusListener: (() => void) | null = null
 let removeTrayNewChatListener: (() => void) | null = null
-let removeGameMoveListener: (() => void) | null = null
-let removeGameWindowClosedListener: (() => void) | null = null
 const wechatStatus = ref<{ connected: boolean; account: { userId: string; displayName: string | null } | null; lastError: string | null; pairing?: boolean }>({ connected: false, account: null, lastError: null })
 const THEME_STORAGE_KEY = 'syntax-senpai-theme'
 const API_TELEMETRY_HISTORY_STORAGE_KEY = 'syntax-senpai-api-telemetry-history'
@@ -2510,13 +2713,17 @@ onMounted(() => {
     store.refreshCustomWaifus()
     // Ask main for the enabled plugins' tool definitions. Idempotent —
     // cached after first call — so getToolsForMode() can stay synchronous.
-    loadPluginTools()
+    await loadPluginTools()
+    warThunderPluginReady = true
+    await syncWarThunderCopilot()
+    startWarThunderEventPolling()
     // Load waifu-authored skills so the first system prompt already
     // lists what's available.
     store.refreshAvailableSkills()
     // Refresh Cubism Core install status so the Live2D tab can show it
     // immediately without a round-trip when first opened.
     refreshCubismCoreStatus()
+    refreshLive2DDisplays()
     // Preload the Tavily key so Settings → AI shows it without opening keystore.
     loadTavilyApiKey()
     if (store.isSetup) {
@@ -2575,13 +2782,6 @@ onMounted(() => {
     store.newChat()
   })
 
-  removeGameMoveListener = on('game:move', (move: string) => {
-    void handleGameUserMove(move)
-  })
-  removeGameWindowClosedListener = on('game:window-closed', () => {
-    if (gameSession.open) closeGameSession()
-  })
-
   window.addEventListener('app:error', onAppError as EventListener)
   window.addEventListener('app:retry', onAppRetry as EventListener)
   window.addEventListener('app:milestone', onAppMilestone as EventListener)
@@ -2608,12 +2808,11 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  clearLive2DSpeech()
   removeMobileChatListener?.()
   removeWechatInboundListener?.()
   removeWechatStatusListener?.()
   removeTrayNewChatListener?.()
-  removeGameMoveListener?.()
-  removeGameWindowClosedListener?.()
   window.removeEventListener('app:error', onAppError as EventListener)
   window.removeEventListener('app:retry', onAppRetry as EventListener)
   window.removeEventListener('app:milestone', onAppMilestone as EventListener)
@@ -2963,71 +3162,29 @@ function exportConversationMarkdown() {
 
 
 async function handleExportData() {
+  dataTransferBusy.value = true
   try {
-    const conversationsRes = await invoke('store:listConversations')
-    const allConversations = conversationsRes?.success ? (conversationsRes.conversations || []) : []
+    const localStorageSnapshot: Record<string, string> = {}
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i)
+      if (key) localStorageSnapshot[key] = localStorage.getItem(key) || ''
+    }
 
-    const conversations = await Promise.all(
-      allConversations.map(async (conversation: any) => {
-        const res = await invoke('store:getMessages', conversation.id)
-        return {
-          ...conversation,
-          messages: res?.success ? (res.messages || []) : [],
-        }
-      }),
-    )
-
-    const payload = {
-      schemaVersion: 1,
-      app: 'SyntaxSenpai',
-      exportedAt: new Date().toISOString(),
-      security: {
-        apiKeysIncluded: false,
-        notes: [
-          'API keys are stored separately in the secure keystore and are excluded from exports.',
-          'The current in-memory API key field is not serialized.',
-        ],
-      },
-      settings: {
-        locale: locale.value,
-        theme: theme.value,
-        setup: readLocalStorageJson('syntax-senpai-setup'),
-        groupChat: readLocalStorageJson('syntax-senpai-group-chat'),
-        providerPreferences: readLocalStorageJson('syntax-senpai-provider-preferences'),
-        executionPolicy: { version: 2, autoDecideActions: store.autoDecideActions },
-        webSearchEnabled: store.webSearchEnabled,
-        overlayWindowEnabled: overlayWindow.value.enabled,
-        proactiveChatEnabled: store.proactiveChatEnabled,
-        proactiveChatIdleFollowUpEnabled: store.proactiveChatIdleFollowUpEnabled,
-        proactiveChatOnlineGreetingEnabled: store.proactiveChatOnlineGreetingEnabled,
-        proactiveChatWorkHoursEnabled: store.proactiveChatWorkHoursEnabled,
-        proactiveChatWorkHoursStart: store.proactiveChatWorkHoursStart,
-        proactiveChatWorkHoursEnd: store.proactiveChatWorkHoursEnd,
-        proactiveChatDoNotDisturbEnabled: store.proactiveChatDoNotDisturbEnabled,
-        proactiveChatDoNotDisturbStart: store.proactiveChatDoNotDisturbStart,
-        proactiveChatDoNotDisturbEnd: store.proactiveChatDoNotDisturbEnd,
-        proactiveChatIntervalMinutes: store.proactiveChatIntervalMinutes,
-        proactiveChatTemperature: store.proactiveChatTemperature,
-        proactiveChatLongGapHours: store.proactiveChatLongGapHours,
-        affection: readLocalStorageJson('syntax-senpai-affection'),
-        apiTelemetryHistory: readLocalStorageJson(API_TELEMETRY_HISTORY_STORAGE_KEY),
-        enableTimeoutsAndIterationCaps: store.enableTimeoutsAndIterationCaps,
-        maxToolIterations: store.maxToolIterations,
-        apiSpikeThresholdMs: store.apiSpikeThresholdMs,
-      },
-      data: {
-        selectedWaifuId: store.selectedWaifuId,
-        selectedProvider: store.selectedProvider,
-        selectedModel: store.selectedModel,
-        conversations,
-        memories: store.userMemories,
-        runs: await invoke('runs:export'),
-      },
+    const collected = await invoke('backup:collectFull', {
+      localStorage: localStorageSnapshot,
+      selectedWaifuId: store.selectedWaifuId,
+      selectedProvider: store.selectedProvider,
+      selectedModel: store.selectedModel,
+      providerModels: providerModels.value,
+    })
+    if (!collected?.success) {
+      showToast(collected?.error || t('toast.exportFailed'), 'error')
+      return
     }
 
     const result = await invoke(
       'export:saveJson',
-      payload,
+      collected.payload,
       `syntax-senpai-export-${new Date().toISOString().slice(0, 10)}.json`,
     )
 
@@ -3041,10 +3198,13 @@ async function handleExportData() {
     }
   } catch (err: any) {
     showToast(err?.message || t('toast.exportFailed'), 'error')
+  } finally {
+    dataTransferBusy.value = false
   }
 }
 
 async function handleImportData() {
+  dataTransferBusy.value = true
   try {
     const result = await invoke('export:openJson')
     if (!result?.success) {
@@ -3061,6 +3221,40 @@ async function handleImportData() {
         return
       }
       throw err
+    }
+
+    if (payload.exportKind === 'full-backup') {
+      const confirmed = window.confirm(
+        'Import this full backup? It will replace chats, skills, custom waifus, Live2D files, settings, and provider API keys.',
+      )
+      if (!confirmed) return
+
+      const restored = await invoke('backup:restoreFull', result.payload)
+      if (!restored?.success) {
+        showToast(restored?.error || t('toast.importFailed'), 'error')
+        return
+      }
+
+      const settings = restored.settings || payload.data?.settings || {}
+      const snapshot = settings.localStorage
+      if (snapshot && typeof snapshot === 'object') {
+        for (const key of Object.keys(localStorage)) {
+          if (key.startsWith('syntax-senpai-')) localStorage.removeItem(key)
+        }
+        for (const [key, value] of Object.entries(snapshot)) {
+          if (typeof value === 'string') localStorage.setItem(key, value)
+        }
+      }
+      if (settings.selectedWaifuId) store.selectedWaifuId = settings.selectedWaifuId
+      if (settings.selectedProvider) store.selectedProvider = settings.selectedProvider
+      if (settings.selectedModel) store.selectedModel = settings.selectedModel
+
+      showToast(
+        `Full backup imported: ${restored.imported?.conversations || 0} chats, ${restored.imported?.skills || 0} skills, ${restored.imported?.live2dFiles || 0} Live2D files, and ${restored.imported?.apiKeys?.length || 0} API keys. Reloading…`,
+        'success',
+      )
+      window.setTimeout(() => window.location.reload(), 350)
+      return
     }
 
     const importedConversations = Array.isArray(payload?.data?.conversations) ? payload.data.conversations : []
@@ -3239,6 +3433,8 @@ async function handleImportData() {
     showToast(t('toast.importSaved'), 'success')
   } catch (err: any) {
     showToast(err?.message || t('toast.importFailed'), 'error')
+  } finally {
+    dataTransferBusy.value = false
   }
 }
 </script>
@@ -3467,7 +3663,7 @@ async function handleImportData() {
                   v-for="tab in settingsTabs"
                   :key="tab.id"
                   :class="['settings-nav-btn relative z-[1] h-9', settingsTab === tab.id && 'settings-nav-btn-active']"
-                  @click="settingsTab = tab.id; if (tab.id === 'mobile') checkMobilePairingStatus(); if (tab.id === 'live2d') refreshCubismCoreStatus()"
+                  @click="settingsTab = tab.id; if (tab.id === 'mobile') checkMobilePairingStatus(); if (tab.id === 'live2d') { refreshCubismCoreStatus(); refreshLive2DDisplays() }"
                 >
                   <span class="text-base leading-none shrink-0">
                     <component :is="tab.icon" :size="20" weight="regular" aria-hidden="true" />
@@ -3566,6 +3762,57 @@ async function handleImportData() {
                   </label>
                 </div>
               </div>
+            </div>
+
+            <div class="settings-card mt-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-sm font-semibold text-neutral-200">War Thunder 副驾</div>
+                  <p class="mt-1 text-xs text-neutral-400">
+                    桌宠窗口开启时读取 War Thunder 本机 8111 只读遥测。不会控制游戏，也不会在普通窗口模式下监听。
+                  </p>
+                </div>
+                <button
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :style="{ background: warThunderCopilotEnabled ? 'linear-gradient(90deg,#f59e0b,#ef4444)' : '#404040' }"
+                  :aria-label="`${warThunderCopilotEnabled ? 'Disable' : 'Enable'} War Thunder copilot`"
+                  @click="setWarThunderCopilotEnabled(!warThunderCopilotEnabled)"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: warThunderCopilotEnabled ? 'translateX(20px)' : 'translateX(0)' }"
+                  />
+                </button>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+                <label class="text-xs text-neutral-400">
+                  副驾 Provider
+                  <select
+                    :value="warThunderCopilotProvider"
+                    class="input-field mt-1"
+                    @change="setWarThunderCopilotProvider(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option v-for="provider in providers" :key="`wt-provider-${provider.value}`" :value="provider.value">
+                      {{ provider.label }}
+                    </option>
+                  </select>
+                </label>
+                <label class="text-xs text-neutral-400">
+                  副驾模型
+                  <select
+                    :value="warThunderCopilotModel"
+                    class="input-field mt-1"
+                    @change="setWarThunderCopilotModel(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option v-for="model in warThunderCopilotModels" :key="`wt-model-${model.id}`" :value="model.id">
+                      {{ model.displayName }}
+                    </option>
+                  </select>
+                </label>
+              </div>
+              <p class="mt-3 text-[11px] text-neutral-500">
+                当前状态：{{ overlayWindow.enabled && warThunderCopilotEnabled ? '桌宠模式下监听中' : '未监听' }}
+              </p>
             </div>
 
             <div class="settings-card mt-4">
@@ -4004,15 +4251,15 @@ async function handleImportData() {
                 </p>
               </div>
               <div class="grid grid-cols-2 gap-3">
-                <button class="btn-secondary w-full" @click="handleExportData">
-                  {{ t('settings.exportButton') }}
+                <button class="btn-secondary w-full" :disabled="dataTransferBusy" @click="handleExportData">
+                  {{ dataTransferBusy ? 'Preparing backup…' : 'Export full backup' }}
                 </button>
-                <button class="btn-secondary w-full" @click="handleImportData">
-                  {{ t('settings.importButton') }}
+                <button class="btn-secondary w-full" :disabled="dataTransferBusy" @click="handleImportData">
+                  {{ dataTransferBusy ? 'Working…' : 'Import full backup' }}
                 </button>
               </div>
               <p class="mt-3 text-[11px] text-neutral-500">
-                {{ t('settings.importDescription') }}
+                Full backups include all app settings, chats and memories, skills, custom waifus, model-provider preferences, API keys, and Live2D model files. API keys are included in plaintext inside the backup file.
               </p>
             </div>
 
@@ -4959,6 +5206,35 @@ async function handleImportData() {
           <div v-if="settingsTab === 'live2d'">
             <div class="settings-card mb-3">
               <div class="mb-3">
+                <h3 class="text-sm font-bold text-white">Immersive display</h3>
+                <p class="text-xs text-neutral-400">
+                  Move the current Live2D model into a borderless fullscreen window on another monitor. Assistant replies appear as speech bubbles in that window.
+                </p>
+              </div>
+              <label class="block text-xs font-semibold text-neutral-300 mb-1" for="live2d-display-select">Target display</label>
+              <select
+                id="live2d-display-select"
+                v-model="selectedLive2DDisplayId"
+                class="input-field"
+                :disabled="live2dDisplays.length === 0"
+              >
+                <option v-if="live2dDisplays.length === 0" value="">No display information available</option>
+                <option v-for="display in live2dDisplays" :key="display.id" :value="display.id">
+                  {{ display.label }} — {{ display.bounds.width }} × {{ display.bounds.height }}{{ display.primary ? ' (Primary)' : '' }}
+                </option>
+              </select>
+              <div class="mt-3 flex gap-2">
+                <button class="btn-secondary flex-1 text-xs" :disabled="live2dImmersiveOpening || !currentWaifuLive2D" @click="openImmersiveLive2D">
+                  {{ live2dImmersiveOpening ? 'Opening…' : 'Open immersive window' }}
+                </button>
+                <button class="btn-secondary text-xs" @click="refreshLive2DDisplays">
+                  Refresh displays
+                </button>
+              </div>
+            </div>
+
+            <div class="settings-card mb-3">
+              <div class="mb-3">
                 <h3 class="text-sm font-bold text-white">Live2D resolution</h3>
                 <p class="text-xs text-neutral-400">
                   Choose the floating avatar window size. This changes the Live2D canvas resolution; character scale and position stay separate.
@@ -5706,13 +5982,14 @@ async function handleImportData() {
             <PhGlobe :size="18" weight="regular" aria-hidden="true" />
           </button>
           <button
-            :class="['btn-ghost p-2', showGamePicker || showGomokuPanel || showFateRoulettePanel ? 'bg-white/10' : '']"
+            :class="['btn-ghost p-2', showGamePicker || hasEmbeddedGame ? 'bg-white/10' : '']"
             :style="ghostButtonStyle"
             :title="t('games.center')"
             :aria-label="t('games.openCenter')"
-            @click="showGamePicker = true"
+            :aria-expanded="showGamePicker"
+            @click="showGamePicker = !showGamePicker"
           >
-            🎮
+            <PhGameController :size="18" weight="regular" aria-hidden="true" />
           </button>
           <button
             class="btn-ghost p-2"
@@ -5813,6 +6090,20 @@ async function handleImportData() {
         </template>
       </div>
 
+      <div v-if="showGamePicker" class="game-picker-strip" aria-label="Choose a minigame">
+        <span class="game-picker-label">{{ t('games.center') }}</span>
+        <button type="button" @click="openMiniGame('tictactoe')">Tic-Tac-Toe</button>
+        <button type="button" @click="openMiniGame('connect4')">Connect Four</button>
+        <button type="button" @click="openMiniGame('chess')">Chess</button>
+        <button type="button" @click="openMiniGame('gomoku')">{{ t('games.gomoku') }}</button>
+        <button type="button" @click="openMiniGame('fate-roulette')">{{ t('games.fate') }}</button>
+      </div>
+
+      <div
+        class="game-chat-layout flex-1 min-h-0"
+        :class="{ 'game-chat-layout-active': hasEmbeddedGame, 'game-chat-layout-special': showGomokuPanel || showFateRoulettePanel, 'game-chat-layout-compact': compactChatLayout }"
+      >
+        <div class="game-chat-column flex min-h-0 min-w-0 flex-col">
       <!-- Messages -->
       <div :class="[
         'flex-1 overflow-y-auto',
@@ -6010,12 +6301,13 @@ async function handleImportData() {
           </div>
         </TransitionGroup>
 
-        <div v-if="store.isLoading" class="space-y-2">
-          <MessageSkeleton />
-          <div class="flex justify-start">
-            <ChatBubble role="assistant" :show-copy="false">
-              <TypingDots />
-            </ChatBubble>
+        <div v-if="store.isLoading && store.isThinking" class="flex items-start gap-3" role="status" aria-label="Assistant is thinking" aria-live="polite">
+          <div class="themed-assistant-avatar w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white shrink-0" aria-hidden="true">
+            {{ store.selectedWaifu?.displayName?.[0] || 'A' }}
+          </div>
+          <div class="glass-surface rounded-xl px-4 py-3 min-w-16">
+            <TypingDots />
+            <span class="sr-only">Thinking</span>
           </div>
         </div>
 
@@ -6297,6 +6589,41 @@ async function handleImportData() {
           {{ t('chat.inputHint') }}
         </p>
       </div>
+        </div>
+        <aside v-if="hasEmbeddedGame" class="game-chat-aside" aria-label="Active minigame">
+          <MiniGamePanel
+            v-if="gameSession.open && gameSession.snapshot"
+            :key="gameSession.sessionId || 'core-game'"
+            :snapshot="gameSession.snapshot"
+            :busy="gameSession.busy"
+            @move="handleGameUserMove"
+            @close="closeGameSession"
+          />
+          <GomokuGame
+            v-else-if="showGomokuPanel"
+            :waifu-display-name="store.selectedWaifu?.displayName"
+            :backstory="store.selectedWaifu?.backstory"
+            :system-prompt-template="store.selectedWaifu?.systemPromptTemplate"
+            :catchphrases="store.selectedWaifu?.catchphrases"
+            :tags="store.selectedWaifu?.tags"
+            :personality="store.selectedWaifu?.personalityTraits"
+            :communication-style="store.selectedWaifu?.communicationStyle"
+            @close="showGomokuPanel = false"
+          />
+          <FateRouletteGame
+            v-else-if="showFateRoulettePanel"
+            :waifu-display-name="store.selectedWaifu?.displayName"
+            :backstory="store.selectedWaifu?.backstory"
+            :system-prompt-template="store.selectedWaifu?.systemPromptTemplate"
+            :catchphrases="store.selectedWaifu?.catchphrases"
+            :tags="store.selectedWaifu?.tags"
+            :personality="store.selectedWaifu?.personalityTraits"
+            :communication-style="store.selectedWaifu?.communicationStyle"
+            :dialogue-generator="store.generateGameDialogue"
+            @close="showFateRoulettePanel = false"
+          />
+        </aside>
+      </div>
     </div>
 
     <WorkspacePanel />
@@ -6330,6 +6657,11 @@ async function handleImportData() {
             <div class="flex items-center gap-1" data-live2d-panel-control>
               <button
                 class="text-[11px] leading-none px-1.5 py-1 rounded text-white/60 hover:text-white/90 hover:bg-white/10"
+                title="Open immersive Live2D window"
+                @click.stop="openImmersiveLive2D"
+              >Immersive</button>
+              <button
+                class="text-[11px] leading-none px-1.5 py-1 rounded text-white/60 hover:text-white/90 hover:bg-white/10"
                 title="Reset avatar position and scale"
                 @click.stop="resetLive2DPanelLayout"
               >Reset</button>
@@ -6358,6 +6690,15 @@ async function handleImportData() {
               :render-scale="live2dRenderScale"
             />
           </div>
+          <Transition name="live2d-speech-bubble">
+            <div
+              v-if="live2dSpeechBubble"
+              class="absolute left-3 right-3 top-12 z-10 rounded-xl border border-white/15 bg-neutral-900/85 px-3 py-2 text-center text-[11px] leading-snug text-white shadow-xl backdrop-blur-md"
+              aria-live="polite"
+            >
+              {{ live2dSpeechBubble }}
+            </div>
+          </Transition>
           <div
             class="live2d-scale-control absolute left-3 right-8 bottom-3 z-10 flex items-center gap-2 rounded-lg border border-white/10 bg-black/55 px-2.5 py-2 backdrop-blur-sm cursor-default"
             data-live2d-panel-control
@@ -6422,6 +6763,97 @@ async function handleImportData() {
 </template>
 
 <style scoped>
+.game-picker-strip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.55rem 0.8rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
+  background: var(--surface);
+  color: var(--fg);
+}
+
+.game-picker-label {
+  margin-right: 0.4rem;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.game-picker-strip button {
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  border-radius: calc(0.55rem * var(--radius-scale, 1));
+  padding: 0.35rem 0.6rem;
+  background: color-mix(in srgb, var(--surface-2) 84%, var(--primary) 16%);
+  color: var(--fg);
+  font-size: 0.75rem;
+}
+
+.game-picker-strip button:hover,
+.game-picker-strip button:focus-visible {
+  border-color: var(--primary);
+  outline-color: var(--primary);
+}
+
+.game-chat-layout {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.game-chat-column {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+.game-chat-aside {
+  flex: 0 0 clamp(21rem, 39%, 32rem);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
+  background: var(--surface);
+}
+
+.game-chat-layout-special .game-chat-aside {
+  flex-basis: clamp(28rem, 60%, 56rem);
+}
+
+@media (max-width: 1199px) {
+  .game-chat-layout-active {
+    flex-direction: column-reverse;
+  }
+
+  .game-chat-layout-active .game-chat-aside {
+    flex: 0 0 min(52%, 29rem);
+    width: 100%;
+    border-left: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
+  }
+
+  .game-chat-layout-active .game-chat-column {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+}
+
+.game-chat-layout-compact.game-chat-layout-active {
+  flex-direction: column-reverse;
+}
+
+.game-chat-layout-compact.game-chat-layout-active .game-chat-aside {
+  flex: 0 0 52%;
+  width: 100%;
+  border-left: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
+.game-chat-layout-compact.game-chat-layout-active .game-chat-column {
+  flex: 1 1 auto;
+  min-height: 0;
+}
 /* Collapsible "show thinking & process" panel above each assistant reply.
    The header chevron rotates on expand for a ChatGPT-style affordance.
    The nested ChatBubble inside `.process-panel-step` shrinks to a more
@@ -6437,6 +6869,15 @@ async function handleImportData() {
 }
 .process-panel-chevron {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.live2d-speech-bubble-enter-active,
+.live2d-speech-bubble-leave-active {
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.live2d-speech-bubble-enter-from,
+.live2d-speech-bubble-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 .process-panel-steps :deep(.chat-bubble-shell) {
   max-width: 100%;

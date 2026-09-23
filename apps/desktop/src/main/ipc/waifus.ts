@@ -66,6 +66,9 @@ export function registerWaifusIpc() {
   if (registered) return
   registered = true
 
+  // Older imports could contain legacy-encoded filenames written as
+  // replacement characters. Repair those folders before the renderer tries
+  // to instantiate the assigned model.
   try {
     if (fs.existsSync(live2dDir())) {
       const queue = [live2dDir()]
@@ -74,12 +77,14 @@ export function registerWaifusIpc() {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
           const full = path.join(dir, entry.name)
           if (entry.isDirectory()) queue.push(full)
-          else if (entry.isFile() && /\.model3?\.json$/i.test(entry.name)) repairLive2DModelReferences(full)
+          else if (entry.isFile() && /\.model3?\.json$/i.test(entry.name)) {
+            repairLive2DModelReferences(full)
+          }
         }
       }
     }
   } catch {
-    // Best effort; the importer still handles new models.
+    // A repair is best-effort; the import flow still handles new models.
   }
 
   ipcMain.handle('waifus:list', async () => {

@@ -150,3 +150,31 @@ describe("sendText", () => {
     expect(out.message_id).toBe(99);
   });
 });
+
+describe("sendImage", () => {
+  it("uploads through the CDN, sends a media reference, and preserves the context token", async () => {
+    let imageRequest: any = null;
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      urls.push(url);
+      if (url.includes(Endpoint.GET_UPLOAD_URL)) {
+        return rawResponse({ upload_full_url: "https://cdn.example/upload" });
+      }
+      if (url === "https://cdn.example/upload") {
+        return new Response(null, { status: 200, headers: { "x-encrypted-param": "download-ref" } });
+      }
+      imageRequest = JSON.parse(String(init?.body));
+      return rawResponse({ ret: 0, message_id: 321 });
+    });
+    const bot = new WeChatIlinkBot(CREDS, { fetchImpl });
+    const out = await bot.sendImage("peer-1", Buffer.from("png"), "ctx-1");
+    expect(urls).toHaveLength(3);
+    expect(imageRequest.msg.context_token).toBe("ctx-1");
+    expect(imageRequest.msg.item_list[0]).toMatchObject({
+      type: 2,
+      image_item: { media: { encrypt_query_param: "download-ref", encrypt_type: 1 } },
+    });
+    expect(out.message_id).toBe(321);
+  });
+});

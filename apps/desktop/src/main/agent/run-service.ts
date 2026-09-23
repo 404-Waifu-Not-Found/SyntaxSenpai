@@ -1,4 +1,3 @@
-import { exportRunArchive, importRunArchive } from './backup'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
@@ -26,7 +25,6 @@ interface LiveRun {
 export class RunService {
   readonly runs = new Map<string, LiveRun>()
   readonly scheduler = new ResourceScheduler(8, 2)
-  readonly researchers = new ResourceScheduler(2)
   readonly processes: ProcessManager
   readonly computer: ComputerService
   private uiRequests = new Map<string, { runId: string; call: ToolCall; resolve: (value: any) => void; timer: ReturnType<typeof setTimeout> }>()
@@ -49,9 +47,8 @@ export class RunService {
   }
   emit(run: LiveRun, type: string, payload: any) {
     const event: RunEvent = { runId: run.state.id, sequence: ++run.sequence, timestamp: Date.now(), type, payload }
-    const durable = type === 'computer' && payload.screenshot ? { ...event, payload: { ...payload, screenshot: undefined } } : event
-    run.events.push(durable)
-    run.stream.write(JSON.stringify(durable) + '\n')
+    run.events.push(event)
+    run.stream.write(JSON.stringify(event) + '\n')
     for (const window of electron().BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('runs:event', event)
     return event
   }
@@ -76,7 +73,7 @@ export class RunService {
     if (!/^[\w-]+$/.test(id) || this.runs.has(id)) throw new Error('Invalid or duplicate run ID')
     const dir = path.join(this.root, id); fs.mkdirSync(dir, { recursive: true })
     const state: AgentRun = { id, conversationId: spec.conversationId, workspace: spec.workspace, goal: spec.goal || String(spec.history.filter(m => m.role === 'user').at(-1)?.content || ''), status: 'running', startedAt: Date.now(), plan: [], acceptanceCriteria: [], iterations: 0, maxIterations: Math.min(100, Math.max(1, spec.maxIterations || 20)) }
-    const run = { state, spec, controller: new AbortController(), sequence: 0, history: structuredClone(spec.history), events: [], checks: [], images: [], provider: providerOverride || createProvider(spec.providerConfig), stream: fs.createWriteStream(path.join(dir, 'events.jsonl'), { flags: 'a' }), failures: new Map(), processRevisions: new Map() } as unknown as LiveRun
+    const run = { state, spec, controller: new AbortController(), sequence: 0, history: structuredClone(spec.history), journal: undefined as unknown as ChangeJournal, events: [], checks: [], images: [], provider: providerOverride || createProvider(spec.providerConfig), stream: fs.createWriteStream(path.join(dir, 'events.jsonl'), { flags: 'a' }), failures: new Map(), processRevisions: new Map() } as LiveRun
     run.journal = new ChangeJournal(this.root, id, spec.workspace || os.homedir(), (type, payload) => { this.emit(run, type, payload); this.refreshChecks(run) })
     this.runs.set(id, run); this.save(run); this.emit(run, 'run', state)
     run.promise = this.perform(run)
@@ -103,7 +100,8 @@ export class RunService {
     check.exitCode = session.exitCode
     check.status = session.status === 'cancelled' || session.status === 'timed_out' ? 'cancelled' : session.exitCode === 0 ? 'passed' : 'failed'
     check.freshness = check.revision === run.journal.revision() ? 'current' : 'stale'
-    if (check.status === 'failed' || check.status === 'cancelled') run.failures.set('check:' + check.command, check.status); else run.failures.delete('check:' + check.command)
+    if (check.status === 'failed' || check.status === 'cancelled') run.failures.set('check:' + check.command, check.status)
+    else run.failures.delete('check:' + check.command)
     this.emit(run, 'checks', run.checks)
   }
   refreshChecks(run: LiveRun) {
@@ -111,8 +109,8 @@ export class RunService {
     if (run.checks.length) this.emit(run, 'checks', run.checks)
   }
   async waitWorkspace(run: LiveRun) {
-    for (const p of this.processes.list()) if (p.cwd === (run.spec.workspace || os.homedir()) || p.cwd.startsWith((run.spec.workspace || os.homedir()) + path.sep) || (run.spec.workspace || os.homedir()).startsWith(p.cwd + path.sep)) {
-      while (!this.processes.read(p.id).endedAt) { await this.gate(run); await this.processes.wait(p.id, 500) }
+    for (const p of this.processes.list()) if (p.cwd === (run.spec.workspace || os.homedir())) {
+      while (['running', 'queued'].includes(this.processes.read(p.id).status)) { await this.gate(run); await this.processes.wait(p.id, 500) }
     }
   }
   private async perform(run: LiveRun) {
@@ -142,8 +140,7 @@ export class RunService {
             run.checks.push({ id: session.id, command: session.command, cwd: session.cwd, exitCode: null, revision: run.journal.revision(), freshness: 'current', status: 'running' })
             this.emit(run, 'checks', run.checks)
           }
-          const completed = await this.processes.wait(session.id, 1000)
-          return completed.endedAt && completed.exitCode !== 0 ? { success: false, error: `Command ${completed.status} (exit ${completed.exitCode}): ${completed.output}`, session: completed } : completed
+          return await this.processes.wait(session.id, 1000)
         }
         if (call.name.startsWith('process_')) {
           const session = this.processes.read(args.id)
@@ -153,8 +150,6 @@ export class RunService {
           this.processes.stop(args.id); return this.processes.read(args.id)
         }
         if (call.name === 'tool_search') {
-          const plugins = await invokeHost('plugins:listTools')
-          for (const t of plugins.tools || []) if (!available.some(a => a.name === t.name)) available.push(t)
           const words = String(args.query || '').toLowerCase().split(/\s+/)
           const found = available.filter(t => words.some(w => (t.name + ' ' + t.description).toLowerCase().includes(w))).slice(0, 12)
           for (const t of found) if (!activeTools.some(a => a.name === t.name)) activeTools.push(t)
@@ -166,7 +161,7 @@ export class RunService {
           if (observation.screenshot) {
             const dataUrl = observation.screenshot
             delete observation.screenshot
-            run.images = [{ role: 'user', id: `computer-image-${Date.now()}`, content: [{ type: 'text', text: `Computer observation ${observation.id}` }, { type: 'image_url', imageUrl: { url: dataUrl } }] }]
+            run.images = [{ role: 'user', id: `image-${Date.now()}`, content: [{ type: 'text', text: `Computer observation ${observation.id}` }, { type: 'image_url', imageUrl: { url: dataUrl } }] }]
             this.emit(run, 'computer', { ...observation, screenshot: dataUrl })
           } else this.emit(run, 'computer', observation)
           return observation
@@ -179,18 +174,20 @@ export class RunService {
           this.emit(run, 'side-effect', call)
           return 'Applied'
         }
-        if (call.name.startsWith('browser_') || call.name.startsWith('game_') || call.name.startsWith('wechat_') || call.name === 'send_multi_messages') { const response: any = await this.requestUI(run, call); if (response.image) run.images = [{ role: 'user', content: [{ type: 'image_url', imageUrl: { url: response.image } }] }]; return response.content ?? response }
+        if (call.name.startsWith('browser_') || call.name.startsWith('game_') || call.name.startsWith('wechat_') || call.name === 'send_multi_messages') return this.requestUI(run, call)
         const plugin = await invokeHost('plugins:execTool', call.name, call.arguments)
         return plugin
       }
       const registry = createHostRegistry(fallback)
       const execute = async (tc: ToolCall) => {
-        if (tc.name !== 'terminal') await this.authorize(run, tc)
+        await this.authorize(run, tc)
         if (!available.some(t => t.name === tc.name)) throw new Error('Tool is unavailable for this run')
         if (!tc.name.startsWith('process_') && tc.name !== 'terminal' && executionMetadata(tc, spec.workspace || os.homedir()).resources.some(r => r.startsWith(spec.workspace || os.homedir()))) await this.waitWorkspace(run)
         const started = Date.now()
-        const result: any = registry.get(tc.name) ? await registry.execute(tc, { platform: 'desktop', userId: 'local', waifuId: spec.waifuId || '', workingDirectory: spec.workspace, permissions: { fileRead: true, fileWrite: true, shellExec: true, networkAccess: true } }) : { success: true, data: await fallback(tc) }
-        const value = result.success ? typeof result.data === 'string' ? result.data : JSON.stringify(result.data) : `Error: ${result.error}`
+        const result = registry.get(tc.name) ? await registry.execute(tc, { platform: 'desktop', userId: 'local', waifuId: spec.waifuId || '', workingDirectory: spec.workspace, permissions: { fileRead: true, fileWrite: true, shellExec: true, networkAccess: true } }) : { success: true, data: await fallback(tc) }
+        const value = result.success
+          ? typeof result.data === 'string' ? result.data : JSON.stringify(result.data)
+          : `Error: ${'error' in result ? result.error : 'Unknown tool error'}`
         const outputRef = await run.journal.put(value)
         this.emit(run, 'tool.execution', { callId: tc.id, outcome: result.success ? 'success' : 'error', summary: value.slice(0, 16000), outputRef, durationMs: Date.now() - started })
         if (result.success) run.failures.delete(tc.name); else run.failures.set(tc.name, value)
@@ -203,8 +200,6 @@ export class RunService {
         describeExecution: tc => executionMetadata(tc, spec.workspace || os.homedir()), executeTool: execute,
         prepareContext: async history => {
           await this.gate(run)
-          const captures = history.filter(m => String(m.id || '').startsWith('computer-image-'))
-          for (const old of captures.slice(0, -1)) if (Array.isArray(old.content)) old.content = 'Earlier computer observation retained in the run screenshot artifacts; re-observe for current state.'
           const capacity = modelInfo?.contextWindow || 16000
           if (estimateTokens([spec.systemPrompt, spec.cachedSystemPrompt, activeTools, history]) < capacity * 0.7) return
           const { older } = recentCompleteExchanges(history)
@@ -217,7 +212,7 @@ export class RunService {
         },
         handleSideEffect: async tc => {
           const content = await execute(tc)
-          if (tc.name === 'stop_response' && !/^Error:/.test(content)) return { resultContent: content, stop: true, finalContent: String(tc.arguments.final_message || '') }
+          if (tc.name === 'stop_response') return { resultContent: content, stop: true, finalContent: String(tc.arguments.final_message || '') }
           return { resultContent: content }
         },
         collectFollowupMessages: () => { const images = run.images; run.images = []; return images },
@@ -230,11 +225,17 @@ export class RunService {
         onToolResult: (call, content) => { this.emit(run, 'tool.result', { call, content }); this.save(run) },
         onApiRoundTrip: (durationMs, response) => this.emit(run, 'usage', { durationMs, usage: response.usage }),
       }))
-      await this.waitWorkspace(run)
       await run.journal.scan()
-      await Promise.all(this.processes.list(state.id).map(p => this.finishCheck(run, p)))
+      // Process-exit notifications refresh checks asynchronously; settle any
+      // completed check before deciding the run's final status.
+      for (const check of run.checks) {
+        const session = this.processes.read(check.id)
+        if (session.endedAt) await this.finishCheck(run, session)
+      }
       this.refreshChecks(run)
-      state.status = run.controller.signal.aborted ? 'cancelled' : result.reachedMaxIterations || run.failures.size ? 'incomplete' : run.checks.length && run.checks.every(c => c.status === 'passed' && c.freshness === 'current') ? 'verified' : 'incomplete'
+      const checksPassed = run.checks.length > 0 && run.checks.every(c => c.status === 'passed' && c.freshness === 'current')
+      const exhaustedWithUnexecutedTools = result.reachedMaxIterations && !!run.history.at(-1)?.toolCalls?.length
+      state.status = run.controller.signal.aborted ? 'cancelled' : run.failures.size || exhaustedWithUnexecutedTools ? 'incomplete' : checksPassed ? 'verified' : 'incomplete'
       state.finalContent = result.finalContent; state.endedAt = Date.now(); run.result = result
     } catch (error) {
       state.status = run.controller.signal.aborted ? 'cancelled' : 'blocked'; state.endedAt = Date.now(); state.finalContent = error instanceof Error ? error.message : String(error)
@@ -242,9 +243,8 @@ export class RunService {
       this.emit(run, 'error', state.finalContent)
     } finally {
       if (scanTimer) clearInterval(scanTimer)
-      this.save(run); this.emit(run, 'run', state)
+      this.save(run); this.emit(run, 'run', state); this.emit(run, 'done', { ...run.result, history: run.history })
       if (spec.conversationId) await invokeHost('store:addMessage', spec.conversationId, { id: `run-result-${state.id}`, role: 'assistant', content: state.finalContent || 'Task ended without a final response.', timestamp: new Date().toISOString(), waifuId: spec.waifuId, waifuDisplayName: spec.waifuDisplayName, runId: state.id }).catch(() => {})
-      this.emit(run, 'done', { ...run.result, history: run.history })
     }
     return { ...run.result, history: run.history }
   }
@@ -256,11 +256,11 @@ export class RunService {
         const index = cursor++, task = tasks[index]
         const history = [{ id: `research-${index}`, role: 'user', content: JSON.stringify(task) }]
         const registry = createHostRegistry(async () => { throw new Error('Tool unavailable to research worker') })
-        results[index] = await this.researchers.schedule({ access: 'read', resources: ['research'] }, () => runAgentTurn({ callProvider: req => callProvider(run.provider, req), model: run.spec.model, history, tools: available.filter(t => isReadOnlyTool(t.name)), systemPrompt: 'Research or review the assigned task. Read-only tools only. Return findings, paths, evidence and uncertainties to the coordinator.', maxIterations: 8, abortSignal: run.controller.signal, scheduler: this.scheduler, describeExecution: tc => executionMetadata(tc, run.spec.workspace || os.homedir()), executeTool: async tc => {
+        results[index] = await runAgentTurn({ callProvider: req => callProvider(run.provider, req), model: run.spec.model, history, tools: available.filter(t => isReadOnlyTool(t.name)), systemPrompt: 'Research or review the assigned task. Read-only tools only. Return findings, paths, evidence and uncertainties to the coordinator.', maxIterations: 8, abortSignal: run.controller.signal, scheduler: this.scheduler, describeExecution: tc => executionMetadata(tc, run.spec.workspace || os.homedir()), executeTool: async tc => {
           if (!isReadOnlyTool(tc.name)) return 'Error: worker mutations are unavailable'
           await this.authorize(run, tc)
           return JSON.stringify(await registry.execute(tc, { platform: 'desktop', userId: 'local', waifuId: '', permissions: { fileRead: true, fileWrite: false, shellExec: false, networkAccess: true } }))
-        }, onApiRoundTrip: (durationMs, response) => this.emit(run, 'subagent.usage', { index, durationMs, usage: response.usage }) }), run.controller.signal).catch(error => ({ error: String(error) }))
+        }, onApiRoundTrip: (durationMs, response) => this.emit(run, 'subagent.usage', { index, durationMs, usage: response.usage }) }).catch(error => ({ error: String(error) }))
       }
     }))
     return results
@@ -288,9 +288,6 @@ export function getRunService() { return service }
 export function registerRunService() {
   const { app, ipcMain, globalShortcut, shell } = electron()
   service = new RunService(path.join(app.getPath('userData'), 'runs'))
-  ipcMain.handle('runs:export', () => exportRunArchive(service.root))
-  ipcMain.handle('runs:import', (_e: any, archive: any) => importRunArchive(service.root, archive))
-  ipcMain.handle('computer:observe', () => service.scheduler.schedule({ access: 'write', resources: ['desktop-input'], lane: 'desktop' }, () => service.computer.observe()))
   ipcMain.handle('runs:start', (_e: any, spec: RunRequest) => service.start(spec))
   ipcMain.handle('runs:result', (_e: any, id: string) => service.runs.get(id)?.promise)
   ipcMain.handle('runs:list', (_e: any, conversationId?: string) => service.list(conversationId))
@@ -305,7 +302,6 @@ export function registerRunService() {
     if (workingTree && state.workspace) return new ChangeJournal(service.root, id, state.workspace, () => {}).workingTree()
     return JSON.parse(fs.readFileSync(path.join(service.root, id, 'changes.json'), 'utf8'))
   })
-  ipcMain.handle('runs:image', (_e: any, id: string) => /^[\w-]+$/.test(id) ? 'data:image/png;base64,' + fs.readFileSync(path.join(service.root, 'screenshots', id + '.png')).toString('base64') : '')
   ipcMain.handle('runs:blob', (_e: any, ref: string) => /^[a-f0-9]{64}$/.test(ref) ? fs.readFileSync(path.join(service.root, 'blobs', ref), 'utf8') : '')
   ipcMain.handle('runs:open-file', (_e: any, file: string) => shell.openPath(file))
   ipcMain.handle('computer:status', () => service.computer.status())

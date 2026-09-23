@@ -102,7 +102,25 @@ export default defineConfig({
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body, #app { width: 100%; height: 100%; background-color: var(--bg); color: var(--fg); }
+        html, body, #app {
+          width: 100%;
+          height: 100%;
+          background-color: var(--bg);
+          color: var(--fg);
+          font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          font-synthesis: none;
+        }
+        /* Keep named utility faces from falling back to a serif when the
+           remote face is still loading or unavailable. */
+        .font-display {
+          font-family: Comfortaa, 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+        }
+        .font-cute {
+          font-family: Nunito, 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+        }
+        .font-mono {
+          font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace !important;
+        }
         body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
 
         ::-webkit-scrollbar { width: 6px; height: 6px; }

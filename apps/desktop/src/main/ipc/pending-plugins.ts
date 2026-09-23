@@ -138,7 +138,7 @@ export function registerPendingPluginsIpc() {
     },
   )
 
-  registerHostHandler('pending-plugins:activate', async (_e: any, slug: string) => {
+  registerHostHandler('pending-plugins:approve', async (_e: any, slug: string) => {
     try {
       if (!isValidSlug(slug)) return { success: false, error: 'Invalid slug' }
       const srcDir = path.join(pendingDir(), slug)

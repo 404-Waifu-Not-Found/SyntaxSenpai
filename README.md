@@ -31,10 +31,10 @@
 
 SyntaxSenpai is an Electron + Vue desktop assistant wrapped in character-driven waifu personalities. Pick a waifu, configure a model provider, and chat with an assistant that keeps her own tone while still doing real work: reading files, editing code, running shell commands, searching the web, managing todos, pairing with mobile, and exporting your data.
 
-The project is local-first: conversations, memories, provider keys, plugins, custom waifus, and runtime backups are controlled from your machine. Cloud calls only go to the AI provider you choose.
+The project is local-first: conversations, memories, provider keys, plugins, custom waifus, and backups are controlled from your machine. Cloud providers and optional integrations such as web search, WeChat, and Spotify may contact their respective services when used.
 
 > [!NOTE]
-> Current truth lives in [STATE.md](./STATE.md). Older milestone/status notes are archived under [docs/archive](./docs/archive/) and should be treated as historical.
+> Current architecture and integration limits are in [STATE.md](./STATE.md). Superseded milestone notes were removed; their history remains available in Git.
 
 ## Screenshots
 
@@ -52,10 +52,13 @@ Developer agents are usually useful but emotionally flat. Character chatbots are
 - **Five built-in waifus**: Aria, Sakura, Rei, Hana, and Luna, each with trait vectors, greetings, prompt templates, voices, tags, and capability metadata.
 - **Custom waifus**: create, list, edit, and delete user-authored waifus through desktop IPC.
 - **21 registered AI providers**: 18 live providers, plus 3 registered stubs that stay out of the picker until implemented.
-- **Agent modes**: `ask`, `auto`, and `full`, with destructive shell patterns still gated by a native confirmation dialog.
+- **Agent modes**: `auto` (automatic policy decisions) and `full` (direct tool execution), with destructive shell patterns still gated by a native confirmation dialog.
 - **Tooling**: terminal, file read/write/edit, clipboard, git status/diff/commit/push, GitHub PR creation, web search, todos, Spotify controls, WeChat send/list, card rendering, skills, and plugin execution.
 - **Memory and affection**: persistent memories, per-waifu affection tiers, milestone prompts, and expression/sentiment handling.
 - **Desktop UX**: themes, settings panels, token/cost counters, image attachments, regenerate/delete actions, Markdown export, tray icon, and global shortcut.
+- **In-chat games**: interactive Tic-Tac-Toe, Connect Four, and chess boards with engine-controlled opponents, plus Gomoku and Fate Wheel. Games stay in the main chat window.
+- **Headless runner**: JSONL CLI using the shared agent session, with scripted provider fixtures for deterministic testing.
+- **Portable desktop backup**: full export/import for chats, settings, skills, custom waifus, provider configuration and keys, and Live2D files. Backups contain plaintext secrets.
 - **Mobile companion**: Expo app that pairs to desktop by QR/WebSocket.
 - **Runtime ops**: health checks, Prometheus metrics, Grafana dashboards, plugin discovery, backup export/restore, Docker, and Kubernetes manifests.
 
@@ -86,6 +89,8 @@ pnpm dev:desktop
 ```
 
 API keys are configured in the app: **Settings -> AI**. You do not need a root `.env` file for normal desktop chat.
+
+For a provider-free agent fixture, see [the headless runner](./apps/headless/README.md).
 
 > [!TIP]
 > Use `ollama` or `lmstudio` if you want to test chat locally without an API key.
@@ -124,6 +129,8 @@ Runtime endpoints:
 | Command | Purpose |
 |---|---|
 | `pnpm dev:desktop` | Start the Electron desktop app |
+| `pnpm dev:headless` | Start the JSONL headless runner |
+| `pnpm test:headless` | Run deterministic headless tests |
 | `pnpm dev:mobile` | Start Expo for the mobile companion |
 | `pnpm dev:runtime` | Start the runtime service |
 | `pnpm build` | Build workspaces through Turbo |
@@ -140,12 +147,15 @@ Runtime endpoints:
 syntax-senpai/
 ├── apps/
 │   ├── desktop/             # Electron + Vue 3 + UnoCSS primary app
+│   ├── headless/            # Node JSONL runner using the shared agent session
 │   ├── mobile/              # Expo / React Native QR-paired companion
 │   └── runtime/             # Node runtime for health, metrics, backups, plugins
 ├── packages/
 │   ├── ai-core/             # Provider abstraction, runtime, retry, trace, planner
+│   ├── agent-session/       # Shared chat/session orchestration and events
+│   ├── game-engine/         # Tic-Tac-Toe, Connect Four, chess state and AI
 │   ├── waifu-core/          # Personas, prompts, memory, affection, voice, skills
-│   ├── agent-tools/         # Shared plugin/tool registry primitives
+│   ├── agent-tools/         # Browser-safe tool catalog and plugin registry
 │   ├── storage/             # Chat and memory persistence helpers
 │   ├── ws-protocol/         # Desktop/mobile pairing protocol types
 │   ├── wechat-ilink/        # Tencent OpenClaw iLink client
@@ -154,7 +164,6 @@ syntax-senpai/
 │   └── ui-transitions/      # Vue transition components
 ├── plugins/                 # Runtime-loaded tool plugins, not a pnpm workspace
 ├── ops/                     # Prometheus, Grafana, Kubernetes, runtime ops docs
-├── docs/archive/            # Historical planning/status docs
 └── docker-compose.yml       # Local runtime + monitoring stack
 ```
 
@@ -181,6 +190,8 @@ See [PROVIDERS.md](./PROVIDERS.md) for the catalog and [PROVIDER_SETUP.md](./PRO
 - [PROVIDER_SETUP.md](./PROVIDER_SETUP.md): provider key and local model setup
 - [PROVIDERS.md](./PROVIDERS.md): provider catalog and implementation status
 - [CONTRIBUTING.md](./CONTRIBUTING.md): local development and PR workflow
+- [apps/headless/README.md](./apps/headless/README.md): JSONL request/response contract
+- [apps/desktop/README.md](./apps/desktop/README.md): desktop build and source map
 - [ops/README.md](./ops/README.md): Docker, monitoring, backups, and Kubernetes
 - [SECURITY.md](./SECURITY.md): vulnerability reporting and security notes
 

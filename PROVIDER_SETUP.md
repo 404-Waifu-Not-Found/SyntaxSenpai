@@ -1,6 +1,6 @@
 # AI Provider Setup
 
-SyntaxSenpai supports 21 registered provider IDs. Eighteen work end-to-end in the current tree; `azure-openai`, `fireworks`, and `xai-grok` are registered stubs whose `chat()` and `stream()` methods throw until implemented.
+SyntaxSenpai supports 21 registered provider IDs. Eighteen have implemented adapters; live success still depends on credentials and provider availability. `azure-openai`, `fireworks`, and `xai-grok` are registered stubs whose `chat()` and `stream()` methods throw until implemented.
 
 For normal desktop use, configure providers in **Settings -> AI**. API keys are stored through the OS keychain path and are not read from a project `.env` file.
 
@@ -201,7 +201,7 @@ for await (const chunk of runtime.streamMessage({
 | Key is rejected | Regenerate the key, confirm it belongs to the selected provider, and check account billing/limits. |
 | Model list is empty | Use **Refresh models**, verify the key, and check provider availability. |
 | Local provider cannot connect | Confirm the local server is running and the base URL/port matches the app settings. |
-| Tool calls fail | Try a provider with tool support and verify agent mode is not `ask` when you expect automatic execution. |
+| Tool calls fail | Try a provider/model with tool support, check the selected agent mode, and inspect the returned tool error. |
 | `azure-openai` or `fireworks` fails | Expected in the current tree; both are registered stubs. |
 
 ## Security

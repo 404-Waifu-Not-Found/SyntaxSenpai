@@ -460,21 +460,20 @@ watch(
 </script>
 
 <template>
-  <Teleport to="body">
-    <section class="gomoku-panel fixed inset-0 z-[70] flex min-h-0 flex-col bg-[#090b12]/95 text-white backdrop-blur-2xl">
-    <div class="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-white/10 bg-black/20 px-5 py-4 sm:px-8">
+    <section class="gomoku-panel flex h-full min-h-0 flex-col overflow-hidden">
+    <div class="gomoku-header flex shrink-0 flex-wrap items-start justify-between gap-3 px-3 py-3">
       <div class="min-w-0">
-        <div class="flex items-center gap-2 text-lg font-semibold text-white">
+        <div class="flex items-center gap-2 text-lg font-semibold">
           <span aria-hidden="true">⚫⚪</span>
           <span>{{ t('games.gomoku') }}</span>
-          <span class="rounded-full bg-white/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.18em] text-neutral-300">15 × 15</span>
+          <span class="gomoku-badge rounded-full px-2.5 py-1 text-[10px] uppercase tracking-[0.18em]">15 × 15</span>
         </div>
-        <p class="mt-1 text-xs text-neutral-400 sm:text-sm">
+        <p class="gomoku-muted mt-1 text-xs sm:text-sm">
           {{ t('gomoku.subtitle', { name: waifuName }) }}
         </p>
       </div>
       <div class="flex items-center gap-2">
-        <div class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-medium text-neutral-200">
+        <div class="gomoku-badge rounded-full px-3 py-1 text-[11px] font-medium">
           {{ currentTurnLabel }}
         </div>
         <button
@@ -495,11 +494,11 @@ watch(
       </div>
     </div>
 
-    <div class="grid min-h-0 flex-1 gap-5 overflow-y-auto p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:p-8">
+    <div class="grid min-h-0 flex-1 gap-4 overflow-y-auto p-3">
       <div class="flex min-h-0 min-w-0 flex-col">
-        <div class="gomoku-board-stage flex min-h-[min(62vh,48rem)] flex-1 items-center justify-center overflow-auto rounded-3xl border border-white/10 p-3 sm:p-6">
+        <div class="gomoku-board-stage flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-2xl p-2">
 
-          <div class="overflow-auto rounded-2xl border border-black/10 bg-gradient-to-br from-amber-200/95 via-amber-100/90 to-orange-200/85 p-3 shadow-2xl sm:p-5">
+          <div class="gomoku-board-surface overflow-auto rounded-2xl p-2">
             <div class="gomoku-grid min-w-max">
             <div class="gomoku-axis-corner" />
             <div v-for="file in FILE_LABELS" :key="`col-${file}`" class="gomoku-axis-label">
@@ -537,10 +536,10 @@ watch(
       </div>
 
       <aside class="flex min-h-0 flex-col gap-4">
-        <div class="flex min-h-0 flex-1 flex-col rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+        <div class="gomoku-commentary flex min-h-0 flex-1 flex-col rounded-2xl p-3">
           <div class="mb-3 flex items-center justify-between gap-2">
-            <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-400">{{ t('gomoku.liveChat') }}</div>
-            <span class="text-[11px] text-neutral-500">{{ t('gomoku.personalityOutput') }}</span>
+            <div class="gomoku-muted text-xs font-semibold uppercase tracking-[0.16em]">{{ t('gomoku.liveChat') }}</div>
+            <span class="gomoku-muted text-[11px]">{{ t('gomoku.personalityOutput') }}</span>
           </div>
           <div ref="commentaryScrollRef" class="min-h-40 flex-1 space-y-3 overflow-y-auto pr-1" aria-live="polite">
             <div
@@ -552,13 +551,13 @@ watch(
                 :class="[
                   'max-w-[92%] rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-lg',
                   bubble.speaker === 'user'
-                    ? 'rounded-br-md bg-primary-500/25 text-primary-50'
+                    ? 'gomoku-bubble-user rounded-br-md'
                     : bubble.speaker === 'system'
-                      ? 'rounded-bl-md bg-white/8 text-neutral-300'
-                      : 'rounded-bl-md bg-violet-500/20 text-violet-50',
+                      ? 'gomoku-bubble-system rounded-bl-md'
+                      : 'gomoku-bubble-agent rounded-bl-md',
                 ]"
               >
-                <div v-if="bubble.speaker !== 'user'" class="mb-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/50">
+                <div v-if="bubble.speaker !== 'user'" class="gomoku-muted mb-0.5 text-[10px] font-semibold uppercase tracking-wider">
                   {{ bubble.speaker === 'system' ? t('gomoku.game') : waifuName }}
                 </div>
                 {{ bubble.text }}
@@ -578,19 +577,33 @@ watch(
       </aside>
     </div>
     </section>
-  </Teleport>
 </template>
 
 <style scoped>
 .gomoku-panel {
-  box-shadow: 0 22px 90px rgba(0, 0, 0, 0.55);
+  color: var(--fg);
+  background: var(--surface);
   animation: gomoku-panel-enter 220ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.gomoku-header,
+.gomoku-commentary {
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 22%, transparent);
+  background: var(--surface);
+}
+
+.gomoku-commentary { border: 1px solid color-mix(in srgb, var(--primary) 22%, transparent); }
+.gomoku-badge { border: 1px solid color-mix(in srgb, var(--primary) 24%, transparent); background: var(--surface-2); color: var(--fg); }
+.gomoku-muted { color: color-mix(in srgb, var(--fg) 65%, transparent); }
+.gomoku-bubble-user { background: color-mix(in srgb, var(--primary) 25%, var(--surface)); color: var(--fg); }
+.gomoku-bubble-agent { background: color-mix(in srgb, var(--accent) 22%, var(--surface)); color: var(--fg); }
+.gomoku-bubble-system { background: var(--surface-2); color: var(--fg); }
+.gomoku-board-surface { background: color-mix(in srgb, var(--surface-2) 75%, var(--primary) 25%); }
+
 .gomoku-board-stage {
   background:
-    radial-gradient(circle at 50% 35%, rgba(99, 102, 241, 0.16), transparent 52%),
-    linear-gradient(145deg, rgba(30, 41, 59, 0.72), rgba(15, 23, 42, 0.92));
+    radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--primary) 16%, transparent), transparent 52%),
+    var(--surface-2);
   animation: gomoku-board-enter 320ms cubic-bezier(0.16, 1, 0.3, 1) 70ms both;
 }
 
@@ -599,7 +612,7 @@ watch(
 }
 
 .gomoku-grid {
-  --gomoku-cell-size: clamp(1.55rem, 3.6vw, 3.4rem);
+  --gomoku-cell-size: clamp(1.45rem, 2.4vw, 2.1rem);
   display: grid;
   grid-template-columns: repeat(16, var(--gomoku-cell-size));
   gap: 0.22rem;
@@ -623,7 +636,7 @@ watch(
   justify-content: center;
   font-size: 0.72rem;
   font-weight: 700;
-  color: rgba(51, 24, 0, 0.72);
+  color: var(--fg);
   user-select: none;
 }
 
@@ -632,14 +645,9 @@ watch(
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(95, 52, 11, 0.16);
+  border: 1px solid color-mix(in srgb, var(--primary) 26%, transparent);
   border-radius: 0.55rem;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.08)),
-    linear-gradient(135deg, rgba(249, 214, 135, 0.58), rgba(216, 153, 73, 0.58));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    inset 0 -1px 0 rgba(109, 63, 17, 0.15);
+  background: color-mix(in srgb, var(--surface) 82%, var(--primary) 18%);
   transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
 }
 
@@ -649,15 +657,13 @@ watch(
   width: 0.2rem;
   height: 0.2rem;
   border-radius: 999px;
-  background: rgba(86, 45, 10, 0.18);
+  background: color-mix(in srgb, var(--fg) 25%, transparent);
 }
 
 .gomoku-cell-playable:hover {
   transform: translateY(-1px);
-  border-color: rgba(255, 255, 255, 0.48);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    0 0 0 1px rgba(255, 255, 255, 0.16);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 35%, transparent);
 }
 
 .gomoku-cell:disabled {
@@ -689,15 +695,13 @@ watch(
   position: absolute;
   inset: 32%;
   border-radius: 999px;
-  background: rgba(251, 191, 36, 0.92);
-  box-shadow: 0 0 0 1px rgba(120, 53, 15, 0.18);
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--surface);
 }
 
 .gomoku-cell-winning {
-  border-color: rgba(34, 197, 94, 0.65);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    0 0 0 1px rgba(34, 197, 94, 0.25);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 40%, transparent);
 }
 
 @keyframes gomoku-panel-enter {
@@ -740,4 +744,10 @@ watch(
     animation: none;
   }
 }
+
+:global([data-motion='reduced']) .gomoku-panel,
+:global([data-motion='reduced']) .gomoku-board-stage,
+:global([data-motion='reduced']) .gomoku-panel aside { animation: none; }
+
+.gomoku-panel button:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 </style>

@@ -6,9 +6,9 @@ import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const workspaceAlias = {
-  '@syntax-senpai/agent-tools/catalog': path.resolve(__dirname, '../../packages/agent-tools/src/catalog.ts'),
   '@syntax-senpai/game-engine': path.resolve(__dirname, '../../packages/game-engine/src/index.ts'),
   '@syntax-senpai/ai-core': path.resolve(__dirname, '../../packages/ai-core/src/index.ts'),
+  '@syntax-senpai/agent-tools/catalog': path.resolve(__dirname, '../../packages/agent-tools/src/catalog.ts'),
   '@syntax-senpai/agent-tools': path.resolve(__dirname, '../../packages/agent-tools/src/index.ts'),
   '@syntax-senpai/storage': path.resolve(__dirname, '../../packages/storage/src/index.ts'),
   '@syntax-senpai/waifu-core': path.resolve(__dirname, '../../packages/waifu-core/src/index.ts'),
@@ -101,7 +101,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: path.resolve(__dirname, 'src/renderer/index.html'),
-          game: path.resolve(__dirname, 'src/renderer/game.html'),
+          live2d: path.resolve(__dirname, 'src/renderer/live2d.html'),
         },
         external: ['expo-secure-store', 'expo', 'keytar', 'better-sqlite3']
       },

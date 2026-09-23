@@ -32,6 +32,7 @@ import {
 
 export interface BotOptions {
   baseUrl?: string;
+  cdnBaseUrl?: string;
   fetchImpl?: typeof fetch;
   /** Minimum delay between retries after a transient error (ms). */
   minRetryMs?: number;
@@ -52,6 +53,7 @@ export class WeChatIlinkBot extends EventEmitter {
     this.creds = creds;
     this.opts = {
       baseUrl: opts.baseUrl ?? creds.baseUrl ?? ILINK_BASE_URL,
+      cdnBaseUrl: opts.cdnBaseUrl ?? "https://novac2c.cdn.weixin.qq.com/c2c",
       fetchImpl: opts.fetchImpl ?? fetch,
       minRetryMs: opts.minRetryMs ?? 1_000,
       maxRetryMs: opts.maxRetryMs ?? 30_000,
@@ -91,6 +93,7 @@ export class WeChatIlinkBot extends EventEmitter {
   private apiOpts(extra?: ApiOptions): ApiOptions {
     return {
       baseUrl: this.opts.baseUrl,
+      cdnBaseUrl: this.opts.cdnBaseUrl,
       fetchImpl: this.opts.fetchImpl,
       signal: this.loopAbort?.signal,
       ...(extra ?? {}),
@@ -105,6 +108,7 @@ export class WeChatIlinkBot extends EventEmitter {
   private outboundApiOpts(): ApiOptions {
     return {
       baseUrl: this.opts.baseUrl,
+      cdnBaseUrl: this.opts.cdnBaseUrl,
       fetchImpl: this.opts.fetchImpl,
     };
   }
@@ -162,7 +166,7 @@ export class WeChatIlinkBot extends EventEmitter {
   }
 
   async sendImage(toUserId: string, png: Buffer, contextToken?: string): Promise<SendMessageResponse> {
-    const item = await uploadImage(this.creds, toUserId, png, this.apiOpts());
+    const item = await uploadImage(this.creds, toUserId, png, this.outboundApiOpts());
     return ilinkSendMessage(
       this.creds,
       {

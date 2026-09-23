@@ -397,44 +397,43 @@ watch(
 </script>
 
 <template>
-  <Teleport to="body">
-    <section class="fate-game fixed inset-0 z-[75] flex min-h-0 flex-col overflow-hidden bg-[#080912]/97 text-white backdrop-blur-2xl">
-      <header class="flex shrink-0 items-center justify-between gap-4 border-b border-white/10 bg-black/20 px-5 py-4 sm:px-8">
+    <section class="fate-game flex h-full min-h-0 flex-col overflow-hidden">
+      <header class="fate-header flex shrink-0 flex-wrap items-center justify-between gap-3 px-3 py-3">
         <div>
           <div class="flex items-center gap-3">
             <span class="fate-orb h-5 w-5 rounded-full" />
             <h2 class="text-lg font-semibold">{{ t('games.fate') }}</h2>
-            <span class="rounded-full border border-violet-300/20 bg-violet-400/10 px-2.5 py-1 text-[10px] tracking-[0.16em] text-violet-200">{{ t('fate.energyDuel') }}</span>
+            <span class="fate-badge rounded-full px-2.5 py-1 text-[10px] tracking-[0.16em]">{{ t('fate.energyDuel') }}</span>
           </div>
-          <p class="mt-1 text-xs text-neutral-400">{{ t('fate.subtitle') }}</p>
+          <p class="fate-muted mt-1 text-xs">{{ t('fate.subtitle') }}</p>
         </div>
         <div class="flex items-center gap-2">
-          <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-neutral-200">{{ turnLabel }}</span>
+          <span class="fate-badge rounded-full px-3 py-1.5 text-xs">{{ turnLabel }}</span>
           <button class="btn-ghost px-3 py-1.5 text-xs" type="button" @click="resetGame">{{ t('games.reset') }}</button>
           <button class="btn-ghost px-3 py-1.5 text-xs" type="button" :aria-label="t('games.close')" @click="emit('close')">✕</button>
         </div>
       </header>
 
-      <div class="grid min-h-0 flex-1 gap-5 overflow-y-auto p-4 sm:p-6 xl:grid-cols-[minmax(0,1fr)_24rem] xl:p-8">
-        <main class="fate-arena relative flex min-h-[38rem] flex-col overflow-hidden rounded-3xl border border-white/10 p-5 sm:p-8">
+      <div class="grid min-h-0 flex-1 gap-4 overflow-y-auto p-3">
+        <main class="fate-arena relative flex min-h-[34rem] flex-col overflow-hidden rounded-2xl p-3">
           <div class="pointer-events-none absolute inset-0 opacity-60">
-            <div class="fate-ring absolute left-1/2 top-1/2 h-[34rem] w-[34rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-violet-300/15" />
+            <div class="fate-ring absolute left-1/2 top-1/2 h-[34rem] w-[34rem] -translate-x-1/2 -translate-y-1/2 rounded-full border" />
           </div>
 
           <div class="relative z-10 grid grid-cols-2 gap-4">
-            <div class="rounded-2xl border border-cyan-300/15 bg-cyan-400/5 p-4">
-              <div class="text-xs uppercase tracking-[0.16em] text-cyan-200/70">{{ t('fate.playerShield') }}</div>
+            <div class="fate-shield-player rounded-2xl p-3">
+              <div class="fate-primary-text text-xs uppercase tracking-[0.16em]">{{ t('fate.playerShield') }}</div>
               <div class="mt-3 flex gap-2">
-                <span v-for="index in MAX_INTEGRITY" :key="`p-${index}`" :class="['h-3 flex-1 rounded-full transition-all', index <= playerIntegrity ? 'bg-cyan-300 shadow-[0_0_14px_rgba(103,232,249,.45)]' : 'bg-white/8']" />
+                <span v-for="index in MAX_INTEGRITY" :key="`p-${index}`" :class="['h-3 flex-1 rounded-full transition-all', index <= playerIntegrity ? 'fate-meter-player' : 'fate-meter-empty']" />
               </div>
-              <div v-if="playerBarrier" class="mt-2 text-xs text-cyan-200">{{ t('fate.barrierActive') }}</div>
+              <div v-if="playerBarrier" class="fate-primary-text mt-2 text-xs">{{ t('fate.barrierActive') }}</div>
             </div>
-            <div class="rounded-2xl border border-violet-300/15 bg-violet-400/5 p-4 text-right">
-              <div class="text-xs uppercase tracking-[0.16em] text-violet-200/70">{{ t('fate.agentShield', { name: waifuName }) }}</div>
+            <div class="fate-shield-agent rounded-2xl p-3 text-right">
+              <div class="fate-accent-text text-xs uppercase tracking-[0.16em]">{{ t('fate.agentShield', { name: waifuName }) }}</div>
               <div class="mt-3 flex gap-2">
-                <span v-for="index in MAX_INTEGRITY" :key="`a-${index}`" :class="['h-3 flex-1 rounded-full transition-all', index <= agentIntegrity ? 'bg-violet-300 shadow-[0_0_14px_rgba(196,181,253,.45)]' : 'bg-white/8']" />
+                <span v-for="index in MAX_INTEGRITY" :key="`a-${index}`" :class="['h-3 flex-1 rounded-full transition-all', index <= agentIntegrity ? 'fate-meter-agent' : 'fate-meter-empty']" />
               </div>
-              <div v-if="agentBarrier" class="mt-2 text-xs text-violet-200">{{ t('fate.barrierActive') }}</div>
+              <div v-if="agentBarrier" class="fate-accent-text mt-2 text-xs">{{ t('fate.barrierActive') }}</div>
             </div>
           </div>
 
@@ -444,7 +443,7 @@ watch(
               <div
                 :class="[
                   'fate-core relative mt-5 flex h-48 w-48 items-center justify-center rounded-full border',
-                  thinking ? 'fate-core-thinking border-violet-300/40' : 'border-white/15',
+                  thinking ? 'fate-core-thinking' : '',
                   firing ? 'fate-core-firing' : '',
                 ]"
               >
@@ -475,9 +474,9 @@ watch(
             </div>
 
             <div class="mt-6 flex flex-wrap items-center justify-center gap-3 text-xs">
-              <span class="rounded-full bg-rose-400/10 px-3 py-1.5 text-rose-200">◆ {{ t('fate.energyCount', { count: visibleComposition.surge }) }}</span>
-              <span class="rounded-full bg-sky-400/10 px-3 py-1.5 text-sky-200">◇ {{ t('fate.calmCount', { count: visibleComposition.calm }) }}</span>
-              <span class="rounded-full bg-white/5 px-3 py-1.5 text-neutral-300">{{ t('fate.remaining', { count: chamber.length }) }}</span>
+              <span class="fate-badge fate-primary-text rounded-full px-3 py-1.5">◆ {{ t('fate.energyCount', { count: visibleComposition.surge }) }}</span>
+              <span class="fate-badge fate-accent-text rounded-full px-3 py-1.5">◇ {{ t('fate.calmCount', { count: visibleComposition.calm }) }}</span>
+              <span class="fate-badge rounded-full px-3 py-1.5">{{ t('fate.remaining', { count: chamber.length }) }}</span>
             </div>
           </div>
 
@@ -487,13 +486,13 @@ watch(
                 v-for="(item, key) in itemLabels"
                 :key="key"
                 type="button"
-                class="rounded-xl border border-white/10 bg-white/[0.04] p-3 text-left transition hover:border-violet-300/30 hover:bg-violet-400/10 disabled:cursor-not-allowed disabled:opacity-35"
+                class="fate-item rounded-xl p-3 text-left transition disabled:cursor-not-allowed disabled:opacity-35"
                 :disabled="!canPlayerAct || playerItems[key as ItemKind] <= 0"
                 :title="item.description"
                 @click="usePlayerItem(key as ItemKind)"
               >
                 <div class="flex items-center justify-between"><span class="text-lg">{{ item.icon }}</span><span class="text-xs text-neutral-400">×{{ playerItems[key as ItemKind] }}</span></div>
-                <div class="mt-1 text-xs font-medium text-neutral-200">{{ item.name }}</div>
+                <div class="mt-1 text-xs font-medium">{{ item.name }}</div>
                 <div class="mt-1.5 text-[10px] leading-4 text-neutral-500">{{ item.description }}</div>
               </button>
             </div>
@@ -510,20 +509,20 @@ watch(
           </div>
         </main>
 
-        <aside class="fate-dialogue flex min-h-[28rem] flex-col rounded-3xl border border-white/10 bg-white/[0.035] p-4">
+        <aside class="fate-dialogue flex min-h-48 flex-col rounded-2xl p-3">
           <div class="mb-4 flex items-center justify-between">
             <div>
-              <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-300">{{ t('fate.dialogue') }}</div>
+              <div class="text-xs font-semibold uppercase tracking-[0.16em]">{{ t('fate.dialogue') }}</div>
               <div class="mt-1 text-[11px] text-neutral-500">{{ t('fate.dialogueHint') }}</div>
             </div>
-            <span v-if="thinking || generatingDialogue" class="thinking-dots text-xs text-violet-200">
+            <span v-if="thinking || generatingDialogue" class="thinking-dots fate-accent-text text-xs">
               {{ generatingDialogue ? t('fate.organizing', { name: waifuName }) : t('fate.agentThinking', { name: waifuName }) }}
             </span>
           </div>
           <div ref="dialogueScrollRef" class="flex-1 space-y-3 overflow-y-auto pr-1" aria-live="polite">
             <div v-for="entry in dialogue" :key="entry.id" class="flex justify-start">
-              <div :class="['max-w-[96%] rounded-2xl rounded-bl-md px-4 py-3 text-sm leading-7 shadow-lg', entry.speaker === 'system' ? 'bg-white/7 text-neutral-300' : 'bg-violet-500/18 text-violet-50']">
-                <div class="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/45">{{ entry.speaker === 'system' ? t('fate.device') : waifuName }}</div>
+              <div :class="['max-w-[96%] rounded-2xl rounded-bl-md px-4 py-3 text-sm leading-7 shadow-lg', entry.speaker === 'system' ? 'fate-dialogue-system' : 'fate-dialogue-agent']">
+                <div class="fate-muted mb-1 text-[10px] font-semibold uppercase tracking-[0.14em]">{{ entry.speaker === 'system' ? t('fate.device') : waifuName }}</div>
                 {{ entry.text }}
               </div>
             </div>
@@ -531,24 +530,40 @@ watch(
         </aside>
       </div>
     </section>
-  </Teleport>
 </template>
 
 <style scoped>
-.fate-game { animation: fate-enter 280ms cubic-bezier(.16, 1, .3, 1); }
+.fate-game { color: var(--fg); background: var(--surface); animation: fate-enter 280ms cubic-bezier(.16, 1, .3, 1); }
+.fate-header { border-bottom: 1px solid color-mix(in srgb, var(--primary) 22%, transparent); }
+.fate-badge { border: 1px solid color-mix(in srgb, var(--primary) 24%, transparent); background: var(--surface-2); color: var(--fg); }
+.fate-muted,
+.fate-game [class*='text-neutral-'] { color: color-mix(in srgb, var(--fg) 65%, transparent); }
+.fate-primary-text { color: var(--primary); }
+.fate-accent-text { color: var(--accent); }
+.fate-shield-player,
+.fate-shield-agent { border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent); background: var(--surface-2); }
+.fate-shield-agent { border-color: color-mix(in srgb, var(--accent) 25%, transparent); }
+.fate-meter-player { background: var(--primary); box-shadow: 0 0 14px color-mix(in srgb, var(--primary) 45%, transparent); }
+.fate-meter-agent { background: var(--accent); box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 45%, transparent); }
+.fate-meter-empty { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+.fate-item { border: 1px solid color-mix(in srgb, var(--primary) 20%, transparent); background: var(--surface-2); }
+.fate-item:hover:not(:disabled) { border-color: var(--primary); background: color-mix(in srgb, var(--surface-2) 82%, var(--primary) 18%); }
+.fate-dialogue-system { background: var(--surface-2); color: var(--fg); }
+.fate-dialogue-agent { background: color-mix(in srgb, var(--surface) 78%, var(--accent) 22%); color: var(--fg); }
 .fate-arena {
   background:
-    radial-gradient(circle at 50% 44%, rgba(139, 92, 246, .18), transparent 35%),
-    linear-gradient(145deg, rgba(17, 24, 39, .96), rgba(8, 10, 24, .98));
+    radial-gradient(circle at 50% 44%, color-mix(in srgb, var(--primary) 18%, transparent), transparent 35%),
+    var(--surface-2);
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
   animation: fate-arena-enter 420ms cubic-bezier(.16, 1, .3, 1) 80ms both;
 }
-.fate-dialogue { animation: fate-dialogue-enter 460ms cubic-bezier(.16, 1, .3, 1) 140ms both; }
-.fate-orb { background: radial-gradient(circle at 35% 30%, #fff, #a78bfa 35%, #4c1d95 75%); box-shadow: 0 0 24px rgba(167, 139, 250, .7); }
-.fate-ring { box-shadow: inset 0 0 80px rgba(139, 92, 246, .06), 0 0 80px rgba(139, 92, 246, .08); animation: fate-ring-spin 24s linear infinite; }
-.fate-core { z-index: 1; background: radial-gradient(circle, rgba(124, 58, 237, .18), rgba(8, 10, 24, .95) 68%); box-shadow: 0 0 80px rgba(124, 58, 237, .18); transition: all 240ms ease; }
+.fate-dialogue { border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent); background: var(--surface); animation: fate-dialogue-enter 460ms cubic-bezier(.16, 1, .3, 1) 140ms both; }
+.fate-orb { background: var(--accent); box-shadow: 0 0 24px color-mix(in srgb, var(--accent) 55%, transparent); }
+.fate-ring { border-color: color-mix(in srgb, var(--accent) 18%, transparent); box-shadow: inset 0 0 80px color-mix(in srgb, var(--accent) 7%, transparent); animation: fate-ring-spin 24s linear infinite; }
+.fate-core { z-index: 1; border-color: color-mix(in srgb, var(--primary) 35%, transparent); background: radial-gradient(circle, color-mix(in srgb, var(--primary) 22%, transparent), var(--surface-2) 68%); box-shadow: 0 0 80px color-mix(in srgb, var(--primary) 18%, transparent); transition: all 240ms ease; }
 .fate-core-thinking { animation: fate-pulse 1.8s ease-in-out infinite; }
-.fate-core-firing { animation: fate-fire-kick 720ms cubic-bezier(.2, .8, .2, 1); border-color: rgba(216, 180, 254, .85); }
-.fate-flash { background: radial-gradient(circle, rgba(255,255,255,.95), rgba(167,139,250,.48) 24%, transparent 68%); animation: fate-flash 720ms ease-out both; }
+.fate-core-firing { animation: fate-fire-kick 720ms cubic-bezier(.2, .8, .2, 1); border-color: var(--accent); }
+.fate-flash { background: radial-gradient(circle, var(--fg), color-mix(in srgb, var(--accent) 48%, transparent) 24%, transparent 68%); animation: fate-flash 720ms ease-out both; }
 .fate-discharge {
   position: absolute;
   left: 50%;
@@ -559,29 +574,29 @@ watch(
   height: .42rem;
   transform-origin: left center;
   border-radius: 999px;
-  background: linear-gradient(90deg, rgba(255,255,255,.98), rgba(167,139,250,.9), transparent);
-  filter: drop-shadow(0 0 10px rgba(196,181,253,.9));
+  background: linear-gradient(90deg, var(--fg), var(--accent), transparent);
+  filter: drop-shadow(0 0 10px var(--accent));
   animation: fate-discharge 720ms ease-out both;
 }
 .fate-discharge-player { transform: rotate(-151deg); }
 .fate-discharge-agent { transform: rotate(-29deg); }
-.fate-action { display: flex; min-height: 5rem; flex-direction: column; justify-content: center; border-radius: 1rem; border: 1px solid rgba(255,255,255,.1); padding: 1rem; text-align: left; transition: all 160ms ease; }
+.fate-action { display: flex; min-height: 5rem; flex-direction: column; justify-content: center; border-radius: 1rem; border: 1px solid color-mix(in srgb, var(--primary) 20%, transparent); padding: 1rem; text-align: left; transition: all 160ms ease; }
 .fate-action:not(:disabled):hover { transform: translateY(-2px); }
-.fate-action-self { background: rgba(34, 211, 238, .06); }
-.fate-action-self:not(:disabled):hover { border-color: rgba(103, 232, 249, .35); background: rgba(34, 211, 238, .11); }
-.fate-action-agent { background: rgba(139, 92, 246, .08); }
-.fate-action-agent:not(:disabled):hover { border-color: rgba(196, 181, 253, .35); background: rgba(139, 92, 246, .14); }
+.fate-action-self { background: color-mix(in srgb, var(--surface-2) 90%, var(--primary) 10%); }
+.fate-action-self:not(:disabled):hover { border-color: var(--primary); background: color-mix(in srgb, var(--surface-2) 82%, var(--primary) 18%); }
+.fate-action-agent { background: color-mix(in srgb, var(--surface-2) 90%, var(--accent) 10%); }
+.fate-action-agent:not(:disabled):hover { border-color: var(--accent); background: color-mix(in srgb, var(--surface-2) 82%, var(--accent) 18%); }
 .fate-action:disabled { cursor: not-allowed; opacity: .4; }
 .thinking-dots::after { content: '…'; animation: fate-dots 1.4s steps(4, end) infinite; }
 @keyframes fate-enter { from { opacity: 0; backdrop-filter: blur(0); } to { opacity: 1; backdrop-filter: blur(24px); } }
 @keyframes fate-arena-enter { from { opacity: 0; transform: translateY(18px) scale(.985); } to { opacity: 1; transform: none; } }
 @keyframes fate-dialogue-enter { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
 @keyframes fate-ring-spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
-@keyframes fate-pulse { 50% { transform: scale(1.04); box-shadow: 0 0 110px rgba(167, 139, 250, .35); } }
+@keyframes fate-pulse { 50% { transform: scale(1.04); box-shadow: 0 0 110px color-mix(in srgb, var(--accent) 35%, transparent); } }
 @keyframes fate-fire-kick {
   0% { transform: scale(1); }
   28% { transform: scale(.9); }
-  48% { transform: scale(1.1); box-shadow: 0 0 140px rgba(216,180,254,.7); }
+  48% { transform: scale(1.1); box-shadow: 0 0 140px color-mix(in srgb, var(--accent) 70%, transparent); }
   100% { transform: scale(1); }
 }
 @keyframes fate-flash {
@@ -598,4 +613,13 @@ watch(
 @media (prefers-reduced-motion: reduce) {
   .fate-game, .fate-arena, .fate-dialogue, .fate-ring, .fate-core-thinking, .fate-core-firing, .fate-flash, .fate-discharge, .thinking-dots::after { animation: none; }
 }
+:global([data-motion='reduced']) .fate-game,
+:global([data-motion='reduced']) .fate-arena,
+:global([data-motion='reduced']) .fate-dialogue,
+:global([data-motion='reduced']) .fate-ring,
+:global([data-motion='reduced']) .fate-core-thinking,
+:global([data-motion='reduced']) .fate-core-firing,
+:global([data-motion='reduced']) .fate-flash,
+:global([data-motion='reduced']) .fate-discharge { animation: none; }
+.fate-game button:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 </style>

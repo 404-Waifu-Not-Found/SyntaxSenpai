@@ -16,19 +16,88 @@ function resolveDataPaths() {
   }
 }
 
+let store: any
+let memoryStore: any
+
+export async function getChatBackupData() {
+  if (!store || !memoryStore) {
+    const dbPath = process.env.CHAT_DB_PATH || undefined
+    store = storage.createChatStore('desktop', dbPath) as any
+    memoryStore = storage.createMemoryStore(dbPath)
+  }
+  const conversations = await store.listConversations()
+  return {
+    conversations: await Promise.all(
+      conversations.map(async (conversation: any) => ({
+        ...conversation,
+        messages: await store.getMessages(conversation.id),
+      })),
+    ),
+    memories: await memoryStore.getAllMemories(),
+    relationships: (store as any).data?.relationships ?? {},
+  }
+}
+
+export async function replaceChatBackupSnapshot(payload: any) {
+  const { chatPath, memoryPath } = resolveDataPaths()
+  const conversations = Array.isArray(payload?.conversations) ? payload.conversations : []
+  const memories = Array.isArray(payload?.memories) ? payload.memories : []
+
+  const chatData = {
+    conversations: {} as Record<string, any>,
+    messages: {} as Record<string, any[]>,
+    relationships: payload?.relationships && typeof payload.relationships === 'object'
+      ? payload.relationships
+      : {},
+  }
+
+  for (const conversation of conversations) {
+    if (!conversation?.id) continue
+    const messages = Array.isArray(conversation.messages) ? conversation.messages : []
+    const { messages: _messages, ...conversationRecord } = conversation
+    chatData.conversations[conversation.id] = {
+      ...conversationRecord,
+      messageCount: typeof conversationRecord.messageCount === 'number'
+        ? conversationRecord.messageCount
+        : messages.length,
+    }
+    chatData.messages[conversation.id] = messages.map((message: any) => ({
+      ...message,
+      createdAt: message.createdAt || message.timestamp || new Date().toISOString(),
+    }))
+  }
+
+  const memoryData = memories.reduce((acc: Record<string, any>, entry: any) => {
+    if (!entry?.key) return acc
+    acc[entry.key] = {
+      ...entry,
+      category: entry.category || 'general',
+      createdAt: entry.createdAt || new Date().toISOString(),
+      updatedAt: entry.updatedAt || new Date().toISOString(),
+    }
+    return acc
+  }, {})
+
+  await fs.mkdir(path.dirname(chatPath), { recursive: true })
+  await fs.writeFile(chatPath, JSON.stringify(chatData, null, 2), 'utf-8')
+  await fs.writeFile(memoryPath, JSON.stringify(memoryData, null, 2), 'utf-8')
+  resetStores()
+}
+
+function resetStores() {
+  const dbPath = process.env.CHAT_DB_PATH || undefined
+  store = storage.createChatStore('desktop', dbPath) as any
+  memoryStore = storage.createMemoryStore(dbPath)
+}
+
 export function registerChatIpc() {
   if (registered) return
   registered = true
 
   // Create a platform chat store (desktop) using CHAT_DB_PATH if provided.
   const dbPath = process.env.CHAT_DB_PATH || undefined
-  let store = storage.createChatStore('desktop', dbPath) as any
-  let memoryStore = storage.createMemoryStore(dbPath)
-
-  function resetStores() {
-    store = storage.createChatStore('desktop', dbPath) as any
-    memoryStore = storage.createMemoryStore(dbPath)
-  }
+  store = storage.createChatStore('desktop', dbPath) as any
+  memoryStore = storage.createMemoryStore(dbPath)
 
   registerHostHandler('store:createConversation', async (_event: IpcMainInvokeEvent, waifuId: string, title: string) => {
     try {
@@ -218,48 +287,7 @@ export function registerChatIpc() {
 
   registerHostHandler('store:replaceSnapshot', async (_event: IpcMainInvokeEvent, payload: any) => {
     try {
-      const { chatPath, memoryPath } = resolveDataPaths()
-      const conversations = Array.isArray(payload?.conversations) ? payload.conversations : []
-      const memories = Array.isArray(payload?.memories) ? payload.memories : []
-
-      const chatData = {
-        conversations: {} as Record<string, any>,
-        messages: {} as Record<string, any[]>,
-        relationships: {},
-      }
-
-      for (const conversation of conversations) {
-        if (!conversation?.id) continue
-        const messages = Array.isArray(conversation.messages) ? conversation.messages : []
-        const { messages: _messages, ...conversationRecord } = conversation
-        chatData.conversations[conversation.id] = {
-          ...conversationRecord,
-          messageCount: typeof conversationRecord.messageCount === 'number'
-            ? conversationRecord.messageCount
-            : messages.length,
-        }
-        chatData.messages[conversation.id] = messages.map((message: any) => ({
-          ...message,
-          createdAt: message.createdAt || message.timestamp || new Date().toISOString(),
-        }))
-      }
-
-      const memoryData = memories.reduce((acc: Record<string, any>, entry: any) => {
-        if (!entry?.key) return acc
-        acc[entry.key] = {
-          ...entry,
-          category: entry.category || 'general',
-          createdAt: entry.createdAt || new Date().toISOString(),
-          updatedAt: entry.updatedAt || new Date().toISOString(),
-        }
-        return acc
-      }, {})
-
-      await fs.mkdir(path.dirname(chatPath), { recursive: true })
-      await fs.writeFile(chatPath, JSON.stringify(chatData, null, 2), 'utf-8')
-      await fs.writeFile(memoryPath, JSON.stringify(memoryData, null, 2), 'utf-8')
-      resetStores()
-
+      await replaceChatBackupSnapshot(payload)
       return { success: true }
     } catch (err: any) {
       return { success: false, error: err instanceof Error ? err.message : String(err) }

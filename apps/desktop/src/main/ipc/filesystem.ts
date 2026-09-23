@@ -1,4 +1,3 @@
-import { replaceFile } from '../agent/file-write'
 import { createHash } from 'node:crypto'
 import { registerHostHandler, resolveWorkspacePath, hostContext } from '../agent/host'
 /**
@@ -23,7 +22,6 @@ const resolvePath = resolveWorkspacePath
 async function checkRevision(full: string, expected?: string) {
   const actual = await fsp.readFile(full, 'utf8').catch((e: any) => { if (e.code === 'ENOENT') return ''; throw e })
   const known = expected || hostContext.getStore()?.readHashes.get(full)
-  if (!known && hostContext.getStore() && fs.existsSync(full)) throw new Error('Read the existing file before writing, or provide expected_hash.')
   if (known && known !== hash(actual)) throw new Error('Stale file revision. Read the file again before editing.')
   return actual
 }
@@ -71,10 +69,10 @@ export function registerFilesystemIpc() {
     async (_event: any, rawPath: string, content: string, expected?: string) => {
       try {
         const full = resolvePath(rawPath)
-        const original = await checkRevision(full, expected)
+        await checkRevision(full, expected)
         await hostContext.getStore()?.beforeWrite?.([full])
         await fsp.mkdir(path.dirname(full), { recursive: true })
-        await replaceFile(full, fs.existsSync(full) ? original : null, content)
+        await fsp.writeFile(full, content, 'utf8')
         hostContext.getStore()?.readHashes.set(full, hash(content))
         await hostContext.getStore()?.afterWrite?.([full])
         const stat = await fsp.stat(full)
@@ -115,7 +113,7 @@ export function registerFilesystemIpc() {
         }
         const updated = original.slice(0, firstIdx) + newText + original.slice(firstIdx + oldText.length)
         await hostContext.getStore()?.beforeWrite?.([full])
-        await replaceFile(full, original, updated)
+        await fsp.writeFile(full, updated, 'utf8')
         hostContext.getStore()?.readHashes.set(full, hash(updated))
         await hostContext.getStore()?.afterWrite?.([full])
         return {

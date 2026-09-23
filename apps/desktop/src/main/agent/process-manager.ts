@@ -1,6 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { setTimeout as schedule } from 'node:timers'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -31,16 +30,15 @@ export class ProcessManager extends EventEmitter {
         const args = process.platform === 'win32' ? ['-NoLogo', '-NoProfile', '-Command', s.command] : ['-lc', s.command]
         const child = spawn(shell, args, { cwd: s.cwd, stdio: 'pipe', detached: process.platform !== 'win32', windowsHide: true })
         s.child = child
-        const append = (chunk: Buffer | string) => {
-          const value = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+        const append = (chunk: Buffer) => {
+          const value = chunk.toString('utf8')
           s.parts.push(value); s.cursor += value.length
           // Durable full output, bounded live tail.
-          try { fs.appendFileSync(path.join(this.directory, s.id + '.log'), value) } catch (error) { this.emit('warning', { id: s.id, error: String(error) }); this.stop(s.id) }
+          fs.appendFileSync(path.join(this.directory, s.id + '.log'), value)
           s.output = (s.output + value).slice(-64_000)
           if (s.parts.length > 2000) s.parts = [s.output]
           this.emit('output', { id: s.id, runId: s.runId, chunk: value, cursor: s.cursor })
         }
-        child.stdout?.setEncoding('utf8'); child.stderr?.setEncoding('utf8')
         child.stdout?.on('data', append); child.stderr?.on('data', append)
         child.on('error', error => { append(Buffer.from(error.message)); this.finish(s.id, 1) })
         child.on('close', code => this.finish(s.id, code))
@@ -77,9 +75,7 @@ export class ProcessManager extends EventEmitter {
         else process.kill(-s.child.pid, 'SIGTERM')
       } catch { /* already exited */ }
       const pid = s.child.pid
-      const killTimer = schedule(() => { try { if (process.platform !== 'win32') process.kill(-pid, 'SIGKILL') } catch {} }, 1500)
-      const unref = (killTimer as unknown as { unref?: () => void }).unref
-      if (unref) unref.call(killTimer)
+      setTimeout(() => { try { if (process.platform !== 'win32') process.kill(-pid, 'SIGKILL') } catch {} }, 1500).unref()
     }
     if (!s.child) this.finish(id, null)
   }

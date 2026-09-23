@@ -4,12 +4,14 @@ import os from 'node:os'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 let registered = false
+
 async function appendExecutionLog(entry: Record<string, unknown>) {
   const database = process.env.CHAT_DB_PATH || 'syntax-senpai.sqlite'
   const target = path.join(path.dirname(database), 'agent-audit.jsonl')
   await fs.mkdir(path.dirname(target), { recursive: true })
   await fs.appendFile(target, JSON.stringify(entry) + '\n', 'utf8')
 }
+
 export function registerTerminalIpc() {
   if (registered) return
   registered = true

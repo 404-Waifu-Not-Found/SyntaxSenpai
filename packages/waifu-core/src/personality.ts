@@ -2,8 +2,27 @@
  * System prompt builder - constructs the full system prompt for a waifu
  */
 
-import Handlebars from "handlebars";
 import type { Waifu, WaifuRelationship, SystemPromptContext } from "./types";
+
+// Persona templates only interpolate fields; they are not HTML templates.
+// Handlebars.compile() generates a Function at runtime, which Electron's CSP
+// correctly blocks. Keep interpolation data-only so chat works with unsafe-eval
+// disabled in both the desktop renderer and the headless runtime.
+const PROMPT_PLACEHOLDER = /{{{\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*}}}|{{\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*}}/g;
+
+function interpolatePrompt(template: string, values: Record<string, unknown>): string {
+  return template.replace(PROMPT_PLACEHOLDER, (_match, triplePath: string | undefined, doublePath: string | undefined) => {
+    const path = triplePath ?? doublePath ?? "";
+    let value: unknown = values;
+    for (const segment of path.split(".")) {
+      if (value === null || typeof value !== "object" || !Object.prototype.hasOwnProperty.call(value, segment)) {
+        return "";
+      }
+      value = (value as Record<string, unknown>)[segment];
+    }
+    return value == null ? "" : String(value);
+  });
+}
 
 /**
  * Build the complete system prompt for a waifu interaction
@@ -106,8 +125,7 @@ function renderTemplatePrompt(
     return "";
   }
 
-  const template = Handlebars.compile(waifu.systemPromptTemplate);
-  return `## Character Brief\n${template({
+  return `## Character Brief\n${interpolatePrompt(waifu.systemPromptTemplate, {
     ...waifu,
     ...waifu.personalityTraits,
     ...waifu.communicationStyle,

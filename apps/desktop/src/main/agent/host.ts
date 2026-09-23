@@ -1,6 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import path from 'node:path'
-import fs from 'node:fs'
 import os from 'node:os'
 export interface HostContext {
   runId: string; workspace: string; readHashes: Map<string, string>; signal?: AbortSignal
@@ -19,6 +18,5 @@ export async function invokeHost(channel: string, ...args: any[]): Promise<any> 
 }
 export function resolveWorkspacePath(raw = '.') {
   const expanded = raw.startsWith('~') ? path.join(os.homedir(), raw.slice(1)) : raw
-  const resolved = path.resolve(hostContext.getStore()?.workspace || process.cwd(), expanded)
-  try { return fs.realpathSync(resolved) } catch { try { return path.join(fs.realpathSync(path.dirname(resolved)), path.basename(resolved)) } catch { return resolved } }
+  return path.resolve(hostContext.getStore()?.workspace || process.cwd(), expanded)
 }

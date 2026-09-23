@@ -159,6 +159,12 @@ export function copyDirRecursive(src: string, dest: string): void {
  * created on demand but not counted).
  */
 export function extractZipSafely(zipPath: string, destDir: string): number {
+  // A lot of Live2D packs are authored on Chinese/Japanese Windows systems
+  // and contain legacy-encoded filenames without the UTF-8 flag. AdmZip's
+  // default UTF-8 decoder turns those names into U+FFFD, which leaves the
+  // model JSON pointing at assets that were copied under different names.
+  // Decode as UTF-8 first, then fall back to the common GB18030 filename
+  // encoding only when UTF-8 produced replacement characters.
   const legacyFilenameDecoder = new TextDecoder("gb18030");
   const zip = new AdmZip(zipPath, {
     decoder: {
@@ -223,18 +229,31 @@ function collectLive2DReferences(value: unknown, key = ""): string[] {
   if (typeof value === "string" && (key === "Moc" || key === "Physics" || key === "DisplayInfo" || key === "Textures" || key === "File")) {
     return [value];
   }
-  if (Array.isArray(value)) return value.flatMap((item) => collectLive2DReferences(item, key));
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectLive2DReferences(item, key));
+  }
   if (value && typeof value === "object") {
-    return Object.entries(value).flatMap(([childKey, childValue]) => collectLive2DReferences(childValue, childKey));
+    return Object.entries(value).flatMap(([childKey, childValue]) =>
+      collectLive2DReferences(childValue, childKey),
+    );
   }
   return [];
 }
 
 function live2DReferenceSuffix(name: string): string {
   const lower = name.toLowerCase();
-  return LIVE2D_REFERENCE_SUFFIXES.find((suffix) => lower.endsWith(suffix)) ?? path.extname(lower);
+  return LIVE2D_REFERENCE_SUFFIXES.find((suffix) => lower.endsWith(suffix))
+    ?? path.extname(lower);
 }
 
+/**
+ * Repair an imported model whose legacy-encoded ZIP filenames were already
+ * written as replacement characters by an older app version. The model JSON
+ * is authoritative; a missing referenced asset is only renamed when there is
+ * exactly one sibling replacement-name candidate with the same Live2D suffix.
+ *
+ * Returns the number of files/directories repaired.
+ */
 export function repairLive2DModelReferences(modelJsonPath: string): number {
   if (!fs.existsSync(modelJsonPath)) return 0;
   const root = path.dirname(modelJsonPath);
@@ -244,12 +263,14 @@ export function repairLive2DModelReferences(modelJsonPath: string): number {
   } catch {
     return 0;
   }
+
   let repaired = 0;
   for (const reference of collectLive2DReferences(model)) {
     if (!reference || reference.includes("://") || path.isAbsolute(reference)) continue;
     const expected = path.resolve(root, reference);
     const relative = path.relative(root, expected);
     if (relative.startsWith("..") || path.isAbsolute(relative)) continue;
+
     let currentDir = root;
     for (const segment of relative.split(path.sep)) {
       const target = path.join(currentDir, segment);
@@ -257,12 +278,14 @@ export function repairLive2DModelReferences(modelJsonPath: string): number {
         currentDir = target;
         continue;
       }
+
       let entries: fs.Dirent[];
       try {
         entries = fs.readdirSync(currentDir, { withFileTypes: true });
       } catch {
         break;
       }
+
       const isDirectorySegment = target !== expected;
       const expectedSuffix = live2DReferenceSuffix(segment);
       const candidates = entries
@@ -270,12 +293,15 @@ export function repairLive2DModelReferences(modelJsonPath: string): number {
         .filter((entry) => entry.name.toLowerCase().endsWith(expectedSuffix))
         .filter((entry) => isDirectorySegment ? entry.isDirectory() : entry.isFile())
         .map((entry) => path.join(currentDir, entry.name));
+
       if (candidates.length !== 1) break;
       try {
         fs.renameSync(candidates[0], target);
         repaired += 1;
         currentDir = target;
       } catch {
+        // A locked or cross-device file is left untouched; the next launch
+        // can retry the repair.
         break;
       }
     }

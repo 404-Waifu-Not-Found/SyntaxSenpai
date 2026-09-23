@@ -60,7 +60,7 @@ Five personas ship by default. All default to `anthropic` / `claude-3-5-sonnet-2
 
 ## System prompt
 
-Each waifu's `systemPromptTemplate` is a Handlebars-style string with `{{displayName}}` and `{{backstory}}` placeholders plus persona rules. The actual runtime prompt is composed in `apps/desktop/src/renderer/src/stores/chat.ts` from, in order:
+Each waifu's `systemPromptTemplate` is a Handlebars-style string with `{{displayName}}` and `{{backstory}}` placeholders plus persona rules. The desktop assembles its conversation-specific prompt in `apps/desktop/src/renderer/src/stores/chat.ts`; the shared session composition and turn loop live in `packages/agent-session`. The prompt includes:
 
 1. `buildSystemPrompt(waifu, relationship, context)` — from `packages/waifu-core/src/personality.ts`; fills in the template
 2. `buildMemoryContext()` — persistent memory
@@ -70,7 +70,7 @@ Each waifu's `systemPromptTemplate` is a Handlebars-style string with `{{display
 6. `buildAgentBehaviorPrompt()` — plan → gather → do-one-thing → diagnose → retry-once → verify (only when tools are enabled)
 7. `buildCodingSessionPromptBlock()` — auto-injected when the user's message looks code-shaped (code fence, file path, tool name, coding verb, error stack, etc.)
 
-Available skills (authored via `create_skill`, stored under `<userData>/skills/<slug>/SKILL.md`) are listed by `formatSkillsForPrompt()` so the waifu knows when to call `use_skill`.
+Available skills (authored via `create_skill`, stored under `<userData>/skills/<slug>/SKILL.md`) are listed by `formatSkillsForPrompt()` so the waifu knows when to call `use_skill`. Headless uses the same session loop but supplies its own host and environment context.
 
 ## Personality traits
 
@@ -87,11 +87,12 @@ Each waifu has six personality dimensions on a 0–100 scale:
 
 ## Agent modes
 
-The chat interface supports three agent execution modes, filtered by `getToolsForMode()` in `apps/desktop/src/renderer/src/agent-tools.ts`:
+The desktop chat interface currently exposes two agent execution modes through `getToolsForMode()` in `apps/desktop/src/renderer/src/agent-tools.ts`:
 
-1. **`ask`** (ask-before-running) — waifu proposes actions and asks for confirmation before tool use.
-2. **`auto`** (auto-edit) — waifu applies changes automatically but reports what was done.
-3. **`full`** (full access) — minimal friction; waifu executes tools autonomously.
+1. **`auto`** — an automatic policy reviewer evaluates actions.
+2. **`full`** — direct tool execution without that automatic-review step.
+
+The older `ask` mode is not part of the current `AgentMode` type. Both current modes still respect tool availability and the native destructive-command confirmation path.
 
 Destructive shell patterns (`rm -rf`, `sudo`, `mkfs`, `dd of=/dev/…`, `git reset --hard`, force-push, fork bombs) are always gated by a native OS dialog via `apps/desktop/src/main/ipc/terminal.ts`, regardless of mode. A "strict mode" toggle in Settings → General additionally routes commands through the allowlist-based executor in `apps/desktop/src/main/agent/executor.ts` with a JSONL audit log.
 

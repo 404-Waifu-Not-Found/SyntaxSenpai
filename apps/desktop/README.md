@@ -1,6 +1,6 @@
 # SyntaxSenpai Desktop
 
-Primary SyntaxSenpai app: Electron main/preload, Vue 3 renderer, Pinia state, UnoCSS styling, keychain-backed provider keys, durable agent runs, mobile QR pairing, plugins, custom waifus, Live2D avatar support, and native macOS computer control.
+Primary SyntaxSenpai app: Electron main/preload, Vue 3 renderer, Pinia state, UnoCSS styling, keychain-backed provider keys, durable agent runs, mobile QR pairing, plugins, custom waifus, Live2D avatar support, in-chat games, and native macOS computer control.
 
 ## Run
 
@@ -29,11 +29,15 @@ pnpm --filter syntax-senpai-desktop run lint
 | `src/main/` | Electron main process, IPC, tray, shortcuts, crash logging |
 | `src/preload/` | Safe bridge exposed to the renderer |
 | `src/renderer/src/App.vue` | Main desktop UI |
-| `src/renderer/src/stores/chat.ts` | Chat orchestration, provider calls, tools, prompt assembly |
-| `src/renderer/src/agent-tools.ts` | Renderer-side tool definitions |
+| `src/renderer/src/stores/chat.ts` | Desktop chat state, prompt assembly, and shared-session adapter |
+| `src/renderer/src/agent-tools.ts` | Desktop tool executor and browser-safe catalog import |
+| `src/renderer/src/components/MiniGamePanel.vue` | In-window Tic-Tac-Toe, Connect Four, and chess UI |
+| `../../packages/agent-session/` | Shared desktop/headless session loop and events |
+| `../../packages/agent-tools/src/catalog.ts` | Shared browser-safe tool definitions |
+| `../../packages/game-engine/` | Authoritative game state and opponents |
 | `src/main/ipc/` | IPC handlers for tools, settings, storage, plugins, waifus, execution policy, WeChat, and runtime helpers |
 | `scripts/verify-live2d-render.mjs` | Live2D smoke verification script |
-| `src/main/agent/executor.ts` | Shared web search, web fetch, and external URL helpers |
+| `src/main/agent/executor.ts` | Strict-mode command execution and web helpers |
 
 ## Provider Keys
 
@@ -42,4 +46,6 @@ Configure keys in **Settings -> AI**. Desktop stores keys through the OS keychai
 ## Notes
 
 - `pnpm dev:desktop` is the normal entry point from the repository root.
-- The renderer owns the tool list; main-process IPC just executes the requested action safely.
+- The shared catalog owns tool definitions. The renderer executes desktop-specific effects and IPC-backed actions; Node-only helpers must not be imported through the catalog path.
+- **Settings -> Data** full backups include plaintext API keys. Import replaces local chats, settings, skills, waifus, and Live2D files.
+- WeChat image-send has automated coverage, but live delivery still needs verification with a paired account and message ID.

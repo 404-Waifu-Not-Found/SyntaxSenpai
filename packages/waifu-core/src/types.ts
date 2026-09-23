@@ -109,7 +109,7 @@ export interface Waifu {
   avatar: WaifuAvatar;
   capabilities: WaifuCapabilities;
   tts?: WaifuTtsConfig;
-  systemPromptTemplate: string; // Handlebars template, filled at runtime
+  systemPromptTemplate: string; // Data-only {{field}} template, filled without unsafe-eval
   preferredAIProvider?: string; // provider id hint
   preferredModel?: string;
   createdAt: string; // ISO 8601

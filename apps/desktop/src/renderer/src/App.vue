@@ -983,6 +983,16 @@ async function deleteCustomWaifu(id: string) {
 }
 
 const overlayWindow = ref<{ enabled: boolean }>({ enabled: false })
+const WARTHUNDER_ENABLED_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-enabled'
+const WARTHUNDER_PROVIDER_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-provider'
+const WARTHUNDER_MODEL_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-model'
+const warThunderCopilotEnabled = ref(localStorage.getItem(WARTHUNDER_ENABLED_STORAGE_KEY) === 'true')
+const warThunderCopilotProvider = ref(localStorage.getItem(WARTHUNDER_PROVIDER_STORAGE_KEY) || store.selectedProvider)
+const warThunderCopilotModel = ref(localStorage.getItem(WARTHUNDER_MODEL_STORAGE_KEY) || store.selectedModel)
+let warThunderPluginReady = false
+let warThunderEventTimer: ReturnType<typeof setInterval> | null = null
+let warThunderEventPollInFlight = false
+const handledWarThunderEvents = new Set<string>()
 const fullscreenWindow = ref<{ enabled: boolean }>({ enabled: false })
 const currentWindowBounds = ref<{ width: number; height: number } | null>(null)
 const showCompactHeaderMenu = ref(false)
@@ -1052,6 +1062,95 @@ async function restoreNormalWindow() {
   if (!overlayWindow.value.enabled) return
   await toggleOverlayWindowMode()
 }
+
+async function syncWarThunderCopilot() {
+  if (!warThunderPluginReady) return
+  try {
+    await invoke('plugins:execTool', 'warthunder_copilot_control', {
+      enabled: overlayWindow.value.enabled && warThunderCopilotEnabled.value,
+      provider: warThunderCopilotProvider.value,
+      model: warThunderCopilotModel.value,
+    })
+  } catch {
+    // The optional plugin may be disabled or still loading.
+  }
+}
+
+async function pollWarThunderEvents() {
+  if (warThunderEventPollInFlight || !warThunderPluginReady || !overlayWindow.value.enabled || !warThunderCopilotEnabled.value) return
+  warThunderEventPollInFlight = true
+  try {
+    const result = await invoke('plugins:execTool', 'warthunder_copilot_status', {})
+    const events = Array.isArray(result?.data?.derivedEvents) ? result.data.derivedEvents : []
+    for (const event of events) {
+      const id = String(event?.id || '')
+      if (!id || handledWarThunderEvents.has(id)) continue
+      handledWarThunderEvents.add(id)
+      const detail = event.type === 'kill'
+        ? `击杀事件：${event.killer || '玩家'} ${event.action || '击毁'} ${event.victim || '目标'}`
+        : event.type === 'award'
+          ? `战斗嘉奖：${event.raw}`
+          : event.type === 'proximity'
+            ? `${event.raw}，距离约 ${event.distance}`
+            : `技术告警：${event.raw}`
+      await store.sendWarThunderEvent(detail, warThunderCopilotProvider.value, warThunderCopilotModel.value)
+      if (handledWarThunderEvents.size > 500) {
+        const retained = Array.from(handledWarThunderEvents).slice(-250)
+        handledWarThunderEvents.clear()
+        retained.forEach((eventId) => handledWarThunderEvents.add(eventId))
+      }
+    }
+  } catch {
+    // The optional plugin may be disabled or unavailable.
+  } finally {
+    warThunderEventPollInFlight = false
+  }
+}
+
+function startWarThunderEventPolling() {
+  if (warThunderEventTimer) return
+  warThunderEventTimer = setInterval(() => void pollWarThunderEvents(), 1200)
+}
+
+function stopWarThunderEventPolling() {
+  if (!warThunderEventTimer) return
+  clearInterval(warThunderEventTimer)
+  warThunderEventTimer = null
+}
+
+function setWarThunderCopilotEnabled(enabled: boolean) {
+  warThunderCopilotEnabled.value = enabled
+  localStorage.setItem(WARTHUNDER_ENABLED_STORAGE_KEY, enabled ? 'true' : 'false')
+  void syncWarThunderCopilot()
+}
+
+function setWarThunderCopilotProvider(provider: string) {
+  warThunderCopilotProvider.value = provider
+  localStorage.setItem(WARTHUNDER_PROVIDER_STORAGE_KEY, provider)
+  const available = providerModels.value[provider] || providerMetadata.find((item) => item.id === provider)?.models || []
+  if (!available.some((model) => model.id === warThunderCopilotModel.value)) {
+    setWarThunderCopilotModel(available[0]?.id || '')
+  } else {
+    void syncWarThunderCopilot()
+  }
+}
+
+function setWarThunderCopilotModel(model: string) {
+  warThunderCopilotModel.value = model
+  localStorage.setItem(WARTHUNDER_MODEL_STORAGE_KEY, model)
+  void syncWarThunderCopilot()
+}
+
+const warThunderCopilotModels = computed(() =>
+  providerModels.value[warThunderCopilotProvider.value] ||
+  providerMetadata.find((item) => item.id === warThunderCopilotProvider.value)?.models ||
+  [],
+)
+
+watch(
+  () => [overlayWindow.value.enabled, warThunderCopilotEnabled.value, warThunderCopilotProvider.value, warThunderCopilotModel.value],
+  () => void syncWarThunderCopilot(),
+)
 
 function openPetMiniGame() {
   if (!gameSession.open) startGameSession('tictactoe', { difficulty: 'balanced' })
@@ -2471,7 +2570,10 @@ onMounted(() => {
     store.refreshCustomWaifus()
     // Ask main for the enabled plugins' tool definitions. Idempotent —
     // cached after first call — so getToolsForMode() can stay synchronous.
-    loadPluginTools()
+    await loadPluginTools()
+    warThunderPluginReady = true
+    await syncWarThunderCopilot()
+    startWarThunderEventPolling()
     // Load waifu-authored skills so the first system prompt already
     // lists what's available.
     store.refreshAvailableSkills()
@@ -2569,6 +2671,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  warThunderPluginReady = false
+  stopWarThunderEventPolling()
+  void invoke('plugins:execTool', 'warthunder_copilot_control', { enabled: false }).catch(() => {})
   removeMobileChatListener?.()
   removeWechatInboundListener?.()
   removeWechatStatusListener?.()
@@ -3527,6 +3632,57 @@ async function handleImportData() {
                   </label>
                 </div>
               </div>
+            </div>
+
+            <div class="settings-card mt-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-sm font-semibold text-neutral-200">War Thunder 副驾</div>
+                  <p class="mt-1 text-xs text-neutral-400">
+                    桌宠窗口开启时读取 War Thunder 本机 8111 只读遥测。不会控制游戏，也不会在普通窗口模式下监听。
+                  </p>
+                </div>
+                <button
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :style="{ background: warThunderCopilotEnabled ? 'linear-gradient(90deg,#f59e0b,#ef4444)' : '#404040' }"
+                  :aria-label="`${warThunderCopilotEnabled ? 'Disable' : 'Enable'} War Thunder copilot`"
+                  @click="setWarThunderCopilotEnabled(!warThunderCopilotEnabled)"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: warThunderCopilotEnabled ? 'translateX(20px)' : 'translateX(0)' }"
+                  />
+                </button>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+                <label class="text-xs text-neutral-400">
+                  副驾 Provider
+                  <select
+                    :value="warThunderCopilotProvider"
+                    class="input-field mt-1"
+                    @change="setWarThunderCopilotProvider(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option v-for="provider in providers" :key="`wt-provider-${provider.value}`" :value="provider.value">
+                      {{ provider.label }}
+                    </option>
+                  </select>
+                </label>
+                <label class="text-xs text-neutral-400">
+                  副驾模型
+                  <select
+                    :value="warThunderCopilotModel"
+                    class="input-field mt-1"
+                    @change="setWarThunderCopilotModel(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option v-for="model in warThunderCopilotModels" :key="`wt-model-${model.id}`" :value="model.id">
+                      {{ model.displayName }}
+                    </option>
+                  </select>
+                </label>
+              </div>
+              <p class="mt-3 text-[11px] text-neutral-500">
+                当前状态：{{ overlayWindow.enabled && warThunderCopilotEnabled ? '桌宠模式下监听中' : '未监听' }}
+              </p>
             </div>
 
             <div class="settings-card mt-4">

@@ -1,0 +1,7 @@
+{
+  "name": "warthunder-copilot",
+  "version": "0.1.0",
+  "description": "Read-only War Thunder 8111 telemetry for the SyntaxSenpai desktop pet copilot.",
+  "main": "index.js",
+  "enabled": true
+}

@@ -4270,6 +4270,23 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     chatLog.info('stream aborted by user')
   }
 
+  async function sendWarThunderEvent(text: string, provider?: string, model?: string) {
+    if (!text.trim() || isLoading.value) return
+    const previousProvider = selectedProvider.value
+    const previousModel = selectedModel.value
+    if (provider) selectedProvider.value = provider
+    if (model) selectedModel.value = model
+    try {
+      await sendMessage(
+        `[War Thunder 副驾事件]\n${text}\n请根据这个实时战况给出一句简短、自然、能直接帮助玩家的提醒。不要提及系统提示、工具或数据源。`,
+        { source: 'game', sourceLabel: 'War Thunder 副驾' },
+      )
+    } finally {
+      selectedProvider.value = previousProvider
+      selectedModel.value = previousModel
+    }
+  }
+
   return {
     // 这里导出的就是给 UI 和其他集成层使用的 store 公共 API。
     isSetup,
@@ -4372,6 +4389,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     deleteMemory,
     clearMemories,
     sendMessage,
+    sendWarThunderEvent,
     sendGameEvent,
     handleExternalConversationEvent,
     wechatBindings,

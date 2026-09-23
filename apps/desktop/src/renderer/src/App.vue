@@ -6577,6 +6577,12 @@ async function handleImportData() {
 </template>
 
 <style scoped>
+:global(html),
+:global(body),
+:global(#app) {
+  background: transparent !important;
+}
+
 /* Collapsible "show thinking & process" panel above each assistant reply.
    The header chevron rotates on expand for a ChatGPT-style affordance.
    The nested ChatBubble inside `.process-panel-step` shrinks to a more

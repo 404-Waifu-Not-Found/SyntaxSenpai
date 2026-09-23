@@ -460,6 +460,7 @@ function createWindow(forcedMode?: WindowMode): void {
     transparent: shouldUseTransparentWindow(mode),
     backgroundColor: shouldUseTransparentWindow(mode) ? '#00000000' : '#10131c',
     frame: !shouldUseFramelessWindow(mode),
+    hasShadow: mode !== 'overlay',
     maximizable: mode !== 'overlay',
     fullscreenable: mode !== 'overlay',
     minWidth: mode === 'overlay' ? OVERLAY_WINDOW_MIN_WIDTH : NORMAL_WINDOW_MIN_WIDTH,

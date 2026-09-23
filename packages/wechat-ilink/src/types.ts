@@ -51,17 +51,19 @@ export interface TextItem {
 }
 
 export interface ImageItem {
-  /** Returned by getuploadurl */
-  upload_param?: string;
-  thumb_upload_param?: string;
-  /** Echoed values from the original getuploadurl request */
-  filekey?: string;
-  rawsize?: number;
-  rawfilemd5?: string;
-  filesize?: number;
-  thumb_rawsize?: number;
-  thumb_rawfilemd5?: string;
-  thumb_filesize?: number;
+  /** CDN download reference returned by the upload response. */
+  media?: {
+    encrypt_query_param: string;
+    /** Base64-encoded hexadecimal AES key, matching Tencent's sender. */
+    aes_key: string;
+    encrypt_type: 1;
+  };
+  mid_size?: number;
+  thumb_media?: {
+    encrypt_query_param: string;
+    aes_key: string;
+    encrypt_type: 1;
+  };
 }
 
 export interface MessageItem {
@@ -125,12 +127,15 @@ export interface GetUploadUrlRequest {
   thumb_rawsize?: number;
   thumb_rawfilemd5?: string;
   thumb_filesize?: number;
+  no_need_thumb?: boolean;
+  aeskey?: string;
 }
 
 export interface GetUploadUrlResponse {
   ret?: number;
-  upload_param: string;
+  upload_param?: string;
   thumb_upload_param?: string;
+  upload_full_url?: string;
 }
 
 export interface GetConfigResponse {

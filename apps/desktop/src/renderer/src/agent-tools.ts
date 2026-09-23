@@ -13,6 +13,7 @@
 import { getAllProviderMetadata } from '@syntax-senpai/ai-core'
 import type { ToolDefinition, ToolCall } from '@syntax-senpai/ai-core'
 import { renderContentToPng } from './services/render-to-image'
+import { sendWeChatImageWithFallback } from './services/wechat-image-send'
 import * as browserController from './browser/controller'
 import { useBrowserStore } from './stores/browser'
 import {
@@ -693,14 +694,13 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
 
       try {
         if (asImage) {
-          const rendered = await renderContentToPng(content, { title })
-          const res = await ipc.invoke('wechat:send', {
+          return sendWeChatImageWithFallback({
+            invoke: (channel, payload) => ipc.invoke(channel, payload),
+            render: renderContentToPng,
             toUserId,
-            kind: 'image',
-            imageBase64: rendered.base64,
+            content,
+            title,
           })
-          if (!res?.success) return `WeChat send failed: ${res?.error ?? 'unknown'}`
-          return `Sent image (${rendered.width}x${rendered.height}px) to WeChat user ${toUserId}.`
         }
         const res = await ipc.invoke('wechat:send', {
           toUserId,

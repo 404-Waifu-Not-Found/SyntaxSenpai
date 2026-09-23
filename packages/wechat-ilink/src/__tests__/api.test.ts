@@ -56,6 +56,10 @@ describe("ilinkPost envelope", () => {
     await expect(ilinkPost("/x", {}, CREDS, { fetchImpl: f2 })).rejects.toBeInstanceOf(
       IlinkProtocolError,
     );
+    const f3 = mockFetch(() => jsonResponse({ ret: -1, errcode: 0 }));
+    await expect(ilinkPost("/x", {}, CREDS, { fetchImpl: f3 })).rejects.toBeInstanceOf(
+      IlinkProtocolError,
+    );
   });
 
   it("treats HTTP non-2xx as protocol error", async () => {

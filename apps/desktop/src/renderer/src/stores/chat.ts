@@ -979,6 +979,8 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<Message[]>([])
   const inputValue = ref('')
   const isLoading = ref(false)
+  const isThinking = ref(false)
+  watch(isLoading, (loading) => { isThinking.value = loading }, { flush: 'sync' })
   // AbortController for the in-flight provider call(s). Set when a turn starts,
   // null when no request is active. `stopStream()` aborts and the agentic loop /
   // streaming for-await break out at their next checkpoint.
@@ -1795,6 +1797,7 @@ export const useChatStore = defineStore('chat', () => {
 
       let assistantContent = ''
       let assistantReasoning = ''
+      let proactiveFinalMessages: string[] | undefined
       let assistantId = `assistant-proactive-${Date.now()}`
       let added = false
       const streamStartedAt = performance.now()
@@ -1849,8 +1852,9 @@ export const useChatStore = defineStore('chat', () => {
           maxIterations: effectiveMaxToolIterations.value,
           maxParallelTools: 8,
           abortSignal: streamController.value?.signal,
-          onIteration: () => { beginNextBubble() },
+          onIteration: () => { isThinking.value = true; beginNextBubble() },
           onAssistantTextDelta: (delta) => {
+            isThinking.value = false
             assistantContent += delta
             ensureBubble()
             updateBubble()
@@ -1914,13 +1918,19 @@ export const useChatStore = defineStore('chat', () => {
           },
         })
 
-        const finalRaw = (turnResult.finalContent || assistantContent || '').trim()
+        proactiveFinalMessages = turnResult.finalMessages?.length
+          ? turnResult.finalMessages.map((content) => extractMemoryFromAIResponse(content)).filter(Boolean)
+          : undefined
+        if (proactiveFinalMessages && pendingCards.length > 0) {
+          proactiveFinalMessages[0] = prependCardMarkers(pendingCards, proactiveFinalMessages[0])
+        }
+        const finalRaw = (proactiveFinalMessages?.[0] || turnResult.finalContent || assistantContent || '').trim()
         if (!finalRaw) {
           if (added) messages.value = messages.value.filter((m) => m.id !== assistantId)
           return
         }
         let finalText = extractMemoryFromAIResponse(finalRaw)
-        if (pendingCards.length > 0) finalText = prependCardMarkers(pendingCards, finalText)
+        if (!proactiveFinalMessages && pendingCards.length > 0) finalText = prependCardMarkers(pendingCards, finalText)
         const parsed = parseEmotionTag(finalText)
         if (parsed.emotion) {
           applyLive2DExpression(parsed.emotion, 'agent')
@@ -1941,6 +1951,7 @@ export const useChatStore = defineStore('chat', () => {
         for await (const chunk of streamIter) {
           if (streamController.value?.signal.aborted) break
           if (chunk.type === 'text_delta' && chunk.delta) {
+            isThinking.value = false
             assistantContent += chunk.delta
             ensureBubble()
             updateBubble()
@@ -1995,6 +2006,24 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         await relayAssistantToWeChat(convId, cleanContent)
+      }
+      for (const [index, rawContent] of (proactiveFinalMessages || []).slice(1).entries()) {
+        const extra = parseEmotionTag(rawContent)
+        if (!extra.content.trim()) continue
+        const extraMessage: Message = {
+          id: `assistant-proactive-${Date.now()}-extra-${index}`,
+          role: 'assistant',
+          content: extra.content,
+          timestamp: now(),
+          waifuId: waifu.id,
+          waifuDisplayName: waifu.displayName,
+        }
+        messages.value.push(extraMessage)
+        recentMessageId.value = extraMessage.id
+        if (convId) {
+          try { await invoke('store:addMessage', convId, extraMessage) } catch (e) { console.warn('Failed to save proactive assistant message:', e) }
+          await relayAssistantToWeChat(convId, extraMessage.content)
+        }
       }
     } catch (err) {
       chatLog.warn('proactive message failed', {
@@ -2843,6 +2872,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
         const nextRoundTasks = new Map<string, string[]>()
 
         for (const waifu of waifusForRound) {
+          isThinking.value = true
           const affectionValue = loadAffection(waifu.id)
           // Stable prefix — eligible for Anthropic prompt caching. Order must
           // not change between turns or the cache breaks.
@@ -2882,6 +2912,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           })
 
           let finalContent = ''
+          let turnFinalMessages: string[] | undefined
 
           // 每个 waifu 都维护自己的流式消息气泡，确保群聊里能看清是谁在输出、谁在调用工具。
           // Live streaming bubble for this waifu's turn. Used by both the
@@ -2932,17 +2963,22 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
               maxParallelTools: 8,
               abortSignal: streamController.value?.signal,
               onAssistantIterationStart: () => {
+                isThinking.value = true
                 liveText = ''
                 liveReasoning = ''
                 updateLiveBubble()
               },
               onAssistantTextDelta: (delta) => {
+                isThinking.value = false
                 ensureLiveBubble()
                 liveText += delta
                 updateLiveBubble()
               },
               onAssistantReasoningDelta: (delta) => {
                 liveReasoning += delta
+              },
+              onAssistantIterationEnd: (_iteration, response) => {
+                if (response?.toolCalls?.length) isThinking.value = true
               },
               handleSideEffect: async (toolCall): Promise<SideEffectResult | null> => {
                 if (toolCall.name === STOP_TOOL_NAME) {
@@ -3060,9 +3096,12 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
               },
             })
 
-            finalContent = turnResult.finalContent
-
-            if (pendingCards.length > 0) {
+            turnFinalMessages = turnResult.finalMessages?.length ? [...turnResult.finalMessages] : undefined
+            if (turnFinalMessages && pendingCards.length > 0) {
+              turnFinalMessages[0] = prependCardMarkers(pendingCards, turnFinalMessages[0])
+            }
+            finalContent = turnFinalMessages?.join('\n\n') || turnResult.finalContent
+            if (!turnFinalMessages && pendingCards.length > 0) {
               finalContent = prependCardMarkers(pendingCards, finalContent)
             }
 
@@ -3112,6 +3151,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
             for await (const chunk of runtime.streamMessage({ text: trimmedText, history: sharedHistory, cacheBreakpointIndex: sharedHistory.findIndex((m: any) => m.role === 'user'), signal: streamController.value?.signal })) {
               if (streamController.value?.signal.aborted) break
               if (chunk.type === 'text_delta' && chunk.delta) {
+                isThinking.value = false
                 finalContent += chunk.delta
                 ensureBubble()
                 scheduleFlush()
@@ -3126,7 +3166,12 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           }
 
           const { cleanedText, tasks } = extractDelegatedTasks(finalContent || 'Done.')
-          const cleanContent = extractMemoryFromAIResponse(cleanedText || 'Done.')
+          const displayMessages = turnFinalMessages
+            ? turnFinalMessages
+                .map((content) => extractMemoryFromAIResponse(extractDelegatedTasks(content).cleanedText))
+                .filter(Boolean)
+            : [extractMemoryFromAIResponse(cleanedText || 'Done.')]
+          const cleanContent = displayMessages.join('\n\n')
           assistantTurns.push({ waifu, content: cleanContent })
           // sharedHistory 会把前一个 waifu 的输出注入给后一个 waifu，形成“角色彼此可见”的群聊上下文。
           sharedHistory.push({
@@ -3142,7 +3187,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           if (liveBubbleAdded) {
             const liveMsg = messages.value.find((m) => m.id === turnLiveAssistantId)
             if (liveMsg) {
-              liveMsg.content = cleanContent
+              liveMsg.content = displayMessages[0] || cleanContent
               liveMsg.timestamp = now()
               recentMessageId.value = turnLiveAssistantId
             }
@@ -3151,7 +3196,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
                 await invoke('store:addMessage', convId, {
                   id: turnLiveAssistantId,
                   role: 'assistant',
-                  content: cleanContent,
+                  content: displayMessages[0] || cleanContent,
                   timestamp: now(),
                   waifuId: waifu.id,
                   waifuDisplayName: waifu.displayName,
@@ -3162,7 +3207,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
             const assistantMsg: Message = {
               id: turnLiveAssistantId,
               role: 'assistant',
-              content: cleanContent,
+              content: displayMessages[0] || cleanContent,
               timestamp: now(),
               waifuId: waifu.id,
               waifuDisplayName: waifu.displayName,
@@ -3174,11 +3219,29 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
             }
           }
 
+          for (const [index, content] of displayMessages.slice(1).entries()) {
+            const extraMessage: Message = {
+              id: `assistant-${waifu.id}-${Date.now()}-extra-${index}`,
+              role: 'assistant',
+              content,
+              timestamp: now(),
+              waifuId: waifu.id,
+              waifuDisplayName: waifu.displayName,
+            }
+            messages.value.push(extraMessage)
+            recentMessageId.value = extraMessage.id
+            if (convId) {
+              try { await invoke('store:addMessage', convId, extraMessage) } catch (e) { console.warn('Failed to save assistant message:', e) }
+            }
+          }
+
           // A bound WeChat conversation must receive every completed waifu
           // reply. Doing this here is deterministic for group chat; relying
           // on a UI isLoading watcher only forwarded the final reply of a
           // multi-waifu turn and could miss fast/cancelled state transitions.
-          if (convId) await relayAssistantToWeChat(convId, cleanContent)
+          if (convId) {
+            for (const content of displayMessages) await relayAssistantToWeChat(convId, content)
+          }
 
           for (const task of tasks) {
             if (!waifus.some((candidate) => candidate.id === task.targetWaifuId)) {
@@ -3670,16 +3733,21 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           maxParallelTools: 8,
           abortSignal: streamController.value?.signal,
           onAssistantIterationStart: () => {
+            isThinking.value = true
             finalizeLiveBubble()
             beginNextLiveBubble()
           },
           onAssistantTextDelta: (delta) => {
+            isThinking.value = false
             ensureLiveBubble()
             liveText += delta
             updateLiveBubble()
           },
           onAssistantReasoningDelta: (delta) => {
             liveReasoning += delta
+          },
+          onAssistantIterationEnd: (_iteration, response) => {
+            if (response?.toolCalls?.length) isThinking.value = true
           },
           handleSideEffect: async (tc): Promise<SideEffectResult | null> => {
             // 这些工具会直接修改 store 状态，因此要在这里拦截处理，而不是交给通用工具执行器黑盒处理。
@@ -3798,18 +3866,18 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
 
         liveStreamSettled = true
 
-        let finalContent = turnResult.finalContent
-
+        const finalMessages = turnResult.finalMessages?.length
+          ? [...turnResult.finalMessages]
+          : turnResult.finalContent ? [turnResult.finalContent] : []
         if (pendingCards.length > 0) {
-          finalContent = prependCardMarkers(pendingCards, finalContent)
+          if (finalMessages.length > 0) finalMessages[0] = prependCardMarkers(pendingCards, finalMessages[0])
+          else finalMessages.push(serializeCards(pendingCards))
         }
+        const cleanMessages = finalMessages.map((content) => extractMemoryFromAIResponse(content)).filter(Boolean)
 
-        // Show the AI's final response — reuse the live streaming bubble.
-        // The final live bubble (`liveAssistantId`) is the canonical reply;
-        // every other bubble produced during this turn (tool calls + earlier
-        // iteration text/reasoning) gets folded into the collapsible "process"
-        // panel rendered above the reply.
-        if (finalContent) {
+        // Reuse the last streaming bubble for the first final message, then
+        // append each additional message as a distinct, persistent bubble.
+        if (cleanMessages.length > 0) {
           recordApiTelemetry(
             apiRoundTrips.reduce((sum, value) => sum + value, 0),
             apiRoundTrips,
@@ -3817,24 +3885,20 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
             model,
           )
 
-          // Extract memories from AI response and strip tags
-          const cleanContent = extractMemoryFromAIResponse(finalContent)
-          const liveMsg = messages.value.find((m) => m.id === liveAssistantId)
-          if (liveMsg) {
-            liveMsg.content = cleanContent
-            recentMessageId.value = liveAssistantId
-            queueLiveBubbleSave(liveMsg)
-          } else {
-            const finalMessage: Message = {
-              id: liveAssistantId,
+          for (const [index, content] of cleanMessages.entries()) {
+            const id = index === 0 ? liveAssistantId : `assistant-${Date.now()}-${++liveBubbleSequence}`
+            const existing = index === 0 ? messages.value.find((m) => m.id === liveAssistantId) : undefined
+            const finalMessage: Message = existing || {
+              id,
               role: 'assistant',
-              content: cleanContent,
+              content,
               timestamp: now(),
               waifuId: waifu?.id,
               waifuDisplayName: waifu?.displayName,
             }
-            messages.value.push(finalMessage)
-            recentMessageId.value = liveAssistantId
+            finalMessage.content = content
+            if (!existing) messages.value.push(finalMessage)
+            recentMessageId.value = id
             queueLiveBubbleSave(finalMessage)
           }
 
@@ -3850,7 +3914,9 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           }
 
           await Promise.allSettled(liveBubbleSaveTasks)
-          if (convId) await relayAssistantToWeChat(convId, cleanContent)
+          if (convId) {
+            for (const content of cleanMessages) await relayAssistantToWeChat(convId, content)
+          }
           // Auto-name after first exchange (runs in background, doesn't block UI)
           if (isNewConversation && convId) autoNameConversation(convId, text)
         } else if (liveBubbleAdded) {
@@ -3888,6 +3954,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
         for await (const chunk of streamIter) {
           if (streamController.value?.signal.aborted) break
           if (chunk.type === 'text_delta' && chunk.delta) {
+            isThinking.value = false
             assistantContent += chunk.delta
             ensureBubble()
             updateBubble()
@@ -4305,6 +4372,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     messages,
     inputValue,
     isLoading,
+    isThinking,
     stopStream,
     conversationId,
     conversations,

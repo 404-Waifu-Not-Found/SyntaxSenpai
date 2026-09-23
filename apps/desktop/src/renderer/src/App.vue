@@ -35,7 +35,6 @@ import SubagentPanel from './components/SubagentPanel.vue'
 import AppAvatar from './components/AppAvatar.vue'
 import Live2DAvatar from './components/Live2DAvatar.vue'
 import TypingDots from './components/TypingDots.vue'
-import MessageSkeleton from './components/MessageSkeleton.vue'
 import QrPairModal from './components/QrPairModal.vue'
 import RepositoryPickerModal from './components/RepositoryPickerModal.vue'
 import SakuraPetals from './components/SakuraPetals.vue'
@@ -186,11 +185,14 @@ async function submitRenameConversation() {
 // old thread starts at the tail, not wherever they paged to in another chat.
 // Also drop any expanded process panels — those decisions don't carry across
 // conversations.
+let replyStartIndex = store.messages.length
 watch(
   () => store.conversationId,
   () => {
     visibleMessageCount.value = MESSAGE_WINDOW_INITIAL
     expandedProcessGroups.value = new Set()
+    replyStartIndex = store.messages.length
+    clearLive2DSpeech()
   },
 )
 
@@ -198,24 +200,28 @@ function sentimentEmoji(expression: Expression): string {
   return EXPRESSION_EMOJI[expression] ?? EXPRESSION_EMOJI.neutral
 }
 
-// After each new assistant message lands (streaming done), speak it in
-// the waifu's voice and attach a sentiment result so the avatar mood-pip
-// reflects what was just said. Fires once per finalized message.
+// Classify every reply in a completed turn. Speak the last reply so multiple
+// final bubbles do not interrupt one another's audio playback.
 watch(
-  () => [store.messages.length, store.isLoading] as const,
-  ([len, loading], prev) => {
-    if (loading) return
-    const prevLen = prev ? (prev as any)[0] : 0
-    if (len <= prevLen) return
-    const last: any = store.messages[len - 1]
-    if (!last || last.role !== 'assistant' || !last.content) return
-    // Process-step bubbles (tool calls, intermediate reasoning) shouldn't drive
-    // sentiment or TTS — only the final reply should.
-    if (last.isProcessStep || (typeof last.id === 'string' && last.id.startsWith('tool-'))) return
+  () => store.isLoading,
+  (loading) => {
+    if (loading) {
+      replyStartIndex = store.messages.length
+      clearLive2DSpeech()
+      return
+    }
+    const replies = store.messages.slice(replyStartIndex).filter((message) =>
+      message.role === 'assistant' && message.content && !message.isProcessStep && !message.id.startsWith('tool-'),
+    )
+    replyStartIndex = store.messages.length
+    for (const reply of replies) reply.sentiment = classifySentiment(reply.content)
+    const last = replies.at(-1)
+    if (!last) return
     const content = String(last.content)
-    last.sentiment = classifySentiment(content)
-    voice.speak(content, store.selectedWaifuId, store.selectedWaifu, last.sentiment?.expression)
-    showLive2DSpeech(content, last.sentiment?.expression || 'neutral')
+    voice.speak(content, last.waifuId || store.selectedWaifuId, store.selectedWaifu, last.sentiment?.expression)
+    for (const reply of replies) {
+      showLive2DSpeech(reply.content, reply.sentiment?.expression || 'neutral', replies.length > 1 ? 3800 : undefined)
+    }
   },
 )
 const rainbowToggleBg = computed(() => {
@@ -1506,6 +1512,7 @@ const showSettings = ref(false)
 const showLive2DPanel = ref(false)
 const live2dSpeechBubble = ref('')
 let live2dSpeechTimer: number | null = null
+const live2dSpeechQueue: Array<{ text: string; expression: string; durationMs: number }> = []
 
 type Live2DDisplayOption = {
   id: string
@@ -1521,19 +1528,30 @@ const live2dImmersiveOpening = ref(false)
 
 const currentWaifuLive2D = computed(() => (store.selectedWaifu?.avatar as any)?.live2dModel ?? null)
 
-function showLive2DSpeech(text: string, expression: string) {
-  const trimmed = String(text || '').trim()
-  if (!trimmed) return
-  live2dSpeechBubble.value = trimmed.slice(0, 600)
+function clearLive2DSpeech() {
   if (live2dSpeechTimer !== null) window.clearTimeout(live2dSpeechTimer)
-  live2dSpeechTimer = window.setTimeout(() => {
+  live2dSpeechTimer = null
+  live2dSpeechQueue.length = 0
+  live2dSpeechBubble.value = ''
+}
+
+function playNextLive2DSpeech() {
+  const next = live2dSpeechQueue.shift()
+  if (!next) {
     live2dSpeechBubble.value = ''
     live2dSpeechTimer = null
-  }, Math.min(12000, Math.max(4500, trimmed.length * 55)))
-  void invoke('live2d:speech', {
-    text: trimmed,
-    expression,
-  })
+    return
+  }
+  live2dSpeechBubble.value = next.text.slice(0, 600)
+  void invoke('live2d:speech', { text: next.text, expression: next.expression })
+  live2dSpeechTimer = window.setTimeout(playNextLive2DSpeech, next.durationMs)
+}
+
+function showLive2DSpeech(text: string, expression: string, durationMs?: number) {
+  const trimmed = String(text || '').trim()
+  if (!trimmed) return
+  live2dSpeechQueue.push({ text: trimmed, expression, durationMs: durationMs ?? Math.min(12000, Math.max(4500, trimmed.length * 55)) })
+  if (live2dSpeechTimer === null) playNextLive2DSpeech()
 }
 
 async function refreshLive2DDisplays() {
@@ -2688,6 +2706,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  clearLive2DSpeech()
   removeMobileChatListener?.()
   removeWechatInboundListener?.()
   removeWechatStatusListener?.()
@@ -6178,12 +6197,13 @@ async function handleImportData() {
           </div>
         </TransitionGroup>
 
-        <div v-if="store.isLoading" class="space-y-2">
-          <MessageSkeleton />
-          <div class="flex justify-start">
-            <ChatBubble role="assistant" :show-copy="false">
-              <TypingDots />
-            </ChatBubble>
+        <div v-if="store.isLoading && store.isThinking" class="flex items-start gap-3" role="status" aria-label="Assistant is thinking" aria-live="polite">
+          <div class="themed-assistant-avatar w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white shrink-0" aria-hidden="true">
+            {{ store.selectedWaifu?.displayName?.[0] || 'A' }}
+          </div>
+          <div class="glass-surface rounded-xl px-4 py-3 min-w-16">
+            <TypingDots />
+            <span class="sr-only">Thinking</span>
           </div>
         </div>
 

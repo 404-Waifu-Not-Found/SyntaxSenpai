@@ -30,6 +30,25 @@ describe('headless runtime', () => {
     ])
   })
 
+  it('returns ordered final messages as separate headless outputs', async () => {
+    const result = await runTurn({
+      type: 'turn',
+      conversationId: 'multi-final-fixture',
+      text: 'reply in two messages',
+      responses: [{
+        id: 'fixture-final',
+        content: '',
+        toolCalls: [{ id: 'finish', name: 'stop_response', arguments: { final_message: '', messages: ['One.', 'Two.'] } }],
+        usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+        finishReason: 'tool_calls',
+      }],
+    }, () => {})
+
+    expect(result.messages).toEqual(['One.', 'Two.'])
+    expect(result.response).toBe('One.\n\nTwo.')
+    expect(result.history.slice(-2).map((message: any) => message.content)).toEqual(result.messages)
+  })
+
   it.each([
     ['tictactoe', 'Perfect minimax'],
     ['connect4', 'Alpha-beta Connect Four (strong)'],

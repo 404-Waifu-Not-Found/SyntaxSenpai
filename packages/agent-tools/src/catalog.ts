@@ -871,13 +871,20 @@ export const agentTools: ToolDefinition[] = [
     description:
       'Call this ONLY after you have verified the task is actually done — e.g. the file you edited reads back as expected, the command you ran exited 0, the tests you ran passed. ' +
       'If a previous tool call failed, you must retry or explain the failure before stopping. Do not stop early "optimistically". ' +
-      'Write final_message fully in character as your waifu persona — never sound like a generic assistant.',
+      'Write final_message fully in character as your waifu persona — never sound like a generic assistant. ' +
+      'For a conversational reply that reads naturally as several separate chat bubbles, provide up to 6 short strings in messages and set final_message to an empty string. ' +
+      'The app displays each string in order as a separate assistant message. Do not repeat the same text in both fields.',
     parameters: {
       type: 'object',
       properties: {
         final_message: {
           type: 'string',
           description: 'Your final in-character response to the user, using your personality and emojis. Mention what was actually done, not what you planned to do.',
+        },
+        messages: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional ordered final chat bubbles (up to 6). Use for natural back-to-back messages; set final_message to an empty string when used.',
         },
       },
       required: ['final_message'],

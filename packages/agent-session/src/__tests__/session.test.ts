@@ -131,4 +131,29 @@ describe('runAgentSession', () => {
     expect(aborted.stopped).toBe(true)
     expect(aborted.iterations).toBe(0)
   })
+
+  it('keeps several final chat messages in order and in subsequent history', async () => {
+    const history: any[] = [{ id: 'user-1', role: 'user', content: 'tell me two things' }]
+    const result = await runAgentSession({
+      model: 'fixture',
+      history,
+      tools: [],
+      systemPrompt: '',
+      maxIterations: 1,
+      callProvider: async () => ({
+        id: 'assistant-1',
+        content: '',
+        toolCalls: [{ id: 'stop-1', name: 'stop_response', arguments: { final_message: '', messages: ['First thought.', 'Second thought.'] } }],
+      }),
+      host: {
+        executeTool: async () => 'unused',
+        handleSideEffect: () => ({ resultContent: 'ok', stop: true, finalContent: '' }),
+      },
+    })
+
+    expect(result.finalMessages).toEqual(['First thought.', 'Second thought.'])
+    expect(result.finalContent).toBe('First thought.\n\nSecond thought.')
+    expect(history.slice(-2).map((message) => message.content)).toEqual(result.finalMessages)
+    expect(result.events.at(-1)).toMatchObject({ type: 'turn_complete', result: { finalMessages: result.finalMessages } })
+  })
 })

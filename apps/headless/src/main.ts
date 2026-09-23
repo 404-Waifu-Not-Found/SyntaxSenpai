@@ -105,7 +105,7 @@ export async function runTurn(request: TurnRequest, emit: (event: unknown) => vo
     host: current.host,
     onEvent: emit,
   })
-  return { conversationId: id, response: result.finalContent, history: current.history, effects: current.host.state.effects, events: result.events }
+  return { conversationId: id, response: result.finalContent, messages: result.finalMessages || (result.finalContent ? [result.finalContent] : []), history: current.history, effects: current.host.state.effects, events: result.events }
 }
 
 async function main() {

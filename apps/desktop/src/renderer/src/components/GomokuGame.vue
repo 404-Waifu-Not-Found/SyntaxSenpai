@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { WaifuCommunicationStyle, WaifuPersonalityTraits } from '@syntax-senpai/waifu-core'
 import { useI18n } from '../composables/use-i18n'
 
@@ -16,7 +16,6 @@ interface Coordinate {
 interface MoveEntry extends Coordinate {
   turn: number
   player: Player
-  coord: string
 }
 
 interface EvaluatedMove extends Coordinate {
@@ -40,13 +39,14 @@ const props = defineProps<{
   tags?: string[] | null
   personality?: Partial<WaifuPersonalityTraits> | null
   communicationStyle?: Partial<WaifuCommunicationStyle> | null
+  dialogueGenerator?: (gameState: string, recentReplies: string[]) => Promise<string>
 }>()
 
 const emit = defineEmits<{
   commentary: [message: string]
   close: []
 }>()
-const { locale, t } = useI18n()
+const { t } = useI18n()
 
 const BOARD_SIZE = 15
 const CENTER_INDEX = Math.floor(BOARD_SIZE / 2)
@@ -70,91 +70,30 @@ function formatCoordinate(row: number, col: number): string {
   return `${FILE_LABELS[col]}${row + 1}`
 }
 
-function createCommentaryCounters(): Record<CommentaryKind, number> {
-  return {
-    ready: 0,
-    reset: 0,
-    playerMove: 0,
-    aiMove: 0,
-    playerWin: 0,
-    aiWin: 0,
-    draw: 0,
-  }
-}
-
 const board = ref<CellValue[][]>(createBoard())
 const moveHistory = ref<MoveEntry[]>([])
 const winner = ref<CellValue>(0)
 const isDraw = ref(false)
 const winningLine = ref<Coordinate[]>([])
 const aiThinking = ref(false)
-const latestCommentary = ref('')
+const generatingCommentary = ref(false)
 const commentaryBubbles = ref<CommentaryBubble[]>([])
-const commentaryCounters = ref<Record<CommentaryKind, number>>(createCommentaryCounters())
+const commentaryScrollRef = ref<HTMLDivElement | null>(null)
 let nextBubbleId = 0
 let aiMoveTimer: ReturnType<typeof setTimeout> | null = null
-
-const normalizedPersonality = computed<WaifuPersonalityTraits>(() => ({
-  warmth: props.personality?.warmth ?? 65,
-  formality: props.personality?.formality ?? 45,
-  enthusiasm: props.personality?.enthusiasm ?? 55,
-  teasing: props.personality?.teasing ?? 25,
-  verbosity: props.personality?.verbosity ?? 40,
-  humor: props.personality?.humor ?? 35,
-}))
+let commentaryGeneration = 0
+let commentaryQueue: Promise<void> = Promise.resolve()
 
 const waifuName = computed(() => props.waifuDisplayName?.trim() || 'Waifu')
-const promptCorpus = computed(() => [
-  props.systemPromptTemplate,
-  props.backstory,
-  ...(props.catchphrases ?? []),
-  ...(props.tags ?? []),
-].filter(Boolean).join('\n'))
-
-function inferSelfReferenceFromPrompt(value: string): string {
-  const explicitMatch = value.match(/(?:自称|自我称呼|第一人称|用[“"「']?)(人家|本小姐|咱家|咱|妾身|吾|本王|老娘|俺|在下|小女子|本姑娘|本座|余)(?:[”"」']?|说话|表达|称呼)?/)
-  if (explicitMatch?.[1]) return explicitMatch[1]
-
-  const candidates = ['人家', '本小姐', '咱家', '咱', '妾身', '吾', '本王', '老娘', '俺', '在下', '小女子', '本姑娘', '本座', '余']
-  return candidates.find((candidate) => value.includes(candidate)) ?? ''
-}
-
-const selfReference = computed(() => {
-  const inferred = inferSelfReferenceFromPrompt(promptCorpus.value)
-  if (inferred) return inferred
-  const configured = props.communicationStyle?.usesHonorificSelf?.trim()
-  if (configured) return configured
-  return props.communicationStyle?.speaksIn3rdPerson ? waifuName.value : '我'
-})
-const thirdPerson = computed(() => props.communicationStyle?.speaksIn3rdPerson === true)
-const styleProfile = computed(() => {
-  const corpus = promptCorpus.value
-  const emojis = props.communicationStyle?.signatureEmojis ?? []
-  return {
-    cute: /人家|可爱|撒娇|甜|粉色|妖精|少女|花|浪漫|可可爱爱|♪|~|💕|🌸|💗|💖/.test(corpus) || emojis.some((emoji) => /💕|🌸|💗|💖/.test(emoji)),
-    elegant: /优雅|浪漫|诗|花|星|月|梦|温柔|轻盈|华丽/.test(corpus),
-    tsundere: /傲娇|嘴硬|别误会|才不是|哼/.test(corpus),
-    mysterious: /神秘|梦|月|星|命运|低语|夜/.test(corpus),
-    musical: /♪|音符|歌|旋律/.test(corpus),
-  }
-})
-const commentaryEmoji = computed(() => {
-  const emoji = props.communicationStyle?.signatureEmojis?.find((item) => item?.trim())
-  if (emoji) return emoji
-  if (normalizedPersonality.value.enthusiasm >= 80) return '🌟'
-  if (normalizedPersonality.value.teasing >= 70) return '😏'
-  if (normalizedPersonality.value.formality >= 70) return '♟️'
-  return '✨'
-})
 
 const gameOver = computed(() => winner.value !== 0 || isDraw.value)
 const winningCellKeys = computed(() => new Set(winningLine.value.map((cell) => `${cell.row}:${cell.col}`)))
-const historyNewestFirst = computed(() => [...moveHistory.value].reverse())
 const currentTurnLabel = computed(() => {
   if (winner.value === 1) return t('gomoku.blackWins')
   if (winner.value === 2) return t('gomoku.whiteWins')
   if (isDraw.value) return t('gomoku.draw')
   if (aiThinking.value) return t('gomoku.thinking', { name: waifuName.value })
+  if (generatingCommentary.value) return t('gomoku.organizing', { name: waifuName.value })
   return t('gomoku.yourTurn')
 })
 
@@ -165,108 +104,110 @@ function resetBoardState() {
   isDraw.value = false
   winningLine.value = []
   aiThinking.value = false
+  generatingCommentary.value = false
   commentaryBubbles.value = []
-  commentaryCounters.value = createCommentaryCounters()
+  commentaryGeneration += 1
+  commentaryQueue = Promise.resolve()
 }
 
-function publishCommentary(kind: CommentaryKind, move?: MoveEntry) {
-  const message = buildCommentary(kind, move)
-  latestCommentary.value = message
-  const speaker: BubbleSpeaker = kind === 'ready' || kind === 'reset' ? 'system' : 'waifu'
-  commentaryBubbles.value.push({ id: nextBubbleId++, speaker, text: message })
-  if (commentaryBubbles.value.length > 12) commentaryBubbles.value.shift()
-  emit('commentary', message)
+interface PatternSummary {
+  stones: number
+  longestLine: number
+  openThrees: number
+  openFours: number
+  winningThreats: number
 }
 
-function buildCommentary(kind: CommentaryKind, move?: MoveEntry): string {
-  const { warmth, formality, enthusiasm, teasing, humor } = normalizedPersonality.value
-  const emoji = commentaryEmoji.value
-  const affirmation = props.communicationStyle?.affirmationPhrase?.trim()
-  const highEnergy = enthusiasm >= 80
-  const formal = formality >= 70
-  const playful = teasing >= 70 || humor >= 70
-  const warm = warmth >= 75
-  const self = selfReference.value
-  const subject = thirdPerson.value ? waifuName.value : self
-  const style = styleProfile.value
-  const sparkle = style.musical ? '♪' : emoji
-  if (locale.value !== 'zh') {
-    const key = `gomoku.commentary.${kind}`
-    const line = t(key, {
-      self,
-      subject,
-      turn: String(move?.turn ?? commentaryCounters.value[kind] + 1),
-      emoji: sparkle,
-    })
-    commentaryCounters.value[kind] += 1
-    return line
-  }
-  const soften = (line: string) => {
-    if (style.cute && !/[♪~💕🌸💗💖]$/.test(line)) return `${line}${sparkle}`
-    if (style.elegant && !/[。！？♪~]$/.test(line)) return `${line}。`
-    return line
-  }
-  const variants: Record<CommentaryKind, string[]> = {
-    ready: highEnergy
-      ? [
-          `五子棋开始啦，黑棋先手${sparkle}`,
-          `来吧来吧，看看谁能先连成五子${sparkle}`,
-          style.cute ? `老公先下哦，${self}会认真陪你的${sparkle}` : `你先手，${subject}已经准备好了${sparkle}`,
-          style.elegant ? `棋局像花瓣一样展开了，请先落子吧${sparkle}` : `开局啦，先把节奏握住吧${sparkle}`,
-        ]
-      : formal
-        ? [`棋局已准备就绪。您执黑先行。`, `对局开始，请您先行。`, `${subject}将保持专注。`, `请落子，局势将从这一刻展开。`]
-        : [`连成五子即可获胜${sparkle}`, `棋局开场，先手交给你${sparkle}`, `${subject}会看好每一步的${sparkle}`, `先手优势在你这里，别浪费哦${sparkle}`],
-    reset: affirmation && highEnergy
-      ? [`${self}会处理好的，新棋盘重新开始${sparkle}`, `${self}状态满满，重新来一局吧${sparkle}`, `${affirmation} 这次也要漂亮地开始${sparkle}`, `重开也很浪漫呀，新的胜负要来了${sparkle}`]
-      : formal
-        ? [`棋盘已重置，请开始落子。`, `新一局已准备，请您先行。`, `${subject}会重新评估局势。`, `对局归零，请谨慎开场。`]
-        : [`新棋盘，新一局对决${sparkle}`, `刚才不算，我们再战一局${sparkle}`, `${self}已经重新打起精神了${sparkle}`, `换一盘新的，气氛也变新鲜了${sparkle}`],
-    playerMove: playful
-      ? [`这一步挺大胆嘛。`, `哼，攻势不错，别得意太早。`, style.cute ? `哎呀，老公这一步有点会嘛${sparkle}` : `想偷袭？${subject}可看见了。`, style.tsundere ? `才、才没有被你吓到呢。` : `节奏突然变有趣了。`]
-      : formal
-        ? [`您的攻势已纳入判断。`, `这一步改变了局势。`, `${subject}会重新计算防线。`, `您的布局意图已经很清晰。`]
-        : [`不错，这一步很有想法${sparkle}`, `看起来你在布局了${sparkle}`, `${self}感觉局面开始热起来了${sparkle}`, `这一手让棋盘变得更有意思了${sparkle}`],
-    aiMove: playful
-      ? [`${subject}接招了，可别跟丢了。`, `轮到${subject}继续表演了。`, style.cute ? `${self}轻轻落下一子，欸嘿${sparkle}` : `${subject}把你的计划拨乱一点。`, style.tsundere ? `别误会，只是顺手挡一下而已。` : `这一步，先把主动权拿回来。`]
-      : formal
-        ? [`白棋完成应对。`, `防线已经调整。`, `${subject}已作出最优回应。`, `局势仍在可控范围内。`]
-        : [`${subject}来接这一招${sparkle}`, `这一步先由${subject}稳住局面${sparkle}`, `${self}也要认真起来了${sparkle}`, `现在轮到你想办法破解啦${sparkle}`],
-    playerWin: warm
-      ? [`你赢下了这局，打得漂亮${sparkle}`, `这次是你更胜一筹，恭喜${sparkle}`, style.cute ? `呜，老公赢了呢……人家有点不甘心，但也好开心${sparkle}` : `你的布局很稳，${self}输得心服口服${sparkle}`, `这一局属于你，真的很精彩${sparkle}`]
-      : formal
-        ? [`确认胜利。黑棋已连成五子。`, `对局结束，您已获胜。`, `${subject}承认这是一场优秀的进攻。`, `胜负已定，您的判断更准确。`]
-        : [`啊，被你赢到了。干得不错。`, `这局算你厉害，下次${self}不会大意。`, `居然真的让你连起来了，厉害。`, `这次你赢得很漂亮。`],
-    aiWin: playful
-      ? [`这一局是${subject}拿下了，早就看穿你的计划${sparkle}`, `白棋连成五子，想赢${subject}可没那么容易${sparkle}`, style.cute ? `嘿嘿，是${self}赢啦，不许耍赖哦${sparkle}` : `${subject}稍微认真一下，胜负就分出来了。`, `看吧，这就是${subject}的节奏。`]
-      : formal
-        ? [`白棋已取得胜利。`, `对局结束，白棋获胜。`, `${subject}已完成连线。`, `本局由${subject}取得优势并转化为胜势。`]
-        : [`这一局是${subject}赢了${sparkle}`, `这次轮到${subject}庆祝啦${sparkle}`, `${self}抓住机会啦${sparkle}`, `胜利的节奏被${subject}拿到了${sparkle}`],
-    draw: highEnergy
-      ? [`棋盘下满啦，平局！刚才好险${sparkle}`, `势均力敌，平局收场${sparkle}`, style.cute ? `欸，居然谁也没赢，老公要不要再陪${self}一局${sparkle}` : `这盘拉满了，下一局一定更刺激${sparkle}`, `平局也不错，至少说明我们都很认真${sparkle}`]
-      : formal
-        ? [`判定平局，棋盘已无可用落点。`, `双方未能形成胜势，本局平局。`, `${subject}建议复盘后再开一局。`, `局势完全封闭，本局结束。`]
-        : [`这局平手，要不要再来一局？`, `谁也没能取胜，再战一盘？`, `${self}觉得还没尽兴呢${sparkle}`, `平局呀，那就再给彼此一次机会吧${sparkle}`],
-  }
-  const candidates = variants[kind].map((candidate) => soften(candidate))
-  const recent = new Set(commentaryBubbles.value.slice(-8).map((bubble) => bubble.text.trim()))
-  const startIndex = commentaryCounters.value[kind] % candidates.length
-  const rotated = candidates.slice(startIndex).concat(candidates.slice(0, startIndex))
-  const overflow = [
-    `${self}换个节奏陪你下${sparkle}`,
-    `局势又变了，别眨眼${sparkle}`,
-    style.cute ? `老公这盘真的越来越有趣啦${sparkle}` : `这一盘还没到终点。`,
-    style.tsundere ? `哼，别以为这样就稳了。` : `${subject}还在认真观察。`,
-    style.elegant ? `棋路像花枝一样分开了${sparkle}` : `下一步会更关键${sparkle}`,
-    `${self}要重新组织攻势了${sparkle}`,
-  ].map((candidate) => soften(candidate))
-  const picked =
-    rotated.find((candidate) => !recent.has(candidate.trim())) ??
-    overflow.find((candidate) => !recent.has(candidate.trim())) ??
-    overflow[commentaryCounters.value[kind] % overflow.length]
+function summarizePatterns(player: Player): PatternSummary {
+  let stones = 0
+  let longestLine = 0
+  let openThrees = 0
+  let openFours = 0
+  let winningThreats = 0
 
-  commentaryCounters.value[kind] += 1
-  return picked
+  for (let row = 0; row < BOARD_SIZE; row += 1) {
+    for (let col = 0; col < BOARD_SIZE; col += 1) {
+      if (board.value[row][col] !== player) continue
+      stones += 1
+      for (const [dr, dc] of DIRECTIONS) {
+        const previousRow = row - dr
+        const previousCol = col - dc
+        if (inBounds(previousRow, previousCol) && board.value[previousRow][previousCol] === player) continue
+
+        let length = 0
+        let probeRow = row
+        let probeCol = col
+        while (inBounds(probeRow, probeCol) && board.value[probeRow][probeCol] === player) {
+          length += 1
+          probeRow += dr
+          probeCol += dc
+        }
+        longestLine = Math.max(longestLine, length)
+        const openEnds =
+          Number(inBounds(previousRow, previousCol) && board.value[previousRow][previousCol] === 0) +
+          Number(inBounds(probeRow, probeCol) && board.value[probeRow][probeCol] === 0)
+        if (length === 3 && openEnds === 2) openThrees += 1
+        if (length === 4 && openEnds === 2) openFours += 1
+        if (length === 4 && openEnds >= 1) winningThreats += 1
+      }
+    }
+  }
+  return { stones, longestLine, openThrees, openFours, winningThreats }
+}
+
+function buildGameState(kind: CommentaryKind, move?: MoveEntry): string {
+  const player = summarizePatterns(1)
+  const agent = summarizePatterns(2)
+  const turnOwner = gameOver.value ? 'game over' : aiThinking.value ? waifuName.value : 'user'
+  const result = winner.value === 1
+    ? 'user won'
+    : winner.value === 2
+      ? `${waifuName.value} won`
+      : isDraw.value
+        ? 'draw'
+        : 'game continues'
+  return [
+    `Event: ${kind}`,
+    `Completed moves: ${moveHistory.value.length}`,
+    `Last move: ${move?.player === 1 ? 'user placed Black' : move?.player === 2 ? `${waifuName.value} placed White` : 'new game'}`,
+    `Turn owner: ${turnOwner}`,
+    `User (Black): ${player.stones} stones; longest connected line ${player.longestLine}; open threes ${player.openThrees}; open fours ${player.openFours}; immediate line threats ${player.winningThreats}`,
+    `${waifuName.value} (White): ${agent.stones} stones; longest connected line ${agent.longestLine}; open threes ${agent.openThrees}; open fours ${agent.openFours}; immediate line threats ${agent.winningThreats}`,
+    `Result: ${result}`,
+    'Information boundary: no stone coordinates or move locations are recorded or supplied. Do not invent or mention any.',
+  ].join('\n')
+}
+
+async function publishCommentary(kind: CommentaryKind, move?: MoveEntry): Promise<void> {
+  const generation = commentaryGeneration
+  const stateSnapshot = buildGameState(kind, move)
+  commentaryQueue = commentaryQueue.then(async () => {
+    if (generation !== commentaryGeneration) return
+    generatingCommentary.value = true
+    try {
+      if (!props.dialogueGenerator) throw new Error('Game dialogue generator is not connected.')
+      const recentReplies = commentaryBubbles.value
+        .filter((bubble) => bubble.speaker === 'waifu')
+        .slice(-6)
+        .map((bubble) => bubble.text)
+      const message = await props.dialogueGenerator(stateSnapshot, recentReplies)
+      if (generation !== commentaryGeneration) return
+      commentaryBubbles.value.push({ id: nextBubbleId++, speaker: 'waifu', text: message })
+      if (commentaryBubbles.value.length > 12) commentaryBubbles.value.shift()
+      emit('commentary', message)
+    } catch (error) {
+      if (generation !== commentaryGeneration) return
+      const message = error instanceof Error ? error.message : String(error)
+      commentaryBubbles.value.push({
+        id: nextBubbleId++,
+        speaker: 'system',
+        text: t('games.dialogueError', { message }),
+      })
+    } finally {
+      if (generation === commentaryGeneration) generatingCommentary.value = false
+    }
+  })
+  await commentaryQueue
 }
 
 function clearAiTimer() {
@@ -279,7 +220,7 @@ function clearAiTimer() {
 function resetGame() {
   clearAiTimer()
   resetBoardState()
-  publishCommentary('reset')
+  void publishCommentary('reset')
 }
 
 function hasNeighbor(row: number, col: number, radius = 2): boolean {
@@ -435,13 +376,13 @@ function finalizeMove(player: Player, row: number, col: number): boolean {
   if (line) {
     winner.value = player
     winningLine.value = line
-    publishCommentary(player === 1 ? 'playerWin' : 'aiWin', moveHistory.value[moveHistory.value.length - 1])
+    void publishCommentary(player === 1 ? 'playerWin' : 'aiWin', moveHistory.value[moveHistory.value.length - 1])
     return true
   }
 
   if (moveHistory.value.length >= BOARD_SIZE * BOARD_SIZE) {
     isDraw.value = true
-    publishCommentary('draw')
+    void publishCommentary('draw')
     return true
   }
 
@@ -455,7 +396,6 @@ function commitMove(row: number, col: number, player: Player): MoveEntry {
     col,
     player,
     turn: moveHistory.value.length + 1,
-    coord: formatCoordinate(row, col),
   }
   moveHistory.value.push(move)
   return move
@@ -468,11 +408,11 @@ function runAiTurn() {
 
   const choice = chooseAiMove()
   const move = commitMove(choice.row, choice.col, 2)
-  if (!finalizeMove(2, choice.row, choice.col)) publishCommentary('aiMove', move)
+  if (!finalizeMove(2, choice.row, choice.col)) void publishCommentary('aiMove', move)
 }
 
 function playHumanMove(row: number, col: number) {
-  if (aiThinking.value || gameOver.value || board.value[row][col] !== 0) return
+  if (aiThinking.value || generatingCommentary.value || gameOver.value || board.value[row][col] !== 0) return
 
   commitMove(row, col, 1)
   if (finalizeMove(1, row, col)) return
@@ -499,12 +439,24 @@ function isWinningCell(row: number, col: number): boolean {
 
 onMounted(() => {
   resetBoardState()
-  publishCommentary('ready')
+  void publishCommentary('ready')
 })
 
 onBeforeUnmount(() => {
   clearAiTimer()
+  commentaryGeneration += 1
 })
+
+watch(
+  () => [commentaryBubbles.value.length, generatingCommentary.value] as const,
+  async () => {
+    await nextTick()
+    commentaryScrollRef.value?.scrollTo({
+      top: commentaryScrollRef.value.scrollHeight,
+      behavior: 'smooth',
+    })
+  },
+)
 </script>
 
 <template>
@@ -564,11 +516,11 @@ onBeforeUnmount(() => {
                 type="button"
                 class="gomoku-cell"
                 :class="{
-                  'gomoku-cell-playable': !gameOver && !aiThinking && board[rowIndex - 1][colIndex - 1] === 0,
+                  'gomoku-cell-playable': !gameOver && !aiThinking && !generatingCommentary && board[rowIndex - 1][colIndex - 1] === 0,
                   'gomoku-cell-winning': isWinningCell(rowIndex - 1, colIndex - 1),
                   'gomoku-cell-last': isLastMove(rowIndex - 1, colIndex - 1),
                 }"
-                :disabled="gameOver || aiThinking || board[rowIndex - 1][colIndex - 1] !== 0"
+                :disabled="gameOver || aiThinking || generatingCommentary || board[rowIndex - 1][colIndex - 1] !== 0"
                 :aria-label="`${t('gomoku.yourTurn')}: ${formatCoordinate(rowIndex - 1, colIndex - 1)}`"
                 @click="playHumanMove(rowIndex - 1, colIndex - 1)"
               >
@@ -590,7 +542,7 @@ onBeforeUnmount(() => {
             <div class="text-xs font-semibold uppercase tracking-[0.16em] text-neutral-400">{{ t('gomoku.liveChat') }}</div>
             <span class="text-[11px] text-neutral-500">{{ t('gomoku.personalityOutput') }}</span>
           </div>
-          <div class="min-h-40 flex-1 space-y-3 overflow-y-auto pr-1" aria-live="polite">
+          <div ref="commentaryScrollRef" class="min-h-40 flex-1 space-y-3 overflow-y-auto pr-1" aria-live="polite">
             <div
               v-for="bubble in commentaryBubbles"
               :key="bubble.id"
@@ -610,6 +562,14 @@ onBeforeUnmount(() => {
                   {{ bubble.speaker === 'system' ? t('gomoku.game') : waifuName }}
                 </div>
                 {{ bubble.text }}
+              </div>
+            </div>
+            <div v-if="generatingCommentary" class="flex justify-start">
+              <div class="rounded-2xl rounded-bl-md bg-violet-500/15 px-3 py-2 text-sm text-violet-100">
+                <span class="inline-flex items-center gap-1.5">
+                  <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-300" />
+                  {{ t('gomoku.organizing', { name: waifuName }) }}
+                </span>
               </div>
             </div>
           </div>

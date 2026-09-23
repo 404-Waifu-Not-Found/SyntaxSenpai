@@ -6108,6 +6108,7 @@ async function handleImportData() {
           :tags="store.selectedWaifu?.tags"
           :personality="store.selectedWaifu?.personalityTraits"
           :communication-style="store.selectedWaifu?.communicationStyle"
+          :dialogue-generator="store.generateGomokuDialogue"
           @close="showGomokuPanel = false"
         />
 

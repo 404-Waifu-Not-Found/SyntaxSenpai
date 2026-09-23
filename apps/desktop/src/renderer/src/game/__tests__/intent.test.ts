@@ -26,6 +26,17 @@ describe('detectGameLaunchIntent', () => {
     })
   })
 
+  it('opens the chess panel from localized quick-start prompts', () => {
+    for (const prompt of [
+      '我们来下一盘国际象棋吧。',
+      'Jouons rapidement aux échecs.',
+      'Давай сыграем в шахматы.',
+      'チェスを一局しよう。',
+    ]) {
+      expect(detectGameLaunchIntent(prompt)?.kind).toBe('chess')
+    }
+  })
+
   it('does not guess a game from unrelated text', () => {
     expect(detectGameLaunchIntent('Can you explain the engine design?')).toEqual(null)
   })

@@ -20,7 +20,7 @@ export function detectGameLaunchIntent(text: string): GameLaunchIntent | null {
     ? 'tictactoe'
     : /\b(?:connect\s*4|connect\s*four|four\s+in\s+a\s+row)\b/.test(normalized)
       ? 'connect4'
-      : /\bchess\b/.test(normalized)
+      : /\bchess\b|国际象棋|西洋棋|象棋|échecs?|шахмат|チェス/u.test(normalized)
         ? 'chess'
         : null
 

@@ -2,6 +2,12 @@
 import { computed, ref, watch } from 'vue'
 import { PhCpu, PhGameController, PhUser, PhX } from '@phosphor-icons/vue'
 import type { GameSnapshot } from '@syntax-senpai/game-engine'
+import bishopPiece from '../assets/chess-pieces/bishop.svg'
+import kingPiece from '../assets/chess-pieces/king.svg'
+import knightPiece from '../assets/chess-pieces/knight.svg'
+import pawnPiece from '../assets/chess-pieces/pawn.svg'
+import queenPiece from '../assets/chess-pieces/queen.svg'
+import rookPiece from '../assets/chess-pieces/rook.svg'
 
 const props = withDefaults(defineProps<{
   snapshot: GameSnapshot | null
@@ -65,7 +71,18 @@ const chessCells = computed(() => {
   })
 })
 
-const chessPieceLabel = (piece: ChessPiece) => piece ? piece.type.toUpperCase() : ''
+const chessPieceAssets: Record<string, string> = {
+  b: bishopPiece,
+  k: kingPiece,
+  n: knightPiece,
+  p: pawnPiece,
+  q: queenPiece,
+  r: rookPiece,
+}
+
+function chessPieceStyle(piece: ChessPiece) {
+  return piece ? { '--chess-piece-mask': `url("${chessPieceAssets[piece.type]}")` } : undefined
+}
 
 const chessLegalTargets = computed(() => {
   const board = props.snapshot?.board as ChessBoard | undefined
@@ -204,9 +221,13 @@ watch(() => props.snapshot?.lastMove, () => {
             :aria-pressed="selectedSquare === cell.square"
             @click="chooseChessSquare(cell.square)"
           >
-            <span :class="cell.piece?.color === 'w' ? 'mini-game-piece-white' : 'mini-game-piece-black'">
-              {{ chessPieceLabel(cell.piece) }}
-            </span>
+            <span
+              v-if="cell.piece"
+              class="mini-game-piece"
+              :class="cell.piece.color === 'w' ? 'mini-game-piece-white' : 'mini-game-piece-black'"
+              :style="chessPieceStyle(cell.piece)"
+              aria-hidden="true"
+            />
           </button>
         </div>
       </div>
@@ -365,8 +386,22 @@ watch(() => props.snapshot?.lastMove, () => {
   pointer-events: none;
 }
 .mini-game-chess-last { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 75%, transparent); }
-.mini-game-piece-white { color: #fff; text-shadow: 0 1px 2px #000, 0 0 3px #000; }
-.mini-game-piece-black { color: #111; text-shadow: 0 1px 2px #fff, 0 0 3px #fff; }
+.mini-game-piece {
+  display: block;
+  width: 72%;
+  height: 76%;
+  aspect-ratio: 1;
+  -webkit-mask: var(--chess-piece-mask) center / contain no-repeat;
+  mask: var(--chess-piece-mask) center / contain no-repeat;
+}
+.mini-game-piece-white {
+  background: #f5f1e6;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.9)) drop-shadow(0 0 1px rgba(0, 0, 0, 0.65));
+}
+.mini-game-piece-black {
+  background: #123128;
+  filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.9)) drop-shadow(0 0 1px rgba(255, 255, 255, 0.7));
+}
 
 .mini-game-footer {
   padding: 0.6rem 0.75rem;

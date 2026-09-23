@@ -173,6 +173,8 @@ export interface Message {
   source?: 'wechat' | 'game'
   /** Human-readable origin label (e.g. the WeChat peer's display name). */
   sourceLabel?: string
+  /** Short user-facing text for internal events whose full content is model context. */
+  displayContent?: string
   /**
    * When true, this message is an intermediate step (tool call output or a
    * pre-final reasoning bubble) that the UI folds into a collapsible "process"
@@ -3397,7 +3399,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
 
   async function sendMessage(
     text: string,
-    opts: { source?: 'wechat' | 'game'; sourceLabel?: string } = {},
+    opts: { source?: 'wechat' | 'game'; sourceLabel?: string; displayContent?: string } = {},
   ) {
     // 单聊主入口：命令处理、显式终端执行、普通聊天、agent 工具循环都从这里分流。
     if (isGroupChat.value && groupWaifuIds.value.length > 0) {
@@ -3589,6 +3591,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
       content: trimmedText,
       timestamp: now(),
       ...(opts.source ? { source: opts.source, sourceLabel: opts.sourceLabel } : {}),
+      ...(opts.displayContent ? { displayContent: opts.displayContent } : {}),
     }
 
     messages.value.push(userMsg)
@@ -4115,8 +4118,8 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     }
   }
 
-  async function sendGameEvent(text: string) {
-    return sendMessage(text, { source: 'game', sourceLabel: 'Minigame' })
+  async function sendGameEvent(text: string, displayContent?: string) {
+    return sendMessage(text, { source: 'game', sourceLabel: 'Minigame', displayContent })
   }
 
   function handleExternalConversationEvent(event: any) {

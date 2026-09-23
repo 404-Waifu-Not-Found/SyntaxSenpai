@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import CardRenderer from './cards/CardRenderer.vue'
+import { summarizeGameEvent } from '../game/message-display'
 
 const props = withDefaults(defineProps<{
   role?: 'user' | 'assistant'
   content?: string
+  displayContent?: string
+  source?: 'wechat' | 'game'
   timestamp?: string
   recent?: boolean
   showCopy?: boolean
@@ -179,7 +182,9 @@ async function handleCopy() {
 }
 
 const hasCard = computed(() => renderedParts.value.some((p) => p.kind === 'card'))
-const displayContent = computed(() => sanitizeForBubble(props.content ?? ''))
+const displayContent = computed(() => sanitizeForBubble(
+  props.displayContent ?? (props.source === 'game' ? summarizeGameEvent(props.content ?? '') : props.content ?? ''),
+))
 
 const bubbleClasses = computed(() => [
   'relative px-4 py-3 rounded-xl',
@@ -248,7 +253,7 @@ const renderedParts = computed<RenderedPart[]>(() => {
         </template>
         <template v-else>
           <slot>
-            <div class="whitespace-pre-wrap">{{ content }}</div>
+            <div class="whitespace-pre-wrap">{{ displayContent }}</div>
           </slot>
         </template>
       </div>

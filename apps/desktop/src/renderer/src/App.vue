@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, type Component } from 'vue'
 import {
+  PhArrowUp,
+  PhArrowUpRight,
   PhBookOpen,
   PhBrain,
   PhChatCircle,
@@ -9,12 +11,17 @@ import {
   PhFloppyDisk,
   PhGameController,
   PhGear,
+  PhGraduationCap,
   PhGlobe,
+  PhFolderSimple,
+  PhHammer,
   PhHeart,
+  PhLightbulb,
   PhMagnifyingGlass,
   PhMaskHappy,
   PhPalette,
   PhPencilSimple,
+  PhPaperclip,
   PhPuzzlePiece,
   PhRobot,
   PhSparkle,
@@ -49,6 +56,7 @@ import { useBrowserStore } from './stores/browser'
 import type { ActiveCodingRepo } from './types/coding-session'
 import { gameSession, applyBestAgentMove, applyGameSessionMove, closeGameSession, startGameSession } from './game/session'
 import { gameMoveLabel, type GameKind } from '@syntax-senpai/game-engine'
+import { getNewChatSuggestionKinds, type NewChatSuggestionKind } from './composables/new-chat-suggestions'
 
 const store = useChatStore()
 const workspace = useWorkspaceStore()
@@ -62,6 +70,21 @@ const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, se
 const { t, locale, setLocale, localeOptions } = useI18n()
 const voice = useVoice()
 
+const newChatSuggestionKinds = computed(() => getNewChatSuggestionKinds(store.userMemories))
+const newChatSuggestionIcons: Record<NewChatSuggestionKind, Component> = {
+  project: PhFolderSimple,
+  skill: PhGraduationCap,
+  personal: PhLightbulb,
+  build: PhHammer,
+  learn: PhBookOpen,
+  game: PhGameController,
+}
+
+function sendNewChatSuggestion(kind: NewChatSuggestionKind) {
+  if (store.isLoading) return
+  void store.sendMessage(t(`chat.suggestionPrompt.${kind}`))
+}
+
 async function handleGameUserMove(move: string) {
   if (gameSession.busy || !gameSession.snapshot) return
   gameSession.busy = true
@@ -72,12 +95,15 @@ async function handleGameUserMove(move: string) {
     // missing provider tool call. The agent still comments on the result.
     const snapshot = humanSnapshot.turn === 'agent' ? applyBestAgentMove() : humanSnapshot
     const label = gameMoveLabel(before.kind, move)
+    const agentMoved = snapshot.moveCount > humanSnapshot.moveCount
+    const displayContent = `Your move: ${label}.${agentMoved ? ` ${store.selectedWaifu?.displayName || 'The agent'} replied ${snapshot.lastMove}.` : snapshot.status !== 'playing' ? ' The match is over.' : ''}`
     await store.sendGameEvent(
       `[Minigame event] The user just played ${label} in ${before.kind}. ` +
       `The built-in engine has already replied when it was the agent's turn. ` +
       `The authoritative current game state is ${JSON.stringify(snapshot)}. ` +
       `Do not invent a board or move, and do not call game_move for this turn. ` +
       `Make a brief in-character remark about the position or, if the game is over, the result.`,
+      displayContent,
     )
   } catch (err: any) {
     showToast(err?.message || String(err), 'error')
@@ -2437,6 +2463,14 @@ const inputSurfaceStyle = computed(() => ({
     ? `color-mix(in srgb, ${theme.value.colors.fg} 16%, transparent)`
     : `color-mix(in srgb, ${theme.value.colors.accent} 24%, transparent)`,
   color: theme.value.colors.fg,
+}))
+
+const composerSurfaceStyle = computed(() => ({
+  background: `color-mix(in srgb, ${theme.value.colors.surface2} 88%, ${theme.value.colors.primary} 12%)`,
+  borderColor: isLightTheme.value
+    ? `color-mix(in srgb, ${theme.value.colors.fg} 16%, transparent)`
+    : `color-mix(in srgb, ${theme.value.colors.primary} 28%, transparent)`,
+  boxShadow: `0 16px 38px color-mix(in srgb, ${theme.value.colors.bg} 32%, transparent)`,
 }))
 
 const primaryButtonStyle = computed(() => ({
@@ -6127,6 +6161,25 @@ async function handleImportData() {
           <p :class="[compactChatLayout ? 'compact-chat-empty-subtitle text-xs' : 'text-sm']" :style="emptyStateGlowStyle">
             {{ t('chat.emptySubtitle') }}
           </p>
+          <div class="new-chat-suggestions" :class="{ 'new-chat-suggestions-compact': compactChatLayout }">
+            <p class="new-chat-suggestions-heading">
+              {{ store.userMemories.length ? t('chat.suggestionsMemoryHeading') : t('chat.suggestionsQuickHeading') }}
+            </p>
+            <div class="new-chat-suggestions-grid">
+              <button
+                v-for="kind in newChatSuggestionKinds"
+                :key="kind"
+                type="button"
+                class="new-chat-suggestion"
+                :disabled="store.isLoading"
+                @click="sendNewChatSuggestion(kind)"
+              >
+                <component :is="newChatSuggestionIcons[kind]" :size="18" weight="regular" aria-hidden="true" />
+                <span>{{ t(`chat.suggestion.${kind}`) }}</span>
+                <PhArrowUpRight :size="14" class="new-chat-suggestion-arrow" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
         </div>
 
         <div
@@ -6245,6 +6298,8 @@ async function handleImportData() {
               <ChatBubble
                 :role="group.msg.role"
                 :content="group.msg.content"
+                :display-content="group.msg.displayContent"
+                :source="group.msg.source"
                 :timestamp="group.msg.timestamp"
                 :recent="group.msg.id === store.recentMessageId"
                 :show-copy="group.msg.role === 'assistant'"
@@ -6317,8 +6372,8 @@ async function handleImportData() {
       <!-- Input -->
       <div
         :class="[
-          'glass-surface border-t relative',
-          compactChatLayout ? 'p-3' : 'p-4',
+          'composer-footer relative',
+          compactChatLayout ? 'px-3 pt-2.5 pb-3' : 'px-4 pt-3 pb-4',
           !startupAnimDone && appReady ? 'app-slide-in-bottom' : '',
           !appReady ? 'opacity-0' : '',
         ]"
@@ -6382,7 +6437,7 @@ async function handleImportData() {
           </div>
         </div>
 
-        <div :class="[compactChatLayout ? 'flex flex-wrap gap-2 items-end' : 'flex gap-3 items-end']">
+        <div class="composer-shell" :style="composerSurfaceStyle">
           <input
             ref="fileInputRef"
             type="file"
@@ -6391,16 +6446,7 @@ async function handleImportData() {
             class="hidden"
             @change="handleFilePick"
           />
-          <button
-            :class="[compactChatLayout ? 'compact-chat-icon-btn btn-ghost min-w-fit !px-2 h-10' : 'btn-ghost min-w-fit !px-2']"
-            :title="t('input.attachImage')"
-            :aria-label="t('input.attachImage')"
-            :disabled="store.isLoading"
-            @click="fileInputRef?.click()"
-          >
-            📎
-          </button>
-          <div class="relative flex-1 min-w-[12rem]">
+          <div class="relative min-w-0">
             <!-- Slash-command overlay -->
             <div
               v-if="showSlashMenu && filteredSlashCommands.length > 0"
@@ -6462,49 +6508,49 @@ async function handleImportData() {
               :aria-label="t('chat.inputPlaceholder')"
               :disabled="store.isLoading"
               rows="1"
-              :class="[
-                compactChatLayout ? 'compact-chat-input input-field w-full resize-none text-sm leading-5 py-2.5' : 'input-field w-full resize-none',
-                'disabled:opacity-50',
-              ]"
-              style="max-height: 100px"
-              :style="inputSurfaceStyle"
+              class="composer-input compact-chat-input w-full resize-none text-sm leading-6 disabled:opacity-50"
+              style="max-height: 160px"
               @input="adjustInputHeight"
               @keydown="handleKeyDown"
               @paste="handlePaste"
             />
           </div>
-          <button
-            v-if="store.isLoading"
-            :class="[
-              compactChatLayout
-                ? 'compact-chat-action-btn btn-primary w-full flex items-center justify-center gap-2 bg-rose-600/80 hover:bg-rose-600 border-rose-500/40 text-white'
-                : 'btn-primary min-w-fit flex items-center justify-center gap-2 bg-rose-600/80 hover:bg-rose-600 border-rose-500/40 text-white',
-            ]"
-            :aria-label="t('chat.stop')"
-            type="button"
-            @click="store.stopStream()"
-          >
-            <span aria-hidden="true" class="inline-block w-2.5 h-2.5 bg-current rounded-sm" />
-            {{ t('chat.stop') }}
-          </button>
-          <button
-            v-else
-            :class="[
-              compactChatLayout
-                ? 'compact-chat-action-btn btn-primary themed-btn-primary w-full flex items-center justify-center gap-2'
-                : 'btn-primary themed-btn-primary min-w-fit flex items-center justify-center gap-2',
-            ]"
-            :style="primaryButtonStyle"
-            :aria-label="t('chat.send')"
-            :disabled="!store.inputValue.trim() && store.pendingAttachments.length === 0"
-            @click="submitChatMessage"
-          >
-            {{ t('chat.send') }}
-          </button>
+          <div class="composer-toolbar">
+            <button
+              type="button"
+              class="composer-tool-button"
+              :title="t('input.attachImage')"
+              :aria-label="t('input.attachImage')"
+              :disabled="store.isLoading"
+              @click="fileInputRef?.click()"
+            >
+              <PhPaperclip :size="18" aria-hidden="true" />
+            </button>
+            <span class="composer-hint">{{ t('chat.inputHint') }}</span>
+            <button
+              v-if="store.isLoading"
+              type="button"
+              class="composer-send-button composer-stop-button"
+              :aria-label="t('chat.stop')"
+              :title="t('chat.stop')"
+              @click="store.stopStream()"
+            >
+              <span aria-hidden="true" class="inline-block w-2.5 h-2.5 bg-current rounded-sm" />
+            </button>
+            <button
+              v-else
+              type="button"
+              class="composer-send-button"
+              :style="primaryButtonStyle"
+              :aria-label="t('chat.send')"
+              :title="t('chat.send')"
+              :disabled="!store.inputValue.trim() && store.pendingAttachments.length === 0"
+              @click="submitChatMessage"
+            >
+              <PhArrowUp :size="19" weight="bold" aria-hidden="true" />
+            </button>
+          </div>
         </div>
-        <p v-if="!compactChatLayout" class="text-xs text-neutral-500 mt-2">
-          {{ t('chat.inputHint') }}
-        </p>
       </div>
         </div>
         <aside v-if="hasEmbeddedGame" class="game-chat-aside" aria-label="Active minigame">
@@ -7218,5 +7264,200 @@ async function handleImportData() {
 /* Command list item hover highlight transitions */
 .slash-menu-item {
   transition: background-color 80ms ease, color 80ms ease;
+}
+
+.new-chat-suggestions {
+  width: min(100%, 48rem);
+  margin-top: 1.35rem;
+}
+
+.new-chat-suggestions-heading {
+  margin-bottom: 0.7rem;
+  color: color-mix(in srgb, var(--fg) 52%, transparent);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.new-chat-suggestions-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.new-chat-suggestion {
+  display: flex;
+  min-width: 0;
+  min-height: 3.3rem;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--primary) 18%, transparent);
+  border-radius: calc(0.95rem * var(--radius-scale, 1));
+  background: color-mix(in srgb, var(--surface) 84%, var(--primary) 16%);
+  padding: 0.7rem 0.8rem;
+  color: color-mix(in srgb, var(--fg) 88%, transparent);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: left;
+  transition: border-color 150ms ease, background-color 150ms ease, transform 150ms ease;
+}
+
+.new-chat-suggestion:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--primary) 52%, transparent);
+  background: color-mix(in srgb, var(--surface) 68%, var(--primary) 32%);
+}
+
+.new-chat-suggestion:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.new-chat-suggestion:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.new-chat-suggestion > :first-child {
+  flex: none;
+  color: var(--primary);
+}
+
+.new-chat-suggestion > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.new-chat-suggestion-arrow {
+  flex: none;
+  color: color-mix(in srgb, var(--fg) 42%, transparent);
+  transition: transform 150ms ease, color 150ms ease;
+}
+
+.new-chat-suggestion:hover:not(:disabled) .new-chat-suggestion-arrow {
+  transform: translate(2px, -2px);
+  color: var(--primary);
+}
+
+.composer-footer {
+  flex: none;
+}
+
+.composer-shell {
+  overflow: visible;
+  border: 1px solid;
+  border-radius: calc(1.45rem * var(--radius-scale, 1));
+  padding: 0.65rem 0.8rem 0.7rem;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+
+.composer-shell:focus-within {
+  border-color: color-mix(in srgb, var(--primary) 62%, transparent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 11%, transparent), 0 16px 38px rgba(0, 0, 0, 0.16);
+}
+
+.composer-input {
+  display: block;
+  min-height: 2.8rem;
+  max-height: 10rem;
+  border: 0 !important;
+  border-radius: 0.7rem;
+  outline: 0;
+  background: transparent !important;
+  padding: 0.75rem 0.7rem 0.8rem;
+  color: var(--fg);
+  box-shadow: none !important;
+  font: inherit;
+  line-height: 1.5;
+}
+
+.composer-input::placeholder {
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+
+.composer-toolbar {
+  display: flex;
+  min-height: 2.55rem;
+  align-items: center;
+  gap: 0.65rem;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 9%, transparent);
+  padding-top: 0.55rem;
+}
+
+.composer-tool-button {
+  display: grid;
+  width: 2.2rem;
+  height: 2.2rem;
+  flex: none;
+  place-items: center;
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--fg) 66%, transparent);
+  transition: color 140ms ease, background-color 140ms ease;
+}
+
+.composer-tool-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--fg);
+}
+
+.composer-tool-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.composer-hint {
+  min-width: 0;
+  flex: 1;
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  font-size: 0.68rem;
+  line-height: 1.2;
+}
+
+.composer-send-button {
+  display: grid;
+  width: 2.45rem;
+  height: 2.45rem;
+  flex: none;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: white;
+  transition: transform 140ms ease, opacity 140ms ease, filter 140ms ease;
+}
+
+.composer-send-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+}
+
+.composer-send-button:disabled {
+  cursor: default;
+  opacity: 0.48;
+  box-shadow: none !important;
+}
+
+.composer-stop-button {
+  background: rgba(225, 29, 72, 0.84);
+  border-color: rgba(251, 113, 133, 0.44);
+}
+
+.new-chat-suggestions-compact .new-chat-suggestions-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.new-chat-suggestions-compact .new-chat-suggestion {
+  min-height: 2.7rem;
+  gap: 0.45rem;
+  padding: 0.55rem 0.6rem;
+  font-size: 0.68rem;
+}
+
+@media (max-width: 720px) {
+  .new-chat-suggestions-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

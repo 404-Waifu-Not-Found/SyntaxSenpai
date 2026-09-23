@@ -25,7 +25,39 @@ import type { GameDifficulty, GameKind } from '@syntax-senpai/game-engine'
 
 export type AgentMode = 'auto' | 'full'
 
-export * from '@syntax-senpai/agent-tools/catalog'
+// Keep the renderer on the browser-safe tool catalog. The package root also
+// exports filesystem-backed plugin and Live2D helpers, which must stay in the
+// main process. Importing the root here makes Vite externalize node:url and
+// crashes the renderer before the window can paint.
+export {
+  parseTodoList,
+  agentTools,
+  STOP_TOOL_NAME,
+  SET_AFFECTION_TOOL_NAME,
+  SET_EXPRESSION_TOOL_NAME,
+  TODO_WRITE_TOOL_NAME,
+  TODO_READ_TOOL_NAME,
+  RENAME_CHAT_TOOL_NAME,
+  RENDER_CARD_TOOL_NAME,
+  GAME_START_TOOL_NAME,
+  GAME_MOVE_TOOL_NAME,
+  GAME_STATE_TOOL_NAME,
+  GIT_COMMIT_TOOL_NAME,
+  GIT_PUSH_TOOL_NAME,
+  GITHUB_PR_CREATE_TOOL_NAME,
+  CREATE_SKILL_TOOL_NAME,
+  USE_SKILL_TOOL_NAME,
+  PROPOSE_TOOL_TOOL_NAME,
+  DISPATCH_SUBAGENTS_TOOL_NAME,
+  WECHAT_SEND_TOOL_NAME,
+  WECHAT_LIST_PEERS_TOOL_NAME,
+  SEND_MULTI_MESSAGES_TOOL_NAME,
+  BROWSER_SCREENSHOT_TOOL_NAME,
+  BROWSER_TOOLS,
+  CODING_MODE_TOOLS,
+  CARD_MARKER_FENCE,
+} from '@syntax-senpai/agent-tools/catalog'
+export type { RenderCardPayload, RenderCardType, TodoItem } from '@syntax-senpai/agent-tools/catalog'
 import { parseTodoList, agentTools, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, SET_EXPRESSION_TOOL_NAME, TODO_WRITE_TOOL_NAME, TODO_READ_TOOL_NAME, RENAME_CHAT_TOOL_NAME, RENDER_CARD_TOOL_NAME, GAME_START_TOOL_NAME, GAME_MOVE_TOOL_NAME, GAME_STATE_TOOL_NAME, GIT_COMMIT_TOOL_NAME, GIT_PUSH_TOOL_NAME, GITHUB_PR_CREATE_TOOL_NAME, CREATE_SKILL_TOOL_NAME, USE_SKILL_TOOL_NAME, PROPOSE_TOOL_TOOL_NAME, DISPATCH_SUBAGENTS_TOOL_NAME, WECHAT_SEND_TOOL_NAME, WECHAT_LIST_PEERS_TOOL_NAME, SEND_MULTI_MESSAGES_TOOL_NAME, BROWSER_SCREENSHOT_TOOL_NAME, BROWSER_TOOLS, CODING_MODE_TOOLS } from '@syntax-senpai/agent-tools/catalog'
 
 /**

@@ -13,6 +13,7 @@ import {
   extractZipSafely,
   deepMergePlainObjects,
   ensureDir,
+  repairLive2DModelReferences,
 } from "../live2d-import";
 
 const REAL_FIXTURE_ZIP = process.env.LIVE2D_FIXTURE_ZIP ?? '';
@@ -359,6 +360,40 @@ describe("extractZipSafely (round-trip)", () => {
     const outDir = path.join(tmp, "out");
     expect(extractZipSafely(zipPath, outDir)).toBe(0);
     expect(fs.existsSync(outDir)).toBe(true);
+  });
+});
+
+describe("repairLive2DModelReferences", () => {
+  it("restores replacement-character asset names from the model JSON", () => {
+    const root = mkTempDir("ss-live2d-repair-");
+    try {
+      const modelJson = path.join(root, "model.model3.json");
+      const brokenMoc = "����-�����.moc3";
+      const brokenPhysics = "����-�����.physics3.json";
+      const brokenCdi = "����-�����.cdi3.json";
+      const brokenTextureDir = "����-�����.8192";
+      fs.mkdirSync(path.join(root, brokenTextureDir), { recursive: true });
+      fs.writeFileSync(path.join(root, brokenMoc), "moc");
+      fs.writeFileSync(path.join(root, brokenPhysics), "{}");
+      fs.writeFileSync(path.join(root, brokenCdi), "{}");
+      fs.writeFileSync(path.join(root, brokenTextureDir, "texture_00.png"), "png");
+      fs.writeFileSync(modelJson, JSON.stringify({
+        FileReferences: {
+          Moc: "兔兔-阿米娅.moc3",
+          Physics: "兔兔-阿米娅.physics3.json",
+          DisplayInfo: "兔兔-阿米娅.cdi3.json",
+          Textures: ["兔兔-阿米娅.8192/texture_00.png"],
+        },
+      }));
+
+      expect(repairLive2DModelReferences(modelJson)).toBe(4);
+      expect(fs.existsSync(path.join(root, "兔兔-阿米娅.moc3"))).toBe(true);
+      expect(fs.existsSync(path.join(root, "兔兔-阿米娅.physics3.json"))).toBe(true);
+      expect(fs.existsSync(path.join(root, "兔兔-阿米娅.cdi3.json"))).toBe(true);
+      expect(fs.existsSync(path.join(root, "兔兔-阿米娅.8192", "texture_00.png"))).toBe(true);
+    } finally {
+      rmTempDir(root);
+    }
   });
 });
 

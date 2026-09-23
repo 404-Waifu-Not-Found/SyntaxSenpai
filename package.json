@@ -13,6 +13,9 @@
     "desktop:quick": "pnpm --filter syntax-senpai-desktop run dev:quick",
     "dev:mobile": "turbo run dev --filter=syntax-senpai-mobile",
     "dev:desktop": "turbo run dev --filter=syntax-senpai-desktop",
+    "dev:headless": "pnpm --filter syntax-senpai-headless run dev",
+    "build:headless": "pnpm --filter syntax-senpai-headless run build",
+    "test:headless": "pnpm --filter syntax-senpai-headless run test:unit",
     "dev:runtime": "pnpm --filter syntax-senpai-runtime run dev",
     "build": "turbo run build",
     "test": "turbo run test",
@@ -24,7 +27,7 @@
     "clean": "turbo run clean && rm -rf node_modules"
   },
   "devDependencies": {
-    "@types/node": "20.3.1",
+    "@types/node": "20.19.39",
     "prebuild-install": "^7.1.3",
     "tsdown": "0.21.7",
     "turbo": "^2.9.14",

@@ -1,5 +1,4 @@
 import path from 'node:path'
-import fs from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { agentTools, ToolRegistry } from '@syntax-senpai/agent-tools'
@@ -7,17 +6,15 @@ import type { ToolCall, ToolExecutionMetadata } from '@syntax-senpai/ai-core'
 import { invokeHost, resolveWorkspacePath } from './host'
 import { git } from './change-journal'
 const exec = promisify(execFile)
-const contracts = new Map(agentTools.map(tool => [tool.name, tool.execution!]))
-function canonical(file: string) { try { return fs.realpathSync(file) } catch { try { return path.join(fs.realpathSync(path.dirname(file)), path.basename(file)) } catch { return file } } }
+const reads = new Set(['read_file', 'list', 'glob', 'grep', 'git_status', 'git_diff', 'lsp_hover', 'lsp_diagnostics', 'webfetch', 'web_search', 'use_skill', 'tool_search', 'computer_observe', 'process_read', 'todoread'])
 export function executionMetadata(call: ToolCall, workspace: string): ToolExecutionMetadata {
   const args: any = call.arguments
-  const contract = contracts.get(call.name) || { access: 'write', scope: 'workspace' }
-  const cwd = canonical(path.resolve(workspace, args.cwd || '.'))
-  const resources = contract.scope === 'desktop' ? ['desktop-input']
-    : contract.scope === 'process' ? [`process:${args.id}`]
-    : contract.scope === 'network' ? [`network:${args.url || args.query || ''}`]
-    : contract.scope === 'file' ? [canonical(path.resolve(cwd, args.path || '.'))] : [cwd + '/**']
-  return { access: contract.access, resources, lane: contract.lane }
+  if (call.name.startsWith('computer_') || call.name.startsWith('browser_')) return { access: 'write', resources: ['desktop-input'], lane: 'desktop' }
+  if (call.name.startsWith('process_')) return { access: call.name === 'process_read' ? 'read' : 'write', resources: [`process:${args.id}`] }
+  if (['webfetch', 'web_search', 'tool_search'].includes(call.name)) return { access: 'read', resources: [`network:${args.url || args.query || ''}`] }
+  const cwd = path.resolve(workspace, args.cwd || '.')
+  if (['read_file', 'write_file', 'edit_file', 'lsp_hover', 'lsp_diagnostics'].includes(call.name)) return { access: reads.has(call.name) ? 'read' : 'write', resources: [path.resolve(cwd, args.path || '.')] }
+  return { access: reads.has(call.name) ? 'read' : 'write', resources: [cwd + '/**'], lane: call.name === 'terminal' ? 'process' : 'tool' }
 }
 const mapping: Record<string, [string, (a: any) => any[]]> = {
   read_file: ['fs:read', a => [a.path, a.offset, a.limit]],
@@ -57,4 +54,4 @@ export function createHostRegistry(fallback: (call: ToolCall) => Promise<unknown
   } })
   return registry
 }
-export const isReadOnlyTool = (name: string) => contracts.get(name)?.access === 'read' && contracts.get(name)?.scope !== 'process'
+export const isReadOnlyTool = (name: string) => reads.has(name) && !name.startsWith('computer_')

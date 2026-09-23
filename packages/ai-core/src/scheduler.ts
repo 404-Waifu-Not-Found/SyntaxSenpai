@@ -2,7 +2,7 @@ import type { ToolExecutionMetadata } from './agent-contracts'
 
 type Job = { meta: ToolExecutionMetadata; run: () => Promise<unknown>; resolve: (value: any) => void; reject: (error: unknown) => void; signal?: AbortSignal }
 function overlaps(a: string, b: string): boolean {
-  return a === '*' || b === '*' || a === b || (a.endsWith('/**') && (b === a.slice(0, -3) || b.startsWith(a.slice(0, -2)))) || (b.endsWith('/**') && (a === b.slice(0, -3) || a.startsWith(b.slice(0, -2))))
+  return a === '*' || b === '*' || a === b || (a.endsWith('/**') && b.startsWith(a.slice(0, -2))) || (b.endsWith('/**') && a.startsWith(b.slice(0, -2)))
 }
 export function conflicts(a: ToolExecutionMetadata, b: ToolExecutionMetadata): boolean {
   return !(a.access === 'read' && b.access === 'read') && a.resources.some(x => b.resources.some(y => overlaps(x, y)))

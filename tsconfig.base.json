@@ -28,6 +28,8 @@
     "paths": {
       "@syntax-senpai/ai-core": ["./packages/ai-core/src"],
       "@syntax-senpai/ai-core/*": ["./packages/ai-core/src/*"],
+      "@syntax-senpai/agent-session": ["./packages/agent-session/src"],
+      "@syntax-senpai/agent-session/*": ["./packages/agent-session/src/*"],
       "@syntax-senpai/agent-tools": ["./packages/agent-tools/src"],
       "@syntax-senpai/agent-tools/*": ["./packages/agent-tools/src/*"],
       "@syntax-senpai/waifu-core": ["./packages/waifu-core/src"],

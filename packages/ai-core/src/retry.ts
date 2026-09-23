@@ -78,7 +78,18 @@ export interface ClassifyOptions {
 }
 
 export function classifyError(err: unknown, options: ClassifyOptions = {}): ProviderError {
-  if (err instanceof ProviderError) return err;
+  if (err instanceof ProviderError) {
+    if (!options.provider || err.provider) return err;
+    // withRetry classifies without knowing the selected provider. Add that
+    // context at the UI boundary so an auth failure names the key to replace.
+    return new ProviderError(err.kind, err.message, {
+      retryable: err.retryable,
+      status: err.status,
+      cause: err.cause,
+      provider: options.provider,
+      hint: err.hint === hintFor(err.kind, err.provider) ? undefined : err.hint,
+    });
+  }
 
   const anyErr = err as { status?: number; code?: string; message?: string } | undefined;
   const status = anyErr?.status;

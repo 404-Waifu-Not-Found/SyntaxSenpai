@@ -1,7 +1,6 @@
 import { withRetry, type AIProvider, type ProviderChatRequest } from '@syntax-senpai/ai-core'
 /** Provider adapters emit complete tool calls. Never execute calls from an incomplete stream. */
 export async function callProvider(provider: AIProvider, req: ProviderChatRequest, retry?: (attempt: number) => void): Promise<any> {
-  req = { ...req, tools: req.tools.map(({ execution, ...definition }) => definition) }
   const request = provider.id === 'anthropic' ? req : { ...req, systemPrompt: [req.cachedSystemPrompt, req.systemPrompt].filter(Boolean).join('\n'), cachedSystemPrompt: undefined }
   return withRetry(async () => {
     if (!provider.supportsStreaming) {

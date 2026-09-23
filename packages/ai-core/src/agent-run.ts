@@ -101,6 +101,8 @@ export interface RunAgentTurnOptions {
 export interface RunAgentTurnResult {
   /** Final assistant text. Empty string if loop never produced one. */
   finalContent: string
+  /** Ordered user-facing bubbles requested by stop_response, when provided. */
+  finalMessages?: string[]
   /** Number of provider round-trips actually performed. */
   iterations: number
   /** True if the loop was halted by stop_response or abort. */
@@ -110,7 +112,7 @@ export interface RunAgentTurnResult {
 }
 
 export function canExecuteToolInParallel(tc: ToolCall): boolean {
-  return ['read_file', 'glob', 'grep', 'list', 'webfetch', 'web_search', 'git_status', 'git_diff', 'lsp_hover', 'lsp_diagnostics'].includes(tc.name)
+  return ['terminal', 'read_file', 'glob', 'grep', 'list', 'webfetch', 'web_search', 'git_status', 'git_diff', 'lsp_hover', 'lsp_diagnostics'].includes(tc.name)
 }
 export function annotateToolResult(result: string, iteration: number, maxIterations: number): string {
   return iteration + 1 >= maxIterations ? result + '\n[runtime] Tool budget exhausted. Report what was verified and what remains.' : result
@@ -118,7 +120,7 @@ export function annotateToolResult(result: string, iteration: number, maxIterati
 export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<RunAgentTurnResult> {
   const scheduler = opts.scheduler || new ResourceScheduler(opts.maxParallelTools ?? 8)
   const failures = new Map<string, number>()
-  let finalContent = '', stopped = false, iterations = 0, reachedMaxIterations = false
+  let finalContent = '', finalMessages: string[] | undefined, stopped = false, iterations = 0, reachedMaxIterations = false
   const max = Math.max(0, opts.maxIterations)
   for (let i = 0; i <= max; i++) {
     if (opts.abortSignal?.aborted) { stopped = true; break }
@@ -175,14 +177,35 @@ export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<RunAgentT
       try { effect = await opts.handleSideEffect?.(tc) }
       catch (error) {
         const result = `${opts.abortSignal?.aborted ? 'Cancelled' : 'Error'}: ${error instanceof Error ? error.message : String(error)}`
-        append(tc, result); opts.onToolResult?.(tc, result, undefined); continue
+        append(tc, result)
+        opts.onToolResult?.(tc, result, undefined)
+        continue
       }
       if (!effect) { batch.push(tc); continue }
       append(tc, effect.resultContent)
-      if (effect.stop) { finalContent = effect.finalContent ?? response.content ?? ''; stopped = true }
+      if (effect.stop) {
+        finalContent = effect.finalContent ?? response.content ?? ''
+        if (tc.name === 'stop_response' && Array.isArray(tc.arguments?.messages)) {
+          const requested = tc.arguments.messages
+            .filter((message: unknown): message is string => typeof message === 'string')
+            .map((message: string) => message.trim())
+            .filter(Boolean)
+            .slice(0, 6)
+          if (requested.length > 0) {
+            finalMessages = requested
+            finalContent = requested.join('\n\n')
+          }
+        }
+        if (tc.name === 'stop_response' && finalContent && finalContent !== response.content) {
+          for (const [index, content] of (finalMessages || [finalContent]).entries()) {
+            opts.history.push({ id: `assistant-final-${tc.id}-${index}`, role: 'assistant', content })
+          }
+        }
+        stopped = true
+      }
     }
     await flush()
     if (stopped) break
   }
-  return { finalContent, iterations, stopped: stopped || !!opts.abortSignal?.aborted, reachedMaxIterations }
+  return { finalContent, finalMessages, iterations, stopped: stopped || !!opts.abortSignal?.aborted, reachedMaxIterations }
 }

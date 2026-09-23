@@ -107,7 +107,7 @@ const observation = (overrides: Partial<ComputerObservation> = {}): ComputerObse
   id: 'observation', timestamp: Date.now(), appId: 'fixture', appName: 'Fixture', windowId: 'window',
   bounds: { x: 0, y: 0, width: 1000, height: 600 }, imageWidth: 2000, imageHeight: 1200,
   elements: [{ id: 'button', role: 'AXButton', label: 'Run', bounds: { x: 40, y: 50, width: 100, height: 40 } }],
-  apps: [{ id: 'fixture', name: 'Fixture' }], displays: [], ...overrides
+  apps: [{ id: 'fixture', name: 'Fixture', pid: 0 }], displays: [], ...overrides
 })
 
 const computerTasks: ComputerScenario[] = [
@@ -144,15 +144,20 @@ async function computerTrial(scenario: ComputerScenario, trial: number): Promise
     executeTool: async call => {
       try {
         const current = scenario.observation
+        const args = call.arguments as { app_id?: string; element_id?: string; x?: number; y?: number; to_x?: number; to_y?: number }
+        const point = (x: number | undefined, y: number | undefined) => {
+          if (x === undefined || y === undefined) throw new Error('Coordinates were not provided')
+          return screenshotPoint(current, x, y)
+        }
         if (Date.now() - current.timestamp > 30000) throw new Error('Observation is stale')
-        if (call.arguments.app_id && !current.apps?.some(app => app.id === call.arguments.app_id)) throw new Error('Application was not discovered')
+        if (args.app_id && !current.apps?.some(app => app.id === args.app_id)) throw new Error('Application was not discovered')
         let start: { x: number; y: number }
-        if (call.arguments.element_id) {
-          const element = current.elements.find(item => item.id === call.arguments.element_id)
+        if (args.element_id) {
+          const element = current.elements.find(item => item.id === args.element_id)
           if (!element?.bounds) throw new Error('Element was not discovered')
           start = { x: element.bounds.x + element.bounds.width / 2, y: element.bounds.y + element.bounds.height / 2 }
-        } else start = screenshotPoint(current, call.arguments.x, call.arguments.y)
-        const end = call.name === 'computer_drag' ? screenshotPoint(current, call.arguments.to_x, call.arguments.to_y) : undefined
+        } else start = point(args.x, args.y)
+        const end = call.name === 'computer_drag' ? point(args.to_x, args.to_y) : undefined
         const expected = scenario.expected!
         if (start.x !== expected.x || start.y !== expected.y || end?.x !== expected.toX || end?.y !== expected.toY) throw new Error('Coordinate transform mismatch')
         toolOutcome = 'verified'

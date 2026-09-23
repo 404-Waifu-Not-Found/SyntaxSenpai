@@ -812,8 +812,9 @@ export const agentTools: ToolDefinition[] = [
   {
     name: PROPOSE_TOOL_TOOL_NAME,
     description:
-      'Create and activate a JavaScript plugin under the current execution policy. Export activate({registerTool}) and registerTool({definition:{name,description,parameters},requiresPermission,async execute(input,context){...}}). Available permission keys: fileRead, fileWrite, shellExec, networkAccess. The result reports whether activation succeeded; discover the resulting tool before using it.',
-
+      'Propose a NEW plugin tool for the user to review and approve. Use this when you realize a repeated task would be cleaner with a dedicated tool (e.g. an API wrapper, a custom parser) that doesn\'t exist yet. ' +
+      'You are writing untrusted JavaScript that the user must explicitly approve before it runs — write cautiously, include the same safety checks real plugins do (reject non-http(s) URLs, cap response sizes, handle errors). The code must export `activate({ registerTool })` and call `registerTool({ definition: { name, description, parameters }, requiresPermission, async execute(input, context) { ... } })`. Valid permissions are fileRead, fileWrite, shellExec, and networkAccess. ' +
+      'After calling this, tell the user you\'ve proposed a tool and ask them to approve it in Settings → Plugins → Pending. Do NOT imply the tool is active or try to use it in the current turn — it cannot run until they approve and restart the app.',
     parameters: {
       type: 'object',
       properties: {
@@ -870,13 +871,20 @@ export const agentTools: ToolDefinition[] = [
     description:
       'Call this ONLY after you have verified the task is actually done — e.g. the file you edited reads back as expected, the command you ran exited 0, the tests you ran passed. ' +
       'If a previous tool call failed, you must retry or explain the failure before stopping. Do not stop early "optimistically". ' +
-      'Write final_message fully in character as your waifu persona — never sound like a generic assistant.',
+      'Write final_message fully in character as your waifu persona — never sound like a generic assistant. ' +
+      'For a conversational reply that reads naturally as several separate chat bubbles, provide up to 6 short strings in messages and set final_message to an empty string. ' +
+      'The app displays each string in order as a separate assistant message. Do not repeat the same text in both fields.',
     parameters: {
       type: 'object',
       properties: {
         final_message: {
           type: 'string',
           description: 'Your final in-character response to the user, using your personality and emojis. Mention what was actually done, not what you planned to do.',
+        },
+        messages: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional ordered final chat bubbles (up to 6). Use for natural back-to-back messages; set final_message to an empty string when used.',
         },
       },
       required: ['final_message'],
@@ -915,15 +923,3 @@ const computerDefinitions: Array<[string, string, Record<string, any>, string[]]
 for (const [name, description, properties, required] of computerDefinitions) agentTools.push({ name: 'computer_' + name, description, parameters: { type: 'object', properties, required } })
 const terminalDefinition = agentTools.find(t => t.name === 'terminal')!
 terminalDefinition.parameters.properties!.purpose = { type: 'string', enum: ['task', 'check'], description: 'Use check for verification commands; results are bound to the current file revision.' }
-
-// Execution contracts are owned by the tool catalog; unknown plugins are exclusive writes.
-for (const tool of agentTools) tool.execution = { access: 'write', scope: 'workspace' }
-for (const name of ['read_file','lsp_hover','lsp_diagnostics']) agentTools.find(t => t.name === name)!.execution = { access: 'read', scope: 'file' }
-for (const name of ['write_file','edit_file']) agentTools.find(t => t.name === name)!.execution = { access: 'write', scope: 'file' }
-for (const name of ['list','glob','grep','git_status','git_diff','use_skill','todoread']) agentTools.find(t => t.name === name)!.execution = { access: 'read', scope: 'workspace' }
-for (const name of ['webfetch','web_search','tool_search']) agentTools.find(t => t.name === name)!.execution = { access: 'read', scope: 'network' }
-for (const tool of agentTools) {
-  if (tool.name.startsWith('computer_') || tool.name.startsWith('browser_')) tool.execution = { access: 'write', scope: 'desktop', lane: 'desktop' }
-  if (tool.name.startsWith('process_')) tool.execution = { access: tool.name === 'process_read' ? 'read' : 'write', scope: 'process' }
-  if (tool.name === 'terminal' || tool.name.startsWith('git_') || tool.name === 'github_pr_create') tool.execution!.lane = 'process'
-}

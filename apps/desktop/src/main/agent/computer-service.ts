@@ -18,8 +18,7 @@ export class ComputerService {
   constructor(private root: string) {}
   helperPath() {
     const { app } = require('electron')
-    if (app.isPackaged) return path.join(process.resourcesPath, 'native/syntax-computer')
-    return [path.join(app.getAppPath(), 'resources/native/syntax-computer'), path.resolve(__dirname, '../../resources/native/syntax-computer')].find(candidate => fs.existsSync(candidate)) || path.join(app.getAppPath(), 'resources/native/syntax-computer')
+    return app.isPackaged ? path.join(process.resourcesPath, 'native/syntax-computer') : path.join(app.getAppPath(), 'resources/native/syntax-computer')
   }
   private start() {
     if (process.platform !== 'darwin') throw new Error('Native computer control is available on macOS only')
@@ -30,7 +29,7 @@ export class ComputerService {
     createInterface({ input: child.stdout }).on('line', line => {
       try { const message = JSON.parse(line), p = this.pending.get(message.id); if (p) { clearTimeout(p.timer); this.pending.delete(message.id); message.error ? p.reject(new Error(message.error)) : p.resolve(message.result) } } catch {}
     })
-    const failed = () => { if (this.child !== child) return; this.child = undefined; this.current = undefined; for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error('Native helper stopped; observe again before continuing')) }; this.pending.clear() }
+    const failed = () => { if (this.child === child) this.child = undefined; this.current = undefined; for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error('Native helper stopped; observe again before continuing')) }; this.pending.clear() }
     child.on('exit', failed); child.on('error', failed)
     child.stderr.on('data', () => {})
   }
@@ -104,12 +103,6 @@ export class ComputerService {
   }
   async stop() {
     this.current = undefined
-    if (!this.child) return
-    const previous = this.child; this.child = undefined
-    previous.kill()
-    for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Emergency stop')) }
-    this.pending.clear()
-    // A fresh helper releases input even if the old helper was wedged mid-drag.
-    try { await this.request('stop'); (this.child as ChildProcessWithoutNullStreams | undefined)?.stdin.end() } catch { (this.child as ChildProcessWithoutNullStreams | undefined)?.kill() }
+    try { await this.request('stop') } catch { this.child?.kill(); this.child = undefined; try { await this.request('stop') } catch {} }
   }
 }

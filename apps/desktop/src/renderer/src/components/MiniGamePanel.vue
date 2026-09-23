@@ -6,11 +6,7 @@ import type { GameSnapshot } from '@syntax-senpai/game-engine'
 const props = withDefaults(defineProps<{
   snapshot: GameSnapshot | null
   busy?: boolean
-  windowMode?: boolean
-}>(), {
-  busy: false,
-  windowMode: false,
-})
+}>(), { busy: false })
 
 const emit = defineEmits<{
   move: [move: string]
@@ -19,7 +15,14 @@ const emit = defineEmits<{
 
 type ConnectBoard = Array<Array<'empty' | 'human' | 'agent'>>
 type ChessPiece = { type: string; color: 'w' | 'b' } | null
-type ChessBoard = { cells: ChessPiece[][]; check: boolean; fen: string }
+type ChessSquareMove = { from: string; to: string }
+type ChessBoard = {
+  cells: ChessPiece[][]
+  check: boolean
+  fen: string
+  legalMoves?: ChessSquareMove[]
+  lastMove?: ChessSquareMove | null
+}
 
 const selectedSquare = ref<string | null>(null)
 
@@ -53,11 +56,33 @@ const chessCells = computed(() => {
       square: `${file}${rank}`,
       piece: board.cells[sourceRow]?.[sourceColumn] ?? null,
       dark: (displayRow + displayColumn) % 2 === 1,
+      displayRow,
+      displayColumn,
+      file,
+      rank,
+      last: board.lastMove?.from === `${file}${rank}` || board.lastMove?.to === `${file}${rank}`,
     }
   })
 })
 
 const chessPieceLabel = (piece: ChessPiece) => piece ? piece.type.toUpperCase() : ''
+
+const chessLegalTargets = computed(() => {
+  const board = props.snapshot?.board as ChessBoard | undefined
+  const selected = selectedSquare.value
+  if (!selected) return new Set<string>()
+  return new Set((board?.legalMoves ?? [])
+    .filter((move) => move.from === selected)
+    .map((move) => move.to))
+})
+
+function connectColumnOpen(column: number) {
+  return connectBoard.value[0]?.[column] === 'empty'
+}
+
+function emitConnectMove(column: number) {
+  if (connectColumnOpen(column)) emitMove(String(column))
+}
 
 function canMove() {
   return !!props.snapshot && props.snapshot.status === 'playing' && props.snapshot.turn === 'human' && !props.busy
@@ -69,10 +94,24 @@ function emitMove(move: string) {
 
 function chooseChessSquare(square: string) {
   if (!canMove()) return
+  const cell = chessCells.value.find((candidate) => candidate.square === square)
+  const humanSide = props.snapshot?.humanSide
+
   if (!selectedSquare.value) {
-    selectedSquare.value = square
+    if (cell?.piece?.color === humanSide) selectedSquare.value = square
     return
   }
+
+  if (cell?.piece?.color === humanSide) {
+    selectedSquare.value = selectedSquare.value === square ? null : square
+    return
+  }
+
+  if (!chessLegalTargets.value.has(square)) {
+    selectedSquare.value = null
+    return
+  }
+
   if (selectedSquare.value === square) {
     selectedSquare.value = null
     return
@@ -88,132 +127,260 @@ watch(() => props.snapshot?.lastMove, () => {
 </script>
 
 <template>
-  <Transition name="game-panel">
-    <section
-      v-if="snapshot"
-      class="overflow-hidden text-white"
-      :class="windowMode
-        ? 'mx-auto min-h-[100dvh] w-full max-w-5xl bg-slate-950'
-        : 'fixed bottom-5 right-5 z-[70] w-[min(92vw,28rem)] rounded-2xl border border-cyan-400/20 bg-slate-950/95 shadow-2xl shadow-cyan-950/30 backdrop-blur-xl'"
-      aria-label="Minigame panel"
-    >
-      <header class="flex items-center justify-between border-b border-white/10 px-4 py-3">
-        <div class="flex min-w-0 items-center gap-2">
-          <PhGameController :size="20" weight="duotone" class="shrink-0 text-cyan-300" aria-hidden="true" />
-          <div class="min-w-0">
-            <h2 class="truncate text-sm font-semibold">{{ title }}</h2>
-            <p class="truncate text-[11px] text-slate-400">{{ snapshot.engine }}</p>
-          </div>
-        </div>
-        <button
-          type="button"
-          class="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-white/10 hover:text-white"
-          aria-label="Close minigame"
-          title="Close minigame"
-          @click="emit('close')"
-        >
-          <PhX :size="18" aria-hidden="true" />
-        </button>
-      </header>
-
-      <div class="space-y-5 p-4 sm:p-6">
-        <div class="flex items-center justify-between text-xs">
-          <span class="flex items-center gap-1.5 text-slate-300">
-            <PhUser v-if="snapshot.turn === 'human'" :size="15" aria-hidden="true" />
-            <PhCpu v-else :size="15" aria-hidden="true" />
-            {{ turnLabel }}
-          </span>
-          <span class="text-slate-500">Move {{ snapshot.moveCount }}</span>
-        </div>
-
-        <div v-if="snapshot.kind === 'tictactoe'" class="mx-auto grid w-[min(70vw,24rem)] grid-cols-3 gap-3">
-          <button
-            v-for="(cell, index) in ticTacToeCells"
-            :key="index"
-            type="button"
-            class="aspect-square rounded-2xl border border-white/10 bg-white/[0.04] text-4xl font-semibold transition hover:border-cyan-300/60 hover:bg-cyan-300/10 disabled:cursor-default disabled:hover:border-white/10 disabled:hover:bg-white/[0.04] sm:text-5xl"
-            :class="cell === 'human' ? 'text-cyan-300' : cell === 'agent' ? 'text-fuchsia-300' : 'text-transparent'"
-            :disabled="cell !== 'empty' || !canMove()"
-            :aria-label="`Tic-Tac-Toe square ${index + 1}${cell !== 'empty' ? `, ${cell}` : ''}`"
-            @click="emitMove(String(index))"
-          >
-            {{ cell === 'human' ? 'X' : cell === 'agent' ? 'O' : '·' }}
-          </button>
-        </div>
-
-        <div v-else-if="snapshot.kind === 'connect4'" class="mx-auto w-full max-w-[34rem]">
-          <div class="mb-2 grid grid-cols-7 gap-1">
-            <button
-              v-for="column in 7"
-              :key="column"
-              type="button"
-              class="rounded-md py-1 text-xs text-slate-400 transition hover:bg-cyan-300/10 hover:text-cyan-200 disabled:cursor-default disabled:opacity-40"
-              :disabled="!connectBoard[0]?.[column - 1] || connectBoard[0][column - 1] !== 'empty' || !canMove()"
-              :aria-label="`Drop in column ${column}`"
-              @click="emitMove(String(column - 1))"
-            >
-              {{ column }}
-            </button>
-          </div>
-          <div class="grid grid-cols-7 gap-2 rounded-2xl border border-cyan-300/20 bg-blue-950/70 p-3 sm:gap-3 sm:p-4">
-            <template v-for="(row, rowIndex) in connectBoard" :key="rowIndex">
-              <span
-                v-for="(cell, columnIndex) in row"
-                :key="`${rowIndex}-${columnIndex}`"
-                class="aspect-square rounded-full border border-white/10 shadow-inner"
-                :class="cell === 'human' ? 'bg-red-400 shadow-red-300/30' : cell === 'agent' ? 'bg-yellow-300 shadow-yellow-200/30' : 'bg-slate-900/80'"
-                :aria-label="`Row ${rowIndex + 1}, column ${columnIndex + 1}`"
-              />
-            </template>
-          </div>
-        </div>
-
-        <div v-else class="mx-auto w-full max-w-[34rem] overflow-hidden rounded-2xl border border-white/10">
-          <div class="grid grid-cols-8">
-            <button
-              v-for="cell in chessCells"
-              :key="cell.square"
-              type="button"
-              class="relative flex aspect-square items-center justify-center text-2xl font-bold transition-colors sm:text-3xl"
-              :class="[
-                cell.dark ? 'bg-emerald-950/80' : 'bg-emerald-100/90 text-slate-900',
-                selectedSquare === cell.square ? 'ring-2 ring-inset ring-cyan-300' : '',
-                canMove() ? 'hover:bg-cyan-300/40' : 'cursor-default',
-              ]"
-              :disabled="!canMove()"
-              :aria-label="`${cell.square}${cell.piece ? `, ${cell.piece.color === 'w' ? 'white' : 'black'} ${cell.piece.type}` : ', empty'}`"
-              @click="chooseChessSquare(cell.square)"
-            >
-              <span :class="cell.piece?.color === 'w' ? 'text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)]' : 'text-slate-950'">
-                {{ chessPieceLabel(cell.piece) }}
-              </span>
-            </button>
-          </div>
-        </div>
-
-        <div class="flex items-center justify-between rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] text-slate-400">
-          <span v-if="snapshot.status === 'playing'">
-            {{ snapshot.kind === 'chess' ? `You play ${snapshot.humanSide === 'w' ? 'White' : 'Black'}` : 'You are the cyan side' }}
-          </span>
-          <span v-else-if="snapshot.status === 'draw'">Draw</span>
-          <span v-else>{{ snapshot.winner === 'human' ? 'You win' : 'Agent wins' }}</span>
-          <span v-if="busy" class="text-cyan-300">Updating chat…</span>
-          <span v-else-if="snapshot.lastMove" class="font-mono text-slate-500">{{ snapshot.lastMove }}</span>
+  <section v-if="snapshot" class="mini-game-panel" aria-label="Minigame panel">
+    <header class="mini-game-header">
+      <div class="flex min-w-0 items-center gap-2">
+        <PhGameController :size="20" weight="duotone" class="mini-game-icon shrink-0" aria-hidden="true" />
+        <div class="min-w-0">
+          <h2 class="truncate text-sm font-semibold">{{ title }}</h2>
+          <p class="mini-game-muted truncate text-[11px]">{{ snapshot.engine }}</p>
         </div>
       </div>
-    </section>
-  </Transition>
+      <button type="button" class="mini-game-close" aria-label="Close minigame" title="Close minigame" @click="emit('close')">
+        <PhX :size="18" aria-hidden="true" />
+      </button>
+    </header>
+
+    <div class="mini-game-content">
+      <div class="mini-game-meta" role="status" aria-live="polite">
+        <span class="flex items-center gap-1.5">
+          <PhUser v-if="snapshot.turn === 'human'" :size="15" aria-hidden="true" />
+          <PhCpu v-else :size="15" aria-hidden="true" />
+          {{ turnLabel }}
+        </span>
+        <span>Move {{ snapshot.moveCount }}</span>
+      </div>
+
+      <div v-if="snapshot.kind === 'tictactoe'" class="mini-game-tictactoe">
+        <button
+          v-for="(cell, index) in ticTacToeCells"
+          :key="index"
+          type="button"
+          class="mini-game-tic-cell"
+          :class="cell === 'human' ? 'mini-game-human' : cell === 'agent' ? 'mini-game-agent' : ''"
+          :disabled="cell !== 'empty' || !canMove()"
+          :aria-label="`Tic-Tac-Toe square ${index + 1}${cell !== 'empty' ? `, ${cell}` : ''}`"
+          @click="emitMove(String(index))"
+        >
+          {{ cell === 'human' ? 'X' : cell === 'agent' ? 'O' : '·' }}
+        </button>
+      </div>
+
+      <div v-else-if="snapshot.kind === 'connect4'" class="mini-game-board-wrap">
+        <div class="mini-game-columns">
+          <button
+            v-for="column in 7"
+            :key="column"
+            type="button"
+            class="mini-game-column"
+            :disabled="!connectBoard[0]?.[column - 1] || connectBoard[0][column - 1] !== 'empty' || !canMove()"
+            :aria-label="`Drop in column ${column}`"
+            @click="emitConnectMove(column - 1)"
+          >{{ column }}</button>
+        </div>
+        <div class="mini-game-connect-board">
+          <template v-for="(row, rowIndex) in connectBoard" :key="rowIndex">
+            <span
+              v-for="(cell, columnIndex) in row"
+              :key="`${rowIndex}-${columnIndex}`"
+              class="mini-game-disc"
+              :class="cell === 'human' ? 'mini-game-disc-human' : cell === 'agent' ? 'mini-game-disc-agent' : ''"
+              :aria-label="`Row ${rowIndex + 1}, column ${columnIndex + 1}, ${cell}`"
+            />
+          </template>
+        </div>
+      </div>
+
+      <div v-else class="mini-game-chess">
+        <div class="grid grid-cols-8">
+          <button
+            v-for="cell in chessCells"
+            :key="cell.square"
+            type="button"
+            class="mini-game-chess-cell"
+            :class="[cell.dark ? 'mini-game-chess-dark' : 'mini-game-chess-light', selectedSquare === cell.square ? 'mini-game-chess-selected' : '', chessLegalTargets.has(cell.square) ? 'mini-game-chess-target' : '', cell.last ? 'mini-game-chess-last' : '']"
+            :disabled="!canMove()"
+            :aria-label="`${cell.square}${cell.piece ? `, ${cell.piece.color === 'w' ? 'white' : 'black'} ${cell.piece.type}` : ', empty'}`"
+            :aria-pressed="selectedSquare === cell.square"
+            @click="chooseChessSquare(cell.square)"
+          >
+            <span :class="cell.piece?.color === 'w' ? 'mini-game-piece-white' : 'mini-game-piece-black'">
+              {{ chessPieceLabel(cell.piece) }}
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <div class="mini-game-footer" role="status" aria-live="polite">
+        <span v-if="snapshot.status === 'playing'">
+          {{ snapshot.kind === 'chess' ? `You play ${snapshot.humanSide === 'w' ? 'White' : 'Black'}` : 'You are the primary-color side' }}
+        </span>
+        <span v-else-if="snapshot.status === 'draw'">Draw</span>
+        <span v-else>{{ snapshot.winner === 'human' ? 'You win' : 'Agent wins' }}</span>
+        <span v-if="busy" class="mini-game-icon">Updating chat…</span>
+        <span v-else-if="snapshot.lastMove" class="font-mono">{{ snapshot.lastMove }}</span>
+      </div>
+    </div>
+  </section>
 </template>
 
 <style scoped>
-.game-panel-enter-active,
-.game-panel-leave-active {
-  transition: transform 240ms ease, opacity 180ms ease;
+.mini-game-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  color: var(--fg);
+  background: var(--surface);
 }
 
-.game-panel-enter-from,
-.game-panel-leave-to {
-  opacity: 0;
-  transform: translateY(1.25rem) scale(0.98);
+.mini-game-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+.mini-game-icon,
+.mini-game-human { color: var(--primary); }
+.mini-game-agent { color: var(--accent); }
+.mini-game-muted,
+.mini-game-meta,
+.mini-game-footer { color: color-mix(in srgb, var(--fg) 65%, transparent); }
+
+.mini-game-close,
+.mini-game-column {
+  border-radius: calc(0.5rem * var(--radius-scale, 1));
+  color: inherit;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.mini-game-close { padding: 0.35rem; }
+.mini-game-close:hover,
+.mini-game-column:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  color: var(--fg);
+}
+
+.mini-game-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  min-height: 0;
+  overflow: auto;
+  padding: calc(1rem * var(--ui-density-scale, 1));
+}
+
+.mini-game-meta,
+.mini-game-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+}
+
+.mini-game-tictactoe {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+  width: 100%;
+  max-width: 24rem;
+  margin-inline: auto;
+}
+
+.mini-game-tic-cell {
+  aspect-ratio: 1;
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
+  border-radius: calc(1rem * var(--radius-scale, 1));
+  background: color-mix(in srgb, var(--surface-2) 92%, var(--primary) 8%);
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 600;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.mini-game-tic-cell:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--surface-2) 78%, var(--primary) 22%);
+}
+
+.mini-game-tic-cell:disabled { cursor: default; }
+.mini-game-tic-cell:not(.mini-game-human):not(.mini-game-agent) { color: color-mix(in srgb, var(--fg) 30%, transparent); }
+.mini-game-board-wrap,
+.mini-game-chess { width: 100%; max-width: 34rem; margin-inline: auto; }
+
+.mini-game-columns,
+.mini-game-connect-board { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.mini-game-columns { gap: 0.25rem; margin-bottom: 0.5rem; }
+.mini-game-column { padding: 0.35rem 0; font-size: 0.75rem; }
+.mini-game-column:disabled { opacity: 0.45; cursor: default; }
+.mini-game-connect-board {
+  gap: clamp(0.25rem, 0.6vw, 0.65rem);
+  padding: clamp(0.45rem, 1vw, 0.85rem);
+  border: 1px solid color-mix(in srgb, var(--primary) 26%, transparent);
+  border-radius: calc(1rem * var(--radius-scale, 1));
+  background: color-mix(in srgb, var(--surface-2) 84%, var(--primary) 16%);
+}
+
+.mini-game-disc {
+  aspect-ratio: 1;
+  border: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+  border-radius: 50%;
+  background: var(--surface-2);
+  box-shadow: inset 0 2px 5px color-mix(in srgb, var(--bg) 48%, transparent);
+}
+.mini-game-disc-human { background: var(--primary); }
+.mini-game-disc-agent { background: var(--accent); }
+
+.mini-game-chess {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent);
+  border-radius: calc(1rem * var(--radius-scale, 1));
+}
+
+.mini-game-chess-cell {
+  position: relative;
+  display: flex;
+  aspect-ratio: 1;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(1.1rem, 2.7vw, 2rem);
+  font-weight: 700;
+  transition: background-color 160ms ease;
+}
+.mini-game-chess-light { background: color-mix(in srgb, var(--surface) 55%, var(--primary) 45%); }
+.mini-game-chess-dark { background: color-mix(in srgb, var(--surface-2) 72%, var(--accent) 28%); }
+.mini-game-chess-cell:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 65%, var(--surface) 35%); }
+.mini-game-chess-cell:disabled { cursor: default; }
+.mini-game-chess-selected { box-shadow: inset 0 0 0 3px var(--primary); }
+.mini-game-chess-target::after {
+  content: '';
+  position: absolute;
+  inset: 36%;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 70%, transparent);
+  pointer-events: none;
+}
+.mini-game-chess-last { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 75%, transparent); }
+.mini-game-piece-white { color: #fff; text-shadow: 0 1px 2px #000, 0 0 3px #000; }
+.mini-game-piece-black { color: #111; text-shadow: 0 1px 2px #fff, 0 0 3px #fff; }
+
+.mini-game-footer {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--primary) 20%, transparent);
+  border-radius: calc(0.65rem * var(--radius-scale, 1));
+  background: var(--surface-2);
+}
+
+.mini-game-panel button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+:global([data-motion='reduced']) .mini-game-panel button {
+  transition: none;
 }
 </style>

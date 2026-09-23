@@ -1,0 +1,26 @@
+{
+  "name": "syntax-senpai-headless",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "build": "tsc",
+    "start": "tsx src/main.ts",
+    "test:unit": "vitest run --environment node"
+  },
+  "dependencies": {
+    "@syntax-senpai/agent-session": "workspace:*",
+    "@syntax-senpai/agent-tools": "workspace:*",
+    "@syntax-senpai/ai-core": "workspace:*",
+    "@syntax-senpai/game-engine": "workspace:*",
+    "@syntax-senpai/waifu-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.3"
+  }
+}

@@ -347,6 +347,7 @@ class ConnectFourController implements GameController {
 
 type ChessSide = 'w' | 'b'
 type ChessCell = { type: PieceSymbol; color: ChessSide } | null
+type ChessSquareMove = { from: string; to: string }
 
 class ChessController implements GameController {
   readonly kind = 'chess' as const
@@ -355,6 +356,7 @@ class ChessController implements GameController {
   private readonly game: Chess
   private moves: string[] = []
   private lastMove: string | null = null
+  private lastMoveSquares: ChessSquareMove | null = null
 
   constructor(options?: GameOptions) {
     this.difficulty = difficultyOf(options)
@@ -385,6 +387,8 @@ class ChessController implements GameController {
         fen: this.game.fen(),
         check: this.game.inCheck(),
         cells: this.game.board().map((row) => row.map((piece) => piece ? { type: piece.type, color: piece.color } : null)),
+        legalMoves: this.game.moves({ verbose: true }).map((move) => ({ from: move.from, to: move.to })),
+        lastMove: this.lastMoveSquares,
       },
     }
   }
@@ -407,6 +411,7 @@ class ChessController implements GameController {
     }
     this.moves.push(applied.san)
     this.lastMove = applied.san
+    this.lastMoveSquares = { from: applied.from, to: applied.to }
     return this.snapshot()
   }
 

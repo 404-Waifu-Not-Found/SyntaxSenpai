@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true,
+    "declarationMap": true,
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "paths": {
+      "@syntax-senpai/ai-core": ["../ai-core/dist"],
+      "@syntax-senpai/ai-core/*": ["../ai-core/dist/*"],
+      "@syntax-senpai/waifu-core": ["../waifu-core/dist"],
+      "@syntax-senpai/waifu-core/*": ["../waifu-core/dist/*"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/**/__tests__/**", "src/**/*.test.ts", "src/**/*.spec.ts"]
+}

@@ -1,4 +1,4 @@
-import { createReadStream, promises as fs } from 'node:fs'
+import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
@@ -47,8 +47,7 @@ export class ChangeJournal {
     const cached = this.cache.get(file); if (cached?.stamp === stamp) return cached.snapshot
     if (stat.size > MAX_TEXT) {
       // Do not fabricate line counts or store giant artifacts.
-      const hasher = createHash('sha256'); for await (const chunk of createReadStream(file)) hasher.update(chunk)
-      const snapshot = { ref: '', hash: hasher.digest('hex'), exists: true, binary: false, large: true }
+      const snapshot = { ref: '', hash: digest(stamp), exists: true, binary: false, large: true }
       this.cache.set(file, { stamp, snapshot }); return snapshot
     }
     const bytes = await fs.readFile(file)

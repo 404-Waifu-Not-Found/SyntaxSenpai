@@ -47,8 +47,8 @@ import WorkspacePanel from './components/WorkspacePanel.vue'
 import { useWorkspaceStore, codingIntent } from './stores/workspace'
 import { useBrowserStore } from './stores/browser'
 import type { ActiveCodingRepo } from './types/coding-session'
-import { gameSession, applyGameSessionMove, closeGameSession, startGameSession } from './game/session'
-import { gameMoveLabel } from '@syntax-senpai/game-engine'
+import { gameSession, applyBestAgentMove, applyGameSessionMove, closeGameSession, startGameSession } from './game/session'
+import { gameMoveLabel, type GameKind } from '@syntax-senpai/game-engine'
 
 const store = useChatStore()
 const workspace = useWorkspaceStore()
@@ -67,13 +67,17 @@ async function handleGameUserMove(move: string) {
   gameSession.busy = true
   try {
     const before = gameSession.snapshot
-    const snapshot = applyGameSessionMove(move, 'human')
+    const humanSnapshot = applyGameSessionMove(move, 'human')
+    // The engine owns the next move, so gameplay cannot stall on a failed or
+    // missing provider tool call. The agent still comments on the result.
+    const snapshot = humanSnapshot.turn === 'agent' ? applyBestAgentMove() : humanSnapshot
     const label = gameMoveLabel(before.kind, move)
     await store.sendGameEvent(
       `[Minigame event] The user just played ${label} in ${before.kind}. ` +
-      `The authoritative game state after that move is ${JSON.stringify(snapshot)}. ` +
-      `Do not invent a board or move. If the game is still playing and the state says it is the agent turn, call game_move with move="best" so the built-in engine chooses the move. ` +
-      `Then make a brief in-character remark about the position. If the game is over, comment on the result and do not call game_move.`,
+      `The built-in engine has already replied when it was the agent's turn. ` +
+      `The authoritative current game state is ${JSON.stringify(snapshot)}. ` +
+      `Do not invent a board or move, and do not call game_move for this turn. ` +
+      `Make a brief in-character remark about the position or, if the game is over, the result.`,
     )
   } catch (err: any) {
     showToast(err?.message || String(err), 'error')
@@ -1542,6 +1546,71 @@ function applyPreset(preset: typeof colorPresets[0]) {
 const sidebarOpen = ref(true)
 const showSettings = ref(false)
 const showLive2DPanel = ref(false)
+const showGamePicker = ref(false)
+const showGomokuPanel = ref(false)
+const showFateRoulettePanel = ref(false)
+const hasEmbeddedGame = computed(() => gameSession.open || showGomokuPanel.value || showFateRoulettePanel.value)
+
+function openMiniGame(game: GameKind | 'gomoku' | 'fate-roulette') {
+  showGamePicker.value = false
+  showGomokuPanel.value = false
+  showFateRoulettePanel.value = false
+  if (game === 'gomoku' || game === 'fate-roulette') {
+    closeGameSession()
+    showGomokuPanel.value = game === 'gomoku'
+    showFateRoulettePanel.value = game === 'fate-roulette'
+  } else {
+    startGameSession(game)
+  }
+}
+
+watch(() => gameSession.open, (open) => {
+  if (open) {
+    showGomokuPanel.value = false
+    showFateRoulettePanel.value = false
+  }
+})
+
+function shouldOpenGomokuForMessage(message: string): boolean {
+  const normalized = message.trim().toLowerCase()
+  if (!normalized) return false
+  if (/(关闭|关掉|不要|别|不想|stop|close).{0,8}(五子棋|棋盘|下棋|gomoku)/i.test(normalized)) return false
+  return /(五子棋|棋盘|下棋|对弈|来一局|陪我下|陪.*下棋|玩.*棋|gomoku)/i.test(normalized)
+}
+
+function shouldOpenFateRouletteForMessage(message: string): boolean {
+  const normalized = message.trim().toLowerCase()
+  if (!normalized) return false
+  if (/(关闭|关掉|不要|别|不想|stop|close).{0,8}(命运转轮|能量轮盘|轮盘游戏|fate roulette)/i.test(normalized)) return false
+  return /(命运转轮|能量轮盘|轮盘对局|轮盘游戏|玩.*轮盘|来一局.*轮盘|fate roulette)/i.test(normalized)
+}
+
+function submitChatMessage() {
+  const message = store.inputValue
+  if (shouldOpenFateRouletteForMessage(message)) openMiniGame('fate-roulette')
+  else if (shouldOpenGomokuForMessage(message)) openMiniGame('gomoku')
+  store.sendMessage(message)
+}
+
+const desktopPetLocked = ref(false)
+const desktopPetBubbleOpacity = ref(92)
+let desktopPetPreferencesLoaded = false
+
+function loadDesktopPetPreferences() {
+  if (desktopPetPreferencesLoaded) return
+  desktopPetPreferencesLoaded = true
+  try {
+    const parsed = JSON.parse(localStorage.getItem('syntax-senpai-desktop-pet') || '{}')
+    if (typeof parsed.locked === 'boolean') desktopPetLocked.value = parsed.locked
+    if (typeof parsed.opacity === 'number') desktopPetBubbleOpacity.value = Math.min(Math.max(parsed.opacity, 0), 100)
+  } catch { /* best effort */ }
+}
+
+watch([desktopPetLocked, desktopPetBubbleOpacity], ([locked, opacity]) => {
+  try {
+    localStorage.setItem('syntax-senpai-desktop-pet', JSON.stringify({ locked, opacity }))
+  } catch { /* best effort */ }
+})
 const live2dSpeechBubble = ref('')
 let live2dSpeechTimer: number | null = null
 const live2dSpeechQueue: Array<{ text: string; expression: string; durationMs: number }> = []
@@ -5913,13 +5982,14 @@ async function handleImportData() {
             <PhGlobe :size="18" weight="regular" aria-hidden="true" />
           </button>
           <button
-            :class="['btn-ghost p-2', showGamePicker || showGomokuPanel || showFateRoulettePanel ? 'bg-white/10' : '']"
+            :class="['btn-ghost p-2', showGamePicker || hasEmbeddedGame ? 'bg-white/10' : '']"
             :style="ghostButtonStyle"
             :title="t('games.center')"
             :aria-label="t('games.openCenter')"
-            @click="showGamePicker = true"
+            :aria-expanded="showGamePicker"
+            @click="showGamePicker = !showGamePicker"
           >
-            🎮
+            <PhGameController :size="18" weight="regular" aria-hidden="true" />
           </button>
           <button
             class="btn-ghost p-2"
@@ -6020,9 +6090,18 @@ async function handleImportData() {
         </template>
       </div>
 
+      <div v-if="showGamePicker" class="game-picker-strip" aria-label="Choose a minigame">
+        <span class="game-picker-label">{{ t('games.center') }}</span>
+        <button type="button" @click="openMiniGame('tictactoe')">Tic-Tac-Toe</button>
+        <button type="button" @click="openMiniGame('connect4')">Connect Four</button>
+        <button type="button" @click="openMiniGame('chess')">Chess</button>
+        <button type="button" @click="openMiniGame('gomoku')">{{ t('games.gomoku') }}</button>
+        <button type="button" @click="openMiniGame('fate-roulette')">{{ t('games.fate') }}</button>
+      </div>
+
       <div
         class="game-chat-layout flex-1 min-h-0"
-        :class="{ 'game-chat-layout-active': gameSession.open, 'game-chat-layout-compact': compactChatLayout }"
+        :class="{ 'game-chat-layout-active': hasEmbeddedGame, 'game-chat-layout-special': showGomokuPanel || showFateRoulettePanel, 'game-chat-layout-compact': compactChatLayout }"
       >
         <div class="game-chat-column flex min-h-0 min-w-0 flex-col">
       <!-- Messages -->
@@ -6255,88 +6334,6 @@ async function handleImportData() {
           {{ t('input.dropHint') }}
         </div>
 
-        <Teleport to="body">
-          <Transition
-            enter-active-class="transition-all duration-200 ease-out"
-            enter-from-class="opacity-0"
-            leave-active-class="transition-all duration-150 ease-in"
-            leave-to-class="opacity-0"
-          >
-            <div
-              v-if="showGamePicker"
-              class="fixed inset-0 z-[72] flex items-center justify-center bg-black/65 p-4 backdrop-blur-md"
-              @click.self="showGamePicker = false"
-            >
-              <div class="w-full max-w-3xl rounded-3xl border border-white/10 bg-[#10121d]/96 p-5 shadow-2xl sm:p-7">
-                <div class="flex items-start justify-between gap-4">
-                  <div>
-                    <div class="text-xs font-semibold uppercase tracking-[0.2em] text-violet-300">{{ t('games.playTogether') }}</div>
-                    <h2 class="mt-1 text-2xl font-semibold text-white">{{ t('games.center') }}</h2>
-                    <p class="mt-2 text-sm text-neutral-400">{{ t('games.centerSubtitle', { name: store.selectedWaifu?.displayName || '' }) }}</p>
-                  </div>
-                  <button class="btn-ghost px-3 py-2" type="button" :aria-label="t('games.close')" @click="showGamePicker = false">✕</button>
-                </div>
-
-                <div class="mt-6 grid gap-4 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    class="group rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-left transition-all duration-200 hover:-translate-y-1 hover:border-amber-300/35 hover:bg-amber-300/[0.07]"
-                    @click="openMiniGame('gomoku')"
-                  >
-                    <div class="flex items-center justify-between">
-                      <span class="text-4xl">⚫⚪</span>
-                      <span class="rounded-full bg-amber-300/10 px-2.5 py-1 text-[10px] uppercase tracking-wider text-amber-200">{{ t('games.strategy') }}</span>
-                    </div>
-                    <h3 class="mt-4 text-lg font-semibold text-white">{{ t('games.gomoku') }}</h3>
-                    <p class="mt-2 text-sm leading-6 text-neutral-400">{{ t('games.gomokuDescription') }}</p>
-                    <div class="mt-4 text-xs font-medium text-amber-200/80">{{ t('games.startGomoku') }}</div>
-                  </button>
-
-                  <button
-                    type="button"
-                    class="group rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-left transition-all duration-200 hover:-translate-y-1 hover:border-violet-300/35 hover:bg-violet-300/[0.07]"
-                    @click="openMiniGame('fate-roulette')"
-                  >
-                    <div class="flex items-center justify-between">
-                      <span class="text-4xl">✦</span>
-                      <span class="rounded-full bg-violet-300/10 px-2.5 py-1 text-[10px] uppercase tracking-wider text-violet-200">{{ t('games.mindGame') }}</span>
-                    </div>
-                    <h3 class="mt-4 text-lg font-semibold text-white">{{ t('games.fate') }}</h3>
-                    <p class="mt-2 text-sm leading-6 text-neutral-400">{{ t('games.fateDescription') }}</p>
-                    <div class="mt-4 text-xs font-medium text-violet-200/80">{{ t('games.startFate') }}</div>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </Transition>
-        </Teleport>
-
-        <GomokuGame
-          v-if="showGomokuPanel"
-          :class="compactChatLayout ? 'mb-2' : 'mb-3'"
-          :waifu-display-name="store.selectedWaifu?.displayName"
-          :backstory="store.selectedWaifu?.backstory"
-          :system-prompt-template="store.selectedWaifu?.systemPromptTemplate"
-          :catchphrases="store.selectedWaifu?.catchphrases"
-          :tags="store.selectedWaifu?.tags"
-          :personality="store.selectedWaifu?.personalityTraits"
-          :communication-style="store.selectedWaifu?.communicationStyle"
-          @close="showGomokuPanel = false"
-        />
-
-        <FateRouletteGame
-          v-if="showFateRoulettePanel"
-          :waifu-display-name="store.selectedWaifu?.displayName"
-          :backstory="store.selectedWaifu?.backstory"
-          :system-prompt-template="store.selectedWaifu?.systemPromptTemplate"
-          :catchphrases="store.selectedWaifu?.catchphrases"
-          :tags="store.selectedWaifu?.tags"
-          :personality="store.selectedWaifu?.personalityTraits"
-          :communication-style="store.selectedWaifu?.communicationStyle"
-          :dialogue-generator="store.generateGameDialogue"
-          @close="showFateRoulettePanel = false"
-        />
-
         <!-- Coding-mode pill -->
         <div v-if="!compactChatLayout" class="flex items-center gap-2 mb-2 text-xs">
           <button v-for="m in (['auto','chat','code'] as const)" :key="m" class="px-2 py-1 rounded" :class="workspace.mode === m ? 'bg-primary-500/20 text-primary-200' : 'text-neutral-500'" @click="workspace.setMode(m)">{{ m === 'auto' ? 'Auto' : m === 'chat' ? 'Chat' : 'Code' }}</button>
@@ -6510,13 +6507,37 @@ async function handleImportData() {
         </p>
       </div>
         </div>
-        <aside v-if="gameSession.open && gameSession.snapshot" class="game-chat-aside" aria-label="Active minigame">
+        <aside v-if="hasEmbeddedGame" class="game-chat-aside" aria-label="Active minigame">
           <MiniGamePanel
-            :key="gameSession.sessionId"
+            v-if="gameSession.open && gameSession.snapshot"
+            :key="gameSession.sessionId || 'core-game'"
             :snapshot="gameSession.snapshot"
             :busy="gameSession.busy"
             @move="handleGameUserMove"
             @close="closeGameSession"
+          />
+          <GomokuGame
+            v-else-if="showGomokuPanel"
+            :waifu-display-name="store.selectedWaifu?.displayName"
+            :backstory="store.selectedWaifu?.backstory"
+            :system-prompt-template="store.selectedWaifu?.systemPromptTemplate"
+            :catchphrases="store.selectedWaifu?.catchphrases"
+            :tags="store.selectedWaifu?.tags"
+            :personality="store.selectedWaifu?.personalityTraits"
+            :communication-style="store.selectedWaifu?.communicationStyle"
+            @close="showGomokuPanel = false"
+          />
+          <FateRouletteGame
+            v-else-if="showFateRoulettePanel"
+            :waifu-display-name="store.selectedWaifu?.displayName"
+            :backstory="store.selectedWaifu?.backstory"
+            :system-prompt-template="store.selectedWaifu?.systemPromptTemplate"
+            :catchphrases="store.selectedWaifu?.catchphrases"
+            :tags="store.selectedWaifu?.tags"
+            :personality="store.selectedWaifu?.personalityTraits"
+            :communication-style="store.selectedWaifu?.communicationStyle"
+            :dialogue-generator="store.generateGameDialogue"
+            @close="showFateRoulettePanel = false"
           />
         </aside>
       </div>
@@ -6659,6 +6680,40 @@ async function handleImportData() {
 </template>
 
 <style scoped>
+.game-picker-strip {
+  display: flex;
+  flex: none;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.55rem 0.8rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
+  background: var(--surface);
+  color: var(--fg);
+}
+
+.game-picker-label {
+  margin-right: 0.4rem;
+  color: color-mix(in srgb, var(--fg) 65%, transparent);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.game-picker-strip button {
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  border-radius: calc(0.55rem * var(--radius-scale, 1));
+  padding: 0.35rem 0.6rem;
+  background: color-mix(in srgb, var(--surface-2) 84%, var(--primary) 16%);
+  color: var(--fg);
+  font-size: 0.75rem;
+}
+
+.game-picker-strip button:hover,
+.game-picker-strip button:focus-visible {
+  border-color: var(--primary);
+  outline-color: var(--primary);
+}
+
 .game-chat-layout {
   display: flex;
   min-width: 0;
@@ -6677,6 +6732,10 @@ async function handleImportData() {
   overflow: hidden;
   border-left: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
   background: var(--surface);
+}
+
+.game-chat-layout-special .game-chat-aside {
+  flex-basis: clamp(28rem, 60%, 56rem);
 }
 
 @media (max-width: 1199px) {

@@ -175,7 +175,7 @@ watch(() => props.snapshot?.lastMove, () => {
             class="mini-game-column"
             :disabled="!connectBoard[0]?.[column - 1] || connectBoard[0][column - 1] !== 'empty' || !canMove()"
             :aria-label="`Drop in column ${column}`"
-            @click="emitMove(String(column - 1))"
+            @click="emitConnectMove(column - 1)"
           >{{ column }}</button>
         </div>
         <div class="mini-game-connect-board">
@@ -198,7 +198,7 @@ watch(() => props.snapshot?.lastMove, () => {
             :key="cell.square"
             type="button"
             class="mini-game-chess-cell"
-            :class="[cell.dark ? 'mini-game-chess-dark' : 'mini-game-chess-light', selectedSquare === cell.square ? 'mini-game-chess-selected' : '']"
+            :class="[cell.dark ? 'mini-game-chess-dark' : 'mini-game-chess-light', selectedSquare === cell.square ? 'mini-game-chess-selected' : '', chessLegalTargets.has(cell.square) ? 'mini-game-chess-target' : '', cell.last ? 'mini-game-chess-last' : '']"
             :disabled="!canMove()"
             :aria-label="`${cell.square}${cell.piece ? `, ${cell.piece.color === 'w' ? 'white' : 'black'} ${cell.piece.type}` : ', empty'}`"
             :aria-pressed="selectedSquare === cell.square"
@@ -356,6 +356,15 @@ watch(() => props.snapshot?.lastMove, () => {
 .mini-game-chess-cell:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 65%, var(--surface) 35%); }
 .mini-game-chess-cell:disabled { cursor: default; }
 .mini-game-chess-selected { box-shadow: inset 0 0 0 3px var(--primary); }
+.mini-game-chess-target::after {
+  content: '';
+  position: absolute;
+  inset: 36%;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 70%, transparent);
+  pointer-events: none;
+}
+.mini-game-chess-last { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 75%, transparent); }
 .mini-game-piece-white { color: #fff; text-shadow: 0 1px 2px #000, 0 0 3px #000; }
 .mini-game-piece-black { color: #111; text-shadow: 0 1px 2px #fff, 0 0 3px #fff; }
 

@@ -13,7 +13,7 @@ describe("loadToolPlugins (integration against plugins/)", () => {
     const silentLogger = { info: () => {}, warn: () => {}, error: () => {} };
     const loaded = await loadToolPlugins({ directory: PLUGINS_DIR, registry, logger: silentLogger });
     const names = loaded.map((l) => l.manifest.name).sort();
-    expect(names).toEqual(["echo-tool", "github-api", "http-fetch"]);
+    expect(names).toEqual(["echo-tool", "github-api", "http-fetch", "warthunder-copilot"]);
   });
 
   it("registers every tool the plugins ship with", async () => {
@@ -26,6 +26,8 @@ describe("loadToolPlugins (integration against plugins/)", () => {
     expect(toolNames).toContain("gh_list_issues");
     expect(toolNames).toContain("gh_get_issue");
     expect(toolNames).toContain("gh_list_prs");
+    expect(toolNames).toContain("warthunder_copilot_control");
+    expect(toolNames).toContain("warthunder_copilot_status");
   });
 
   it("normalizes legacy flat tool definitions from generated plugins", async () => {

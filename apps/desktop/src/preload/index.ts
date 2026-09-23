@@ -28,12 +28,20 @@ try {
   const os = require('os')
   contextBridge.exposeInMainWorld('systemInfo', {
     platform: process.platform,
+    arch: process.arch,
+    electronVersion: process.versions.electron,
+    nodeVersion: process.versions.node,
+    chromiumVersion: process.versions.chrome,
     homedir: os.homedir(),
     username: os.userInfo().username,
   })
 } catch {
   contextBridge.exposeInMainWorld('systemInfo', {
     platform: process.platform,
+    arch: process.arch,
+    electronVersion: process.versions.electron,
+    nodeVersion: process.versions.node,
+    chromiumVersion: process.versions.chrome,
     homedir: '',
     username: '',
   })

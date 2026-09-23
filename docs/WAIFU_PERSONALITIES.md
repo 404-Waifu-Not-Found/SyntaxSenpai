@@ -1,5 +1,7 @@
 # Agents & Waifu Personalities
 
+This is an on-demand product reference, not repository-wide coding-agent guidance. The canonical implementations and types are under `packages/waifu-core/src/` and `apps/desktop`; check those sources when behavior or current status matters.
+
 SyntaxSenpai's agent system is powered by distinct waifu personalities. Each waifu has her own communication style, personality-trait vector, capability flags, and a system-prompt template that defines how she interacts with the user. The roster below is built in (`packages/waifu-core/src/index.ts`); users can also load custom waifus via `loadCustomWaifus()` and the desktop `waifus:write / waifus:list / waifus:delete` IPC.
 
 ## Built-in waifus
@@ -150,7 +152,7 @@ interface Waifu {
 
 ## AI provider integration
 
-`preferredAIProvider` + `preferredModel` determine the default routing; the user can override per-session in Settings. See [PROVIDERS.md](PROVIDERS.md) for the catalog and [STATE.md](STATE.md) for the current stub/implemented split (short version: 18 providers are wired, `azure-openai`, `fireworks`, and `xai-grok` currently throw "not yet fully implemented"; Replicate and AWS Bedrock were removed in PR #12).
+`preferredAIProvider` + `preferredModel` determine the default routing; the user can override per-session in Settings. See [PROVIDERS.md](../PROVIDERS.md) for the catalog and [STATE.md](../STATE.md) for the current stub/implemented split (short version: 18 providers are wired, `azure-openai`, `fireworks`, and `xai-grok` currently throw "not yet fully implemented"; Replicate and AWS Bedrock were removed in PR #12).
 
 ## Personality engine modules
 

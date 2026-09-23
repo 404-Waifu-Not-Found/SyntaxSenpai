@@ -1,4 +1,16 @@
-import { Chess, type Move as ChessMove, type PieceSymbol } from 'chess.js'
+import { Chess, type Move as ChessMove } from 'chess.js'
+import type { StockfishAnalysis, StockfishAnalysisProvider, StockfishMoveProvider, StockfishScore } from './stockfish-uci.js'
+
+export { createStockfishAnalysisProvider, createStockfishMoveProvider } from './stockfish-uci.js'
+export type {
+  StockfishAnalysis,
+  StockfishAnalysisOptions,
+  StockfishAnalysisProvider,
+  StockfishMoveProvider,
+  StockfishPrincipalVariation,
+  StockfishScore,
+  StockfishUciTransport,
+} from './stockfish-uci.js'
 
 export type GameKind = 'tictactoe' | 'connect4' | 'chess'
 export type GameSide = 'human' | 'agent'
@@ -9,6 +21,23 @@ export interface GameOptions {
   difficulty?: GameDifficulty
   humanSide?: string
   humanStarts?: boolean
+  chessMoveProvider?: StockfishMoveProvider
+  chessAnalysisProvider?: StockfishAnalysisProvider
+}
+
+export interface ChessEvaluation {
+  type: StockfishScore['type']
+  /** Centipawns or mate distance, always from White's point of view. */
+  value: number
+  perspective: 'white'
+}
+
+export interface ChessAnalysisSnapshot {
+  depth: number
+  evaluation: ChessEvaluation
+  lines: Array<{ rank: number; evaluation: ChessEvaluation; moves: string[] }>
+  playedRank: number
+  forcedMateWithinThree: boolean
 }
 
 export interface GameSnapshot {
@@ -23,6 +52,7 @@ export interface GameSnapshot {
   moves: string[]
   legalMoves: string[]
   lastMove: string | null
+  chessAnalysis?: ChessAnalysisSnapshot
   board: unknown
 }
 
@@ -31,7 +61,7 @@ export interface GameController {
   snapshot(): GameSnapshot
   legalMoves(): string[]
   applyMove(move: string, actor: GameSide): GameSnapshot
-  bestMove(): string | null
+  bestMove(): string | null | Promise<string | null>
 }
 
 export class IllegalGameMoveError extends Error {
@@ -351,7 +381,6 @@ class ConnectFourController implements GameController {
 }
 
 type ChessSide = 'w' | 'b'
-type ChessCell = { type: PieceSymbol; color: ChessSide } | null
 type ChessSquareMove = { from: string; to: string }
 
 class ChessController implements GameController {
@@ -362,10 +391,15 @@ class ChessController implements GameController {
   private moves: string[] = []
   private lastMove: string | null = null
   private lastMoveSquares: ChessSquareMove | null = null
+  private readonly chessMoveProvider?: StockfishMoveProvider
+  private readonly chessAnalysisProvider?: StockfishAnalysisProvider
+  private chessAnalysis: ChessAnalysisSnapshot | undefined
 
   constructor(options?: GameOptions) {
     this.difficulty = difficultyOf(options)
     this.humanSide = options?.humanSide === 'b' ? 'b' : 'w'
+    this.chessMoveProvider = options?.chessMoveProvider
+    this.chessAnalysisProvider = options?.chessAnalysisProvider
     this.game = new Chess()
     if (options?.humanStarts === false) this.game.setTurn(this.humanSide === 'w' ? 'b' : 'w')
   }
@@ -378,7 +412,7 @@ class ChessController implements GameController {
       : null
     return {
       kind: this.kind,
-      engine: `Chess alpha-beta (${this.difficulty})`,
+      engine: 'Stockfish 19 Lite · MultiPV third choice',
       difficulty: this.difficulty,
       humanSide: this.humanSide,
       turn: gameOver ? null : this.game.turn() === this.humanSide ? 'human' : 'agent',
@@ -388,6 +422,7 @@ class ChessController implements GameController {
       moves: [...this.moves],
       legalMoves: this.legalMoves(),
       lastMove: this.lastMove,
+      ...(this.chessAnalysis ? { chessAnalysis: structuredClone(this.chessAnalysis) } : {}),
       board: {
         fen: this.game.fen(),
         check: this.game.inCheck(),
@@ -420,68 +455,91 @@ class ChessController implements GameController {
     return this.snapshot()
   }
 
-  bestMove(): string | null {
+  async bestMove(): Promise<string | null> {
     if (this.game.isGameOver() || (this.game.turn() === this.humanSide ? 'human' : 'agent') !== 'agent') return null
-    if (this.difficulty === 'casual') return randomItem(this.game.moves())
-    const depth = this.difficulty === 'strong' ? 3 : 2
-    // Search on one copy. Reconstructing a Chess instance from FEN at every
-    // node dominated move time, especially on the strong setting.
-    const position = new Chess(this.game.fen())
-    const moves = this.orderMoves(position.moves({ verbose: true }))
-    let best: ChessMove | null = null
-    let bestScore = -Infinity
-    let alpha = -Infinity
-    for (const move of moves) {
-      position.move({ from: move.from, to: move.to, promotion: move.promotion })
-      const score = this.search(position, depth - 1, false, alpha, Infinity)
-      position.undo()
-      if (score > bestScore) {
-        bestScore = score
-        best = move
-      }
-      alpha = Math.max(alpha, bestScore)
-    }
-    return best?.san ?? null
-  }
-
-  private search(position: Chess, depth: number, maximizing: boolean, alpha: number, beta: number): number {
-    if (position.isCheckmate()) return position.turn() === this.humanSide ? 100000 : -100000
-    if (position.isGameOver() || depth <= 0) return this.evaluate(position)
-    const moves = this.orderMoves(position.moves({ verbose: true }))
-    let result = maximizing ? -Infinity : Infinity
-    for (const move of moves) {
-      position.move({ from: move.from, to: move.to, promotion: move.promotion })
-      const score = this.search(position, depth - 1, !maximizing, alpha, beta)
-      position.undo()
-      result = maximizing ? Math.max(result, score) : Math.min(result, score)
-      if (maximizing) alpha = Math.max(alpha, result)
-      else beta = Math.min(beta, result)
-      if (alpha >= beta) break
-    }
-    return result
-  }
-
-  private orderMoves(moves: ChessMove[]): ChessMove[] {
-    const values: Record<PieceSymbol, number> = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 }
-    return moves.sort((a, b) => {
-      const score = (move: ChessMove) =>
-        (move.captured ? 10_000 + values[move.captured] - values[move.piece] / 10 : 0) +
-        (move.promotion ? values[move.promotion] : 0)
-      return score(b) - score(a)
+    if (!this.chessMoveProvider && !this.chessAnalysisProvider) throw new Error('Stockfish is not configured for this runtime.')
+    const legalMoves = this.game.moves({ verbose: true })
+    const moveTimeMs = this.difficulty === 'casual' ? 100 : this.difficulty === 'strong' ? 360 : 180
+    const fen = this.game.fen()
+    const rootSide = this.game.turn()
+    const analysis = this.chessAnalysisProvider
+      ? await this.chessAnalysisProvider(fen, { multiPv: 3, moveTimeMs, stopOnMateIn: 3 })
+      : null
+    const rankedUciMoves = analysis
+      ? analysis.lines.map((line) => line.moves[0]).filter((move): move is string => !!move)
+      : await this.chessMoveProvider!(fen, { multiPv: 3, moveTimeMs, stopOnMateIn: 3 })
+    const rankedLegalMoves = rankedUciMoves.flatMap((uciMove) => {
+      const match = String(uciMove).match(/^([a-h][1-8])([a-h][1-8])([qrbn])?$/)
+      if (!match) return []
+      const legalMove = legalMoves.find((move) =>
+        move.from === match[1] && move.to === match[2] && (move.promotion || undefined) === (match[3] || undefined),
+      )
+      return legalMove ? [legalMove] : []
     })
-  }
-
-  private evaluate(position: Chess): number {
-    const values: Record<PieceSymbol, number> = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 20000 }
-    let score = 0
-    for (const row of position.board()) {
-      for (const piece of row) {
-        if (!piece) continue
-        const value = values[piece.type]
-        score += piece.color === this.humanSide ? -value : value
+    if (!rankedLegalMoves.length) throw new Error('Stockfish did not return a legal move for this position.')
+    const rankOne = analysis?.lines.find((line) => line.rank === 1)
+    const urgentMate = rankOne?.score.type === 'mate' && Math.abs(rankOne.score.value) <= 3
+    if (analysis && urgentMate) {
+      const forcedMove = rankOne.moves[0]
+      const match = forcedMove?.match(/^([a-h][1-8])([a-h][1-8])([qrbn])?$/)
+      const matingMove = match && legalMoves.find((move) =>
+        move.from === match[1] && move.to === match[2] && (move.promotion || undefined) === (match[3] || undefined),
+      )
+      if (matingMove) {
+        this.chessAnalysis = createChessAnalysisSnapshot(analysis, fen, rootSide, forcedMove)
+        return matingMove.san
       }
     }
-    return score
+    if (!analysis && legalMoves.length >= 3 && rankedLegalMoves.length < 3) {
+      throw new Error('Stockfish did not return three distinct ranked moves for this position.')
+    }
+    const thirdLineIndex = analysis?.lines.findIndex((line) => line.rank === 3) ?? -1
+    const selectedIndex = analysis ? Math.max(0, thirdLineIndex) : Math.min(2, rankedLegalMoves.length - 1)
+    const selectedMove = rankedLegalMoves[selectedIndex] ?? rankedLegalMoves[0]
+    if (analysis && selectedMove) {
+      this.chessAnalysis = createChessAnalysisSnapshot(analysis, fen, rootSide, analysis.lines[selectedIndex]?.moves[0])
+    }
+    return selectedMove?.san ?? null
+  }
+}
+
+function scoreForWhite(score: StockfishScore, rootSide: ChessSide): ChessEvaluation {
+  return { type: score.type, value: rootSide === 'w' ? score.value : -score.value, perspective: 'white' }
+}
+
+function variationToSan(fen: string, uciMoves: string[]): string[] {
+  const position = new Chess(fen)
+  const moves: string[] = []
+  for (const uci of uciMoves) {
+    const match = uci.match(/^([a-h][1-8])([a-h][1-8])([qrbn])?$/)
+    if (!match) break
+    try {
+      moves.push(position.move({ from: match[1], to: match[2], promotion: match[3] }).san)
+    } catch {
+      break
+    }
+  }
+  return moves
+}
+
+function createChessAnalysisSnapshot(
+  analysis: StockfishAnalysis,
+  fen: string,
+  rootSide: ChessSide,
+  selectedUci: string | undefined,
+): ChessAnalysisSnapshot {
+  const lines = analysis.lines.map((line) => ({
+    rank: line.rank,
+    evaluation: scoreForWhite(line.score, rootSide),
+    moves: variationToSan(fen, line.moves),
+  }))
+  const bestLine = analysis.lines.find((line) => line.rank === 1) ?? analysis.lines[0]
+  return {
+    depth: analysis.depth,
+    evaluation: bestLine ? scoreForWhite(bestLine.score, rootSide) : { type: 'cp', value: 0, perspective: 'white' },
+    lines,
+    playedRank: analysis.lines.find((line) => line.moves[0] === selectedUci)?.rank ?? 1,
+    forcedMateWithinThree: !!bestLine && bestLine.score.type === 'mate' && bestLine.score.value > 0 && bestLine.score.value <= 3,
   }
 }
 

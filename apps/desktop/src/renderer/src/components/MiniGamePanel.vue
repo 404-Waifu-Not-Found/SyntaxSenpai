@@ -46,6 +46,23 @@ const turnLabel = computed(() => {
 
 const ticTacToeCells = computed(() => (props.snapshot?.board as string[] | undefined) ?? [])
 const connectBoard = computed(() => (props.snapshot?.board as ConnectBoard | undefined) ?? [])
+const chessAnalysis = computed(() => props.snapshot?.kind === 'chess' ? props.snapshot.chessAnalysis : undefined)
+const whiteAdvantagePercent = computed(() => {
+  const score = chessAnalysis.value?.evaluation
+  if (!score) return 50
+  if (score.type === 'mate') return score.value > 0 ? 99 : score.value < 0 ? 1 : 50
+  return Math.max(2, Math.min(98, 100 / (1 + Math.exp(-score.value / 250))))
+})
+const chessEvaluationLabel = computed(() => {
+  const score = chessAnalysis.value?.evaluation
+  if (!score) return 'Stockfish evaluation pending'
+  if (score.type === 'mate') {
+    if (score.value === 0) return 'Checkmate'
+    return `${score.value > 0 ? 'White' : 'Black'} mates in ${Math.abs(score.value)}`
+  }
+  const pawns = Math.abs(score.value / 100).toFixed(2)
+  return score.value === 0 ? 'Equal position' : `${score.value > 0 ? 'White' : 'Black'} +${pawns}`
+})
 
 const chessCells = computed(() => {
   const board = props.snapshot?.board as ChessBoard | undefined
@@ -151,6 +168,13 @@ watch(() => props.snapshot?.lastMove, () => {
         <div class="min-w-0">
           <h2 class="truncate text-sm font-semibold">{{ title }}</h2>
           <p class="mini-game-muted truncate text-[11px]">{{ snapshot.engine }}</p>
+          <details v-if="snapshot.kind === 'chess'" class="stockfish-license">
+            <summary>Stockfish license</summary>
+            <div class="stockfish-license-copy">
+              Stockfish.js 19.0.0 by Chess.com, LLC / Nathan Rugg, GPL-3.0. It is provided without warranty and may be redistributed under GPL-3.0.
+              <a href="./stockfish/Copying.txt">Read the full license</a>
+            </div>
+          </details>
         </div>
       </div>
       <button type="button" class="mini-game-close" aria-label="Close minigame" title="Close minigame" @click="emit('close')">
@@ -209,26 +233,37 @@ watch(() => props.snapshot?.lastMove, () => {
       </div>
 
       <div v-else class="mini-game-chess">
-        <div class="grid grid-cols-8">
-          <button
-            v-for="cell in chessCells"
-            :key="cell.square"
-            type="button"
-            class="mini-game-chess-cell"
-            :class="[cell.dark ? 'mini-game-chess-dark' : 'mini-game-chess-light', selectedSquare === cell.square ? 'mini-game-chess-selected' : '', chessLegalTargets.has(cell.square) ? 'mini-game-chess-target' : '', cell.last ? 'mini-game-chess-last' : '']"
-            :disabled="!canMove()"
-            :aria-label="`${cell.square}${cell.piece ? `, ${cell.piece.color === 'w' ? 'white' : 'black'} ${cell.piece.type}` : ', empty'}`"
-            :aria-pressed="selectedSquare === cell.square"
-            @click="chooseChessSquare(cell.square)"
-          >
-            <span
-              v-if="cell.piece"
-              class="mini-game-piece"
-              :class="cell.piece.color === 'w' ? 'mini-game-piece-white' : 'mini-game-piece-black'"
-              :style="chessPieceStyle(cell.piece)"
-              aria-hidden="true"
-            />
-          </button>
+        <div class="mini-game-chess-position">
+          <div class="mini-game-eval-rail" role="img" :aria-label="`Stockfish evaluation: ${chessEvaluationLabel}`">
+            <div class="mini-game-eval-black" :style="{ height: `${100 - whiteAdvantagePercent}%` }" />
+            <div class="mini-game-eval-white" :style="{ height: `${whiteAdvantagePercent}%` }" />
+          </div>
+          <div class="grid min-w-0 flex-1 grid-cols-8">
+            <button
+              v-for="cell in chessCells"
+              :key="cell.square"
+              type="button"
+              class="mini-game-chess-cell"
+              :class="[cell.dark ? 'mini-game-chess-dark' : 'mini-game-chess-light', selectedSquare === cell.square ? 'mini-game-chess-selected' : '', chessLegalTargets.has(cell.square) ? 'mini-game-chess-target' : '', cell.last ? 'mini-game-chess-last' : '']"
+              :disabled="!canMove()"
+              :aria-label="`${cell.square}${cell.piece ? `, ${cell.piece.color === 'w' ? 'white' : 'black'} ${cell.piece.type}` : ', empty'}`"
+              :aria-pressed="selectedSquare === cell.square"
+              @click="chooseChessSquare(cell.square)"
+            >
+              <span
+                v-if="cell.piece"
+                class="mini-game-piece"
+                :class="cell.piece.color === 'w' ? 'mini-game-piece-white' : 'mini-game-piece-black'"
+                :style="chessPieceStyle(cell.piece)"
+                aria-hidden="true"
+              />
+            </button>
+          </div>
+        </div>
+        <div class="mini-game-chess-evaluation" role="status" aria-live="polite">
+          <span>{{ chessEvaluationLabel }}</span>
+          <span v-if="chessAnalysis">Depth {{ chessAnalysis.depth }} · AI played MultiPV #{{ chessAnalysis.playedRank }}</span>
+          <span v-if="chessAnalysis?.forcedMateWithinThree" class="mini-game-mate-found">Forced mate found — played immediately</span>
         </div>
       </div>
 
@@ -271,6 +306,11 @@ watch(() => props.snapshot?.lastMove, () => {
 .mini-game-muted,
 .mini-game-meta,
 .mini-game-footer { color: color-mix(in srgb, var(--fg) 65%, transparent); }
+
+.stockfish-license { margin-top: 0.15rem; font-size: 0.62rem; }
+.stockfish-license summary { cursor: pointer; color: color-mix(in srgb, var(--fg) 54%, transparent); }
+.stockfish-license-copy { max-width: 24rem; margin-top: 0.35rem; color: color-mix(in srgb, var(--fg) 74%, transparent); line-height: 1.45; }
+.stockfish-license-copy a { margin-left: 0.25rem; color: var(--primary); text-decoration: underline; }
 
 .mini-game-close,
 .mini-game-column {
@@ -361,6 +401,31 @@ watch(() => props.snapshot?.lastMove, () => {
   border: 1px solid color-mix(in srgb, var(--primary) 28%, transparent);
   border-radius: calc(1rem * var(--radius-scale, 1));
 }
+
+.mini-game-chess-position { display: flex; align-items: stretch; gap: 0.4rem; }
+.mini-game-eval-rail {
+  display: flex;
+  flex: none;
+  width: 0.7rem;
+  min-height: 8rem;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--fg) 30%, transparent);
+  border-radius: 0.2rem;
+  background: #12201c;
+}
+.mini-game-eval-black { background: #14211e; transition: height 180ms ease; }
+.mini-game-eval-white { margin-top: auto; background: #f5f1e6; transition: height 180ms ease; }
+.mini-game-chess-evaluation {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+  padding: 0.45rem 0.65rem;
+  color: color-mix(in srgb, var(--fg) 76%, transparent);
+  font-size: 0.7rem;
+}
+.mini-game-mate-found { color: var(--primary); }
 
 .mini-game-chess-cell {
   position: relative;

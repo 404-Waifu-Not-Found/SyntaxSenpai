@@ -126,9 +126,9 @@ export function registerChatIpc() {
     }
   })
 
-  registerHostHandler('store:getMessages', async (_event: IpcMainInvokeEvent, conversationId: string) => {
+  registerHostHandler('store:getMessages', async (_event: IpcMainInvokeEvent, conversationId: string, limit?: number) => {
     try {
-      const msgs = await store.getMessages(conversationId)
+      const msgs = await store.getMessages(conversationId, limit)
       return { success: true, messages: msgs }
     } catch (err: any) {
       return { success: false, error: err instanceof Error ? err.message : String(err) }

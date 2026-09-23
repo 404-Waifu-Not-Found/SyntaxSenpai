@@ -24,6 +24,16 @@ try {
   })
   await page.reload()
 
+  const recommendations = page.locator('.new-chat-suggestion')
+  await recommendations.first().waitFor({ state: 'visible' })
+  const recommendationLabels = await recommendations.allTextContents()
+  assert.equal(recommendationLabels.length, 3)
+  assert.match(recommendationLabels[0], /today.?s news/i)
+  assert.match(recommendationLabels[1], /weather forecast/i)
+  assert.match(recommendationLabels[2], /play a game with aria/i)
+  await recommendations.nth(2).click()
+  await page.locator('.mini-game-tic-cell').first().waitFor({ state: 'visible' })
+
   const launcher = page.getByRole('button', { name: 'Open mini-game center' })
   await launcher.waitFor({ state: 'visible' })
   const windowCount = app.windows().length
@@ -51,8 +61,22 @@ try {
   assert.equal(await page.locator('.mini-game-chess-cell').count(), 64)
   await page.getByRole('button', { name: /e2, white p/ }).click()
   assert.equal(await page.getByRole('button', { name: /e2, white p/ }).getAttribute('aria-pressed'), 'true')
+  const chessReplyStartedAt = Date.now()
   await page.getByRole('button', { name: /e4, empty/ }).click()
-  await page.waitForFunction(() => [...document.querySelectorAll('.mini-game-chess-cell')].some(cell => cell.getAttribute('aria-label')?.startsWith('e4, white p')))
+  await page.waitForFunction(() => {
+    const status = document.querySelector('.mini-game-meta')?.textContent || ''
+    const cells = [...document.querySelectorAll('.mini-game-chess-cell')]
+    return /Your turn/.test(status)
+      && /Move\s*2/.test(status)
+      && cells.some(cell => cell.getAttribute('aria-label')?.startsWith('e4, white p'))
+      && cells.some(cell => /^\w\d, black /.test(cell.getAttribute('aria-label') || '')
+        && !/^[a-h]7, black /.test(cell.getAttribute('aria-label') || ''))
+  }, null, { timeout: 15000 })
+  const chessReply = {
+    elapsedMs: Date.now() - chessReplyStartedAt,
+    status: await page.locator('.mini-game-meta').innerText(),
+    lastMove: await page.locator('.mini-game-footer').innerText(),
+  }
 
   await choose('Gomoku')
   assert.equal(await page.locator('.gomoku-cell').count(), 225)
@@ -64,7 +88,7 @@ try {
   assert.equal(await page.locator('.fate-action').count(), 2)
   assert.equal(await page.locator('.fate-game').evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(18, 52, 86)')
 
-  console.log(JSON.stringify({ passed: true, games: 5, windows: windowCount }))
+  console.log(JSON.stringify({ passed: true, games: 5, windows: windowCount, chessReply }))
 } finally {
   if (app) await app.close()
 }

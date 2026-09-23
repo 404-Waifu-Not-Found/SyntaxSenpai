@@ -19,14 +19,16 @@ describe('embedded game sessions', () => {
     ['tictactoe', '0'],
     ['connect4', '0'],
     ['chess', 'e2e4'],
-  ] as Array<[GameKind, string]>)('plays %s entirely in the renderer without opening a window', (kind, humanMove) => {
+  ] as Array<[GameKind, string]>)('plays %s entirely in the renderer without opening a window', async (kind, humanMove) => {
     const invoke = vi.fn()
     const send = vi.fn()
     vi.stubGlobal('window', { electron: { ipcRenderer: { invoke, send } } })
     const events: string[] = []
     const unsubscribe = subscribeGameSession((event) => events.push(event.type))
 
-    const opened = startGameSession(kind)
+    const opened = await startGameSession(kind, kind === 'chess' ? {
+      chessMoveProvider: async () => ['e7e5', 'c7c5', 'g8f6'],
+    } : {})
     expect(opened.kind).toBe(kind)
     expect(gameSession.open).toBe(true)
     expect(gameSession.snapshot?.turn).toBe('human')
@@ -34,7 +36,7 @@ describe('embedded game sessions', () => {
     const afterHuman = applyGameSessionMove(humanMove, 'human')
     expect(afterHuman.moveCount).toBe(1)
     expect(afterHuman.turn).toBe('agent')
-    const afterAgent = applyBestAgentMove()
+    const afterAgent = await applyBestAgentMove()
     expect(afterAgent.moveCount).toBe(2)
     expect(gameSession.snapshot).toEqual(afterAgent)
 
@@ -45,5 +47,15 @@ describe('embedded game sessions', () => {
     expect(invoke).not.toHaveBeenCalled()
     expect(send).not.toHaveBeenCalled()
     unsubscribe()
+  })
+
+  it('reuses a same-kind session when both the composer and agent request chess', async () => {
+    const options = { chessMoveProvider: async () => ['e7e5', 'c7c5', 'g8f6'] }
+    await startGameSession('chess', options)
+    const sessionId = gameSession.sessionId
+    const snapshot = await startGameSession('chess', options)
+
+    expect(gameSession.sessionId).toBe(sessionId)
+    expect(gameSession.snapshot).toEqual(snapshot)
   })
 })

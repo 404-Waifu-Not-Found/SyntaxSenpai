@@ -60,7 +60,7 @@ export interface IChatStore {
 
   // Messages
   addMessage(conversationId: string, message: Message): Promise<void>;
-  getMessages(conversationId: string): Promise<Message[]>;
+  getMessages(conversationId: string, limit?: number): Promise<Message[]>;
   deleteMessages(conversationId: string, beforeDate?: string): Promise<void>;
   deleteMessage?(conversationId: string, messageId: string): Promise<void>;
 

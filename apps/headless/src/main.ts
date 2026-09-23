@@ -50,6 +50,11 @@ function diagnostic(message: string) {
   process.stderr.write(`[headless] ${message}\n`)
 }
 
+function platformName(platform: string): string {
+  const names: Record<string, string> = { darwin: 'macOS', win32: 'Windows', linux: 'Linux', freebsd: 'FreeBSD', openbsd: 'OpenBSD' }
+  return names[platform] || platform
+}
+
 function resolveWaifu(id?: string): Waifu {
   return builtInWaifus.find((waifu) => waifu.id === id) || builtInWaifus[0]
 }
@@ -113,7 +118,17 @@ export async function runTurn(request: TurnRequest, emit: (event: unknown) => vo
     model,
     affection: 50,
     firstUserText: text,
-    environment: 'You are running in a headless SyntaxSenpai test/runtime process. UI-only effects are emitted as events, but the user-visible response and tool results must remain unchanged.',
+    environment: [
+      'You are running in the SyntaxSenpai headless Node.js runtime.',
+      `Operating system: ${platformName(String(current.host.environment?.platform || process.platform))} (${current.host.environment?.platform || process.platform})`,
+      `Architecture: ${process.arch}`,
+      `Shell: ${current.host.environment?.shell || process.env.SHELL || 'unknown'}`,
+      `Working directory: ${current.host.environment?.cwd || process.cwd()}`,
+      `Home directory: ${current.host.environment?.homeDirectory || 'unknown'}`,
+      `Node.js: ${process.versions.node}`,
+      'UI-only effects are emitted as events, but user-visible responses and tool results must remain compatible with the desktop app.',
+      'Choose commands for the operating system and shell listed above. Never assume Windows or use Windows-only commands such as curl.exe on macOS/Linux; inspect available equivalents when uncertain.',
+    ].join('\n'),
   })
   const tools = selectTools(request)
   const availableNames = new Set(tools.map((tool) => tool.name))
@@ -159,7 +174,7 @@ export async function runHumanMove(request: HumanMoveRequest, emit: (event: unkn
   if (!move) throw new Error('human_move.move must be a non-empty move.')
   validateScriptedResponses(request)
   const previousEffectsLength = current.host.state.effects.length
-  const { humanSnapshot, snapshot, agentMove } = current.host.playHumanMove(move)
+  const { humanSnapshot, snapshot, agentMove } = await current.host.playHumanMove(move)
   emit({ type: 'game_event', action: 'human_move', conversationId: id, snapshot: humanSnapshot })
   if (agentMove) emit({ type: 'game_event', action: 'agent_move', conversationId: id, move: agentMove, snapshot })
   const label = gameMoveLabel(snapshot.kind, move)

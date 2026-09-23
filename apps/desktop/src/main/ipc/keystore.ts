@@ -10,6 +10,12 @@ try {
 const SERVICE = 'syntax-senpai-keys'
 let registered = false
 
+/** Read provider credentials in the main process without returning them to the renderer. */
+export async function getStoredApiKey(provider: string): Promise<string | null> {
+  if (!keytar || typeof keytar.getPassword !== 'function') throw new Error('Secure key storage is unavailable.')
+  return keytar.getPassword(SERVICE, provider)
+}
+
 export async function exportStoredApiKeys(): Promise<Record<string, string>> {
   if (!keytar || typeof keytar.findCredentials !== 'function') return {}
   const credentials = await keytar.findCredentials(SERVICE)
@@ -80,6 +86,6 @@ export function registerKeystoreIpc() {
   })
 }
 
-module.exports = { registerKeystoreIpc }
+module.exports = { registerKeystoreIpc, getStoredApiKey }
 
 export {}

@@ -117,6 +117,31 @@ export function canExecuteToolInParallel(tc: ToolCall): boolean {
 export function annotateToolResult(result: string, iteration: number, maxIterations: number): string {
   return iteration + 1 >= maxIterations ? result + '\n[runtime] Tool budget exhausted. Report what was verified and what remains.' : result
 }
+
+function limitFinalWords(text: string, maxWords = 50): string {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean)
+  if (words.length <= maxWords) return words.join(' ')
+  return `${words.slice(0, maxWords).join(' ').replace(/[.!?…,:;]+$/, '')}…`
+}
+
+function limitFinalMessages(messages: string[], maxWords = 50): string[] {
+  let remaining = maxWords
+  const limited: string[] = []
+  for (const message of messages) {
+    if (remaining <= 0) break
+    const words = String(message || '').trim().split(/\s+/).filter(Boolean)
+    if (!words.length) continue
+    if (words.length <= remaining) {
+      limited.push(words.join(' '))
+      remaining -= words.length
+      continue
+    }
+    limited.push(`${words.slice(0, remaining).join(' ').replace(/[.!?…,:;]+$/, '')}…`)
+    remaining = 0
+  }
+  return limited
+}
+
 export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<RunAgentTurnResult> {
   const scheduler = opts.scheduler || new ResourceScheduler(opts.maxParallelTools ?? 8)
   const failures = new Map<string, number>()
@@ -135,15 +160,16 @@ export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<RunAgentT
     opts.onApiRoundTrip?.(Date.now() - start, response)
     opts.onAssistantIterationEnd?.(i, response)
     const calls: ToolCall[] = response.toolCalls || []
-    opts.history.push({ id: response.id || `assistant-${Date.now()}-${i}`, role: 'assistant', content: response.content || '', toolCalls: calls.length ? calls : undefined, reasoningContent: response.reasoningContent })
-    if (!calls.length) { finalContent = response.content || ''; reachedMaxIterations = i === max; break }
+    const assistantContent = calls.length ? response.content || '' : limitFinalWords(response.content || '')
+    opts.history.push({ id: response.id || `assistant-${Date.now()}-${i}`, role: 'assistant', content: assistantContent, toolCalls: calls.length ? calls : undefined, reasoningContent: response.reasoningContent })
+    if (!calls.length) { finalContent = assistantContent; reachedMaxIterations = i === max; break }
     const append = (tc: ToolCall, result: string) => {
       opts.history.push({ id: `result-${tc.id}`, role: 'tool', toolCallId: tc.id, content: annotateToolResult(result, i, max) })
     }
     if (i === max) {
       calls.forEach(tc => append(tc, 'Not executed: tool budget exhausted.'))
       reachedMaxIterations = true
-      finalContent = response.content || 'Task incomplete: execution budget exhausted.'
+      finalContent = limitFinalWords(response.content || 'Task incomplete: execution budget exhausted.')
       break
     }
     // UI/state tools form barriers. Generic calls in a segment are scheduled together.
@@ -184,7 +210,7 @@ export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<RunAgentT
       if (!effect) { batch.push(tc); continue }
       append(tc, effect.resultContent)
       if (effect.stop) {
-        finalContent = effect.finalContent ?? response.content ?? ''
+        finalContent = limitFinalWords(effect.finalContent ?? response.content ?? '')
         if (tc.name === 'stop_response' && Array.isArray(tc.arguments?.messages)) {
           const requested = tc.arguments.messages
             .filter((message: unknown): message is string => typeof message === 'string')
@@ -192,8 +218,8 @@ export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<RunAgentT
             .filter(Boolean)
             .slice(0, 6)
           if (requested.length > 0) {
-            finalMessages = requested
-            finalContent = requested.join('\n\n')
+            finalMessages = limitFinalMessages(requested)
+            finalContent = finalMessages.join('\n\n')
           }
         }
         if (tc.name === 'stop_response' && finalContent && finalContent !== response.content) {

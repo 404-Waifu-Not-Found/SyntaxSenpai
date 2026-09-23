@@ -4,6 +4,7 @@ import {
   PhArrowUp,
   PhArrowUpRight,
   PhBookOpen,
+  PhCaretDown,
   PhBrain,
   PhChatCircle,
   PhChartBar,
@@ -11,37 +12,35 @@ import {
   PhFloppyDisk,
   PhGameController,
   PhGear,
-  PhGraduationCap,
   PhGlobe,
-  PhFolderSimple,
-  PhHammer,
   PhHeart,
-  PhLightbulb,
   PhMagnifyingGlass,
   PhMaskHappy,
+  PhCloudSun,
+  PhNewspaper,
   PhPalette,
   PhPencilSimple,
-  PhPaperclip,
+  PhPlus,
   PhPuzzlePiece,
   PhRobot,
   PhSparkle,
+  PhSpeakerHigh,
   PhUserCircle,
   PhWechatLogo,
 } from '@phosphor-icons/vue'
 import { builtInWaifus, classifySentiment, EXPRESSION_EMOJI } from '@syntax-senpai/waifu-core'
-import type { Expression } from '@syntax-senpai/waifu-core'
+import type { Expression, WaifuTtsProvider } from '@syntax-senpai/waifu-core'
 import { unwrapExport, SchemaError } from '@syntax-senpai/storage'
 import { useChatStore } from './stores/chat'
 import { useTheme } from './composables/use-theme'
 import { useI18n, formatLocalizedCost } from './composables/use-i18n'
 import { useIpc } from './composables/use-ipc'
 import { useVoice } from './composables/use-voice'
-import { loadPluginTools } from './agent-tools'
+import { loadPluginTools, VOICE_OVER_EVENT } from './agent-tools'
 import ChatBubble from './components/ChatBubble.vue'
 import SubagentPanel from './components/SubagentPanel.vue'
 import AppAvatar from './components/AppAvatar.vue'
 import Live2DAvatar from './components/Live2DAvatar.vue'
-import DesktopPetOverlay from './components/DesktopPetOverlay.vue'
 import TypingDots from './components/TypingDots.vue'
 import MiniGamePanel from './components/MiniGamePanel.vue'
 import QrPairModal from './components/QrPairModal.vue'
@@ -55,8 +54,9 @@ import { useWorkspaceStore, codingIntent } from './stores/workspace'
 import { useBrowserStore } from './stores/browser'
 import type { ActiveCodingRepo } from './types/coding-session'
 import { gameSession, applyBestAgentMove, applyGameSessionMove, closeGameSession, startGameSession } from './game/session'
-import { gameMoveLabel, type GameKind } from '@syntax-senpai/game-engine'
-import { getNewChatSuggestionKinds, type NewChatSuggestionKind } from './composables/new-chat-suggestions'
+import { gameMoveLabel, type GameKind, type GameOptions } from '@syntax-senpai/game-engine'
+import { getNewChatSuggestionKinds, type NewChatSuggestion, type NewChatSuggestionKind } from './composables/new-chat-suggestions'
+import { normalizeVoiceoverText } from './utils/assistant-output'
 
 const store = useChatStore()
 const workspace = useWorkspaceStore()
@@ -69,21 +69,156 @@ const { invoke, on } = useIpc()
 const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, setUI, DEFAULT_THEME } = useTheme()
 const { t, locale, setLocale, localeOptions } = useI18n()
 const voice = useVoice()
+let voiceOverUsedThisTurn = false
+let voiceOverPending = false
+let voiceOverTurnToken = 0
+type VoiceReplay = { text: string; waifuId: string; waifu: any }
+let voiceOverForTurn: VoiceReplay | null = null
+const voiceReplayByMessageId = ref(new Map<string, VoiceReplay>())
+function handleVoiceOverRequest(event: Event) {
+  const detail = (event as CustomEvent).detail as {
+    text?: string
+    respond?: (result: {
+      handled: boolean
+      enabled: boolean
+      playback?: Promise<{ success: boolean; error?: string }>
+    }) => void
+  } | undefined
+  const text = normalizeVoiceoverText(String(detail?.text || ''))
+  const enabled = !!text && !voiceOverUsedThisTurn && !voiceOverPending && voice.canSpeakMiniMaxClone(store.selectedWaifu)
+  if (!enabled) {
+    detail?.respond?.({ handled: true, enabled: false })
+    return
+  }
+
+  voiceOverPending = true
+  const turnToken = voiceOverTurnToken
+  const replay: VoiceReplay = { text, waifuId: store.selectedWaifuId, waifu: store.selectedWaifu }
+  const playback = voice.speakMiniMaxClone(text, replay.waifuId, replay.waifu).then((result) => {
+    if (turnToken === voiceOverTurnToken) {
+      voiceOverPending = false
+      if (result.success) {
+        voiceOverUsedThisTurn = true
+        voiceOverForTurn = replay
+      } else {
+        showToast(`MiniMax voice-over failed: ${result.error || 'No audio was played.'}`, 'error')
+      }
+    }
+    return result
+  }, (error: any) => {
+    const result = { success: false, error: error?.message || String(error) }
+    if (turnToken === voiceOverTurnToken) {
+      voiceOverPending = false
+      showToast(`MiniMax voice-over failed: ${result.error}`, 'error')
+    }
+    return result
+  })
+  detail?.respond?.({ handled: true, enabled: true, playback })
+}
+window.addEventListener(VOICE_OVER_EVENT, handleVoiceOverRequest)
+function replayVoice(messageId: string) {
+  const replay = voiceReplayByMessageId.value.get(messageId)
+  if (!replay) return
+  void voice.speakMiniMaxClone(replay.text, replay.waifuId, replay.waifu).then((result) => {
+    if (!result.success) showToast(`MiniMax voice replay failed: ${result.error || 'No audio was played.'}`, 'error')
+  }).catch((error: any) => {
+    showToast(`MiniMax voice replay failed: ${error?.message || String(error)}`, 'error')
+  })
+}
+const selectedWaifuTtsProvider = computed(() => store.selectedWaifu?.tts?.provider || 'minimax-clone')
+const selectedWaifuMiniMaxVoiceId = computed(() => store.selectedWaifu?.tts?.minimaxVoiceId || '')
+const miniMaxCloneBusy = ref(false)
+const miniMaxCloneStatus = ref('')
+const miniMaxCloneStatusOk = ref(false)
+
+async function updateSelectedWaifuTts(patch: Record<string, unknown>) {
+  const waifu = store.selectedWaifu
+  if (!waifu) throw new Error('Select a waifu before configuring its voice.')
+  const result = await invoke('waifus:update', {
+    id: waifu.id,
+    tts: { ...(waifu.tts || {}), ...patch },
+  })
+  if (!result?.success) throw new Error(result?.error || 'Could not save the waifu voice settings.')
+  await store.refreshCustomWaifus()
+}
+
+async function setSelectedWaifuTtsProvider(event: Event) {
+  const provider = (event.target as HTMLSelectElement).value as WaifuTtsProvider
+  if (!['web-speech', 'indextts', 'minimax-clone'].includes(provider)) return
+  miniMaxCloneStatus.value = ''
+  miniMaxCloneStatusOk.value = false
+  try {
+    await updateSelectedWaifuTts({ provider })
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  }
+}
+
+async function cloneSelectedWaifuVoice() {
+  const waifu = store.selectedWaifu
+  if (!waifu || miniMaxCloneBusy.value) return
+  miniMaxCloneBusy.value = true
+  miniMaxCloneStatus.value = ''
+  miniMaxCloneStatusOk.value = false
+  try {
+    const result: any = await voice.cloneMiniMaxVoice(waifu.displayName)
+    if (result?.canceled) return
+    if (!result?.success || typeof result.voiceId !== 'string') {
+      throw new Error(result?.error || 'MiniMax voice cloning failed.')
+    }
+    await updateSelectedWaifuTts({ provider: 'minimax-clone', minimaxVoiceId: result.voiceId })
+    miniMaxCloneStatus.value = `Voice cloned from ${result.fileName || 'the selected sample'} and saved for ${waifu.displayName}.`
+    miniMaxCloneStatusOk.value = true
+    showToast('MiniMax voice cloned and saved.', 'success')
+  } catch (err: any) {
+    miniMaxCloneStatus.value = err?.message || String(err)
+    miniMaxCloneStatusOk.value = false
+    showToast(miniMaxCloneStatus.value, 'error')
+  } finally {
+    miniMaxCloneBusy.value = false
+  }
+}
 
 const newChatSuggestionKinds = computed(() => getNewChatSuggestionKinds(store.userMemories))
+const newChatSuggestionCards = computed<NewChatSuggestion[]>(() => {
+  const characterName = store.selectedWaifu?.displayName || 'your character'
+  if (store.newChatSuggestions.length) {
+    return store.newChatSuggestions.map((suggestion) => ({
+      ...suggestion,
+      label: t(`chat.suggestion.${suggestion.kind}`, { name: characterName }),
+      prompt: suggestion.kind === 'game'
+        ? t('chat.suggestionPrompt.game', { name: characterName })
+        : suggestion.prompt,
+    }))
+  }
+  return newChatSuggestionKinds.value.map((kind) => ({
+    kind,
+    label: t(`chat.suggestion.${kind}`, { name: characterName }),
+    prompt: t(`chat.suggestionPrompt.${kind}`, { name: characterName }),
+  }))
+})
+const newChatSuggestionHeading = computed(() => store.userMemories.length > 0 || store.conversations.some((conversation: any) => Number(conversation.messageCount) > 0)
+  ? t('chat.suggestionsMemoryHeading')
+  : t('chat.suggestionsQuickHeading'))
 const newChatSuggestionIcons: Record<NewChatSuggestionKind, Component> = {
-  project: PhFolderSimple,
-  skill: PhGraduationCap,
-  personal: PhLightbulb,
-  build: PhHammer,
-  learn: PhBookOpen,
+  news: PhNewspaper,
+  weather: PhCloudSun,
   game: PhGameController,
 }
 
-function sendNewChatSuggestion(kind: NewChatSuggestionKind) {
+function sendNewChatSuggestion(suggestion: NewChatSuggestion) {
   if (store.isLoading) return
-  void store.sendMessage(t(`chat.suggestionPrompt.${kind}`))
+  store.inputValue = suggestion.prompt
+  void submitChatMessage()
 }
+
+watch(
+  () => [store.isSetup, store.conversationId, store.messages.length, store.selectedWaifuId] as const,
+  ([isSetup, , messageCount]) => {
+    if (isSetup && messageCount === 0) void store.ensureNewChatSuggestions()
+  },
+  { immediate: true },
+)
 
 async function handleGameUserMove(move: string) {
   if (gameSession.busy || !gameSession.snapshot) return
@@ -93,13 +228,26 @@ async function handleGameUserMove(move: string) {
     const humanSnapshot = applyGameSessionMove(move, 'human')
     // The engine owns the next move, so gameplay cannot stall on a failed or
     // missing provider tool call. The agent still comments on the result.
-    const snapshot = humanSnapshot.turn === 'agent' ? applyBestAgentMove() : humanSnapshot
+    const snapshot = humanSnapshot.turn === 'agent' ? await applyBestAgentMove() : humanSnapshot
     const label = gameMoveLabel(before.kind, move)
     const agentMoved = snapshot.moveCount > humanSnapshot.moveCount
+    const moveOwnership = agentMoved
+      ? `The user played ${label}; the agent then played ${snapshot.lastMove}. The agent's reply is the move to discuss as its own move.`
+      : `The user played ${label}; the agent did not make a reply because the game ended or it is not the agent's turn.`
+    const chessAnalysis = snapshot.chessAnalysis
+    const evaluationSummary = chessAnalysis
+      ? `Stockfish evaluation (White POV): ${chessAnalysis.evaluation.type === 'mate'
+        ? `${chessAnalysis.evaluation.value > 0 ? 'White' : 'Black'} can mate in ${Math.abs(chessAnalysis.evaluation.value)}`
+        : `${chessAnalysis.evaluation.value >= 0 ? 'White' : 'Black'} ${Math.abs(chessAnalysis.evaluation.value / 100).toFixed(2)} pawns ahead`}. ` +
+        `MultiPV lines: ${chessAnalysis.lines.map((line) => `#${line.rank} ${line.moves.slice(0, 6).join(' ')}`).join(' | ')}. ` +
+        `The engine played rank #${chessAnalysis.playedRank}${chessAnalysis.forcedMateWithinThree ? ' immediately to convert a forced mate in 3 or less' : ''}.`
+      : ''
     const displayContent = `Your move: ${label}.${agentMoved ? ` ${store.selectedWaifu?.displayName || 'The agent'} replied ${snapshot.lastMove}.` : snapshot.status !== 'playing' ? ' The match is over.' : ''}`
     await store.sendGameEvent(
       `[Minigame event] The user just played ${label} in ${before.kind}. ` +
       `The built-in engine has already replied when it was the agent's turn. ` +
+      `${moveOwnership} ` +
+      `${evaluationSummary} ` +
       `The authoritative current game state is ${JSON.stringify(snapshot)}. ` +
       `Do not invent a board or move, and do not call game_move for this turn. ` +
       `Make a brief in-character remark about the position or, if the game is over, the result.`,
@@ -230,10 +378,14 @@ let replyStartIndex = store.messages.length
 watch(
   () => store.conversationId,
   () => {
+    voiceOverTurnToken++
+    voiceOverPending = false
     visibleMessageCount.value = MESSAGE_WINDOW_INITIAL
     expandedProcessGroups.value = new Set()
     replyStartIndex = store.messages.length
     clearLive2DSpeech()
+    voiceOverForTurn = null
+    voiceReplayByMessageId.value = new Map()
   },
 )
 
@@ -247,6 +399,10 @@ watch(
   () => store.isLoading,
   (loading) => {
     if (loading) {
+      voiceOverTurnToken++
+      voiceOverUsedThisTurn = false
+      voiceOverPending = false
+      voiceOverForTurn = null
       replyStartIndex = store.messages.length
       clearLive2DSpeech()
       return
@@ -255,11 +411,20 @@ watch(
       message.role === 'assistant' && message.content && !message.isProcessStep && !message.id.startsWith('tool-'),
     )
     replyStartIndex = store.messages.length
+    const voiceReplay = voiceOverForTurn
+    voiceOverForTurn = null
+    const lastReply = replies.at(-1)
+    if (lastReply && voiceReplay) {
+      const replayByMessageId = new Map(voiceReplayByMessageId.value)
+      replayByMessageId.set(lastReply.id, voiceReplay)
+      voiceReplayByMessageId.value = replayByMessageId
+    }
     for (const reply of replies) reply.sentiment = classifySentiment(reply.content)
     const last = replies.at(-1)
+    voiceOverUsedThisTurn = false
     if (!last) return
-    const content = String(last.content)
-    voice.speak(content, last.waifuId || store.selectedWaifuId, store.selectedWaifu, last.sentiment?.expression)
+    // Speech is emitted only when the agent explicitly selects a spoken line
+    // through voice_over; never read the entire written reply or card content.
     for (const reply of replies) {
       showLive2DSpeech(reply.content, reply.sentiment?.expression || 'neutral', replies.length > 1 ? 3800 : undefined)
     }
@@ -653,6 +818,8 @@ const customWaifus = ref<CustomWaifuEntry[]>([])
 const customWaifusDirectory = ref<string>('')
 const customWaifusLoading = ref(false)
 const customWaifusError = ref<string>('')
+const failedCustomWaifuThumbnails = ref<Record<string, string>>({})
+const newWaifuAvatarPreviewFailed = ref(false)
 
 // ── Custom waifu creation form state ──
 const showWaifuCreator = ref(false)
@@ -676,6 +843,7 @@ const newWaifuAvatarHappy = ref('')
 const newWaifuAvatarExcited = ref('')
 const newWaifuAvatarThinking = ref('')
 const newWaifuAvatarIdle = ref('')
+watch(newWaifuAvatarNeutral, () => { newWaifuAvatarPreviewFailed.value = false })
 // Live2D
 const newWaifuLive2DModelPath = ref('')
 const newWaifuLive2DModelName = ref('')
@@ -734,6 +902,10 @@ function getCustomWaifuThumbnail(waifu: CustomWaifuEntry) {
     || waifu.avatar?.expressions?.excited?.uri
     || waifu.avatar?.expressions?.thinking?.uri
     || ''
+}
+
+function markCustomWaifuThumbnailFailed(id: string, uri: string) {
+  failedCustomWaifuThumbnails.value = { ...failedCustomWaifuThumbnails.value, [id]: uri }
 }
 
 async function pickCustomWaifuAvatar(target: 'neutral' | 'happy' | 'excited' | 'thinking' | 'idle') {
@@ -963,6 +1135,7 @@ async function refreshCustomWaifus() {
     const result = await invoke('waifus:list')
     if (result?.success) {
       customWaifus.value = Array.isArray(result.waifus) ? result.waifus : []
+      failedCustomWaifuThumbnails.value = {}
       customWaifusDirectory.value = result.directory || ''
     } else {
       customWaifusError.value = result?.error || 'Failed to list custom waifus'
@@ -1022,7 +1195,6 @@ async function deleteCustomWaifu(id: string) {
   }
 }
 
-const overlayWindow = ref<{ enabled: boolean }>({ enabled: false })
 const WARTHUNDER_ENABLED_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-enabled'
 const WARTHUNDER_PROVIDER_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-provider'
 const WARTHUNDER_MODEL_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-model'
@@ -1035,9 +1207,6 @@ let warThunderEventPollInFlight = false
 const handledWarThunderEvents = new Set<string>()
 const fullscreenWindow = ref<{ enabled: boolean }>({ enabled: false })
 const currentWindowBounds = ref<{ width: number; height: number } | null>(null)
-const showCompactHeaderMenu = ref(false)
-const showCompactStatusDetails = ref(false)
-const compactHeaderMenuRef = ref<HTMLElement | null>(null)
 const windowResolutionOptions = [
   { value: '800x600', label: '800 × 600' },
   { value: '1024x768', label: '1024 × 768' },
@@ -1060,7 +1229,6 @@ const currentWindowResolutionLabel = computed(() => {
 })
 
 function applyWindowPresentationState(result: any) {
-  overlayWindow.value.enabled = !!result?.overlayEnabled
   fullscreenWindow.value.enabled = !!result?.fullscreenEnabled
   if (result?.bounds && typeof result.bounds.width === 'number' && typeof result.bounds.height === 'number') {
     currentWindowBounds.value = {
@@ -1068,15 +1236,9 @@ function applyWindowPresentationState(result: any) {
       height: Math.round(result.bounds.height),
     }
   }
-  if (overlayWindow.value.enabled) sidebarOpen.value = false
-  if (!overlayWindow.value.enabled) {
-    showCompactHeaderMenu.value = false
-    showCompactStatusDetails.value = false
-  }
 }
 
-async function refreshOverlayWindowMode() {
-  loadDesktopPetPreferences()
+async function refreshWindowPresentationState() {
   try {
     const result = await invoke('window:getViewState')
     if (result?.success) {
@@ -1087,27 +1249,11 @@ async function refreshOverlayWindowMode() {
   }
 }
 
-async function toggleOverlayWindowMode() {
-  const next = !overlayWindow.value.enabled
-  const result = await invoke('window:setDisplayMode', next ? 'overlay' : 'normal')
-  if (result?.success) {
-    applyWindowPresentationState(result)
-    showToast(next ? t('toast.overlayWindowEnabled') : t('toast.overlayWindowDisabled'), 'success')
-  } else {
-    showToast(result?.error || t('toast.overlayWindowFailed'), 'error')
-  }
-}
-
-async function restoreNormalWindow() {
-  if (!overlayWindow.value.enabled) return
-  await toggleOverlayWindowMode()
-}
-
 async function syncWarThunderCopilot() {
   if (!warThunderPluginReady) return
   try {
     await invoke('plugins:execTool', 'warthunder_copilot_control', {
-      enabled: overlayWindow.value.enabled && warThunderCopilotEnabled.value,
+      enabled: warThunderCopilotEnabled.value,
       provider: warThunderCopilotProvider.value,
       model: warThunderCopilotModel.value,
     })
@@ -1117,7 +1263,7 @@ async function syncWarThunderCopilot() {
 }
 
 async function pollWarThunderEvents() {
-  if (warThunderEventPollInFlight || !warThunderPluginReady || !overlayWindow.value.enabled || !warThunderCopilotEnabled.value) return
+  if (warThunderEventPollInFlight || !warThunderPluginReady || !warThunderCopilotEnabled.value) return
   warThunderEventPollInFlight = true
   try {
     const result = await invoke('plugins:execTool', 'warthunder_copilot_status', {})
@@ -1188,13 +1334,9 @@ const warThunderCopilotModels = computed(() =>
 )
 
 watch(
-  () => [overlayWindow.value.enabled, warThunderCopilotEnabled.value, warThunderCopilotProvider.value, warThunderCopilotModel.value],
+  () => [warThunderCopilotEnabled.value, warThunderCopilotProvider.value, warThunderCopilotModel.value],
   () => void syncWarThunderCopilot(),
 )
-
-function openPetMiniGame() {
-  if (!gameSession.open) startGameSession('tictactoe', { difficulty: 'balanced' })
-}
 
 async function toggleFullscreenWindowMode() {
   const next = !fullscreenWindow.value.enabled
@@ -1577,7 +1719,7 @@ const showGomokuPanel = ref(false)
 const showFateRoulettePanel = ref(false)
 const hasEmbeddedGame = computed(() => gameSession.open || showGomokuPanel.value || showFateRoulettePanel.value)
 
-function openMiniGame(game: GameKind | 'gomoku' | 'fate-roulette') {
+async function openMiniGame(game: GameKind | 'gomoku' | 'fate-roulette', options: GameOptions = {}) {
   showGamePicker.value = false
   showGomokuPanel.value = false
   showFateRoulettePanel.value = false
@@ -1586,7 +1728,11 @@ function openMiniGame(game: GameKind | 'gomoku' | 'fate-roulette') {
     showGomokuPanel.value = game === 'gomoku'
     showFateRoulettePanel.value = game === 'fate-roulette'
   } else {
-    startGameSession(game)
+    try {
+      await startGameSession(game, options)
+    } catch (err: any) {
+      showToast(err?.message || String(err), 'error')
+    }
   }
 }
 
@@ -1611,32 +1757,23 @@ function shouldOpenFateRouletteForMessage(message: string): boolean {
   return /(命运转轮|能量轮盘|轮盘对局|轮盘游戏|玩.*轮盘|来一局.*轮盘|fate roulette)/i.test(normalized)
 }
 
-function submitChatMessage() {
+let submittingChatMessage = false
+async function submitChatMessage() {
+  if (submittingChatMessage || store.isLoading) return
+  submittingChatMessage = true
   const message = store.inputValue
-  if (shouldOpenFateRouletteForMessage(message)) openMiniGame('fate-roulette')
-  else if (shouldOpenGomokuForMessage(message)) openMiniGame('gomoku')
-  store.sendMessage(message)
+  try {
+    if (shouldOpenFateRouletteForMessage(message)) {
+      await openMiniGame('fate-roulette')
+    } else if (shouldOpenGomokuForMessage(message)) {
+      await openMiniGame('gomoku')
+    }
+    await store.sendMessage(message)
+  } finally {
+    submittingChatMessage = false
+  }
 }
 
-const desktopPetLocked = ref(false)
-const desktopPetBubbleOpacity = ref(92)
-let desktopPetPreferencesLoaded = false
-
-function loadDesktopPetPreferences() {
-  if (desktopPetPreferencesLoaded) return
-  desktopPetPreferencesLoaded = true
-  try {
-    const parsed = JSON.parse(localStorage.getItem('syntax-senpai-desktop-pet') || '{}')
-    if (typeof parsed.locked === 'boolean') desktopPetLocked.value = parsed.locked
-    if (typeof parsed.opacity === 'number') desktopPetBubbleOpacity.value = Math.min(Math.max(parsed.opacity, 0), 100)
-  } catch { /* best effort */ }
-}
-
-watch([desktopPetLocked, desktopPetBubbleOpacity], ([locked, opacity]) => {
-  try {
-    localStorage.setItem('syntax-senpai-desktop-pet', JSON.stringify({ locked, opacity }))
-  } catch { /* best effort */ }
-})
 const live2dSpeechBubble = ref('')
 let live2dSpeechTimer: number | null = null
 const live2dSpeechQueue: Array<{ text: string; expression: string; durationMs: number }> = []
@@ -1654,13 +1791,6 @@ const selectedLive2DDisplayId = ref('')
 const live2dImmersiveOpening = ref(false)
 
 const currentWaifuLive2D = computed(() => (store.selectedWaifu?.avatar as any)?.live2dModel ?? null)
-const latestAssistantMessage = computed(() => {
-  for (let index = store.messages.length - 1; index >= 0; index -= 1) {
-    const message = store.messages[index]
-    if (message.role === 'assistant' && message.content?.trim()) return message.content
-  }
-  return ''
-})
 
 function clearLive2DSpeech() {
   if (live2dSpeechTimer !== null) window.clearTimeout(live2dSpeechTimer)
@@ -2208,13 +2338,16 @@ watch(
     }
     if (tab === 'general') {
 
-      refreshOverlayWindowMode()
+      refreshWindowPresentationState()
     }
   },
 )
 const showAgent = ref(false)
 const showModelPicker = ref(false)
+const showComposerMenu = ref(false)
+const showAgentAccessMenu = ref(false)
 const providerModels = ref<Record<string, Array<{ id: string; displayName: string }>>>({})
+const providerSettingsSaving = ref(false)
 type AgentMode = 'auto' | 'full'
 const agentMode = computed({
   get: () => store.agentMode as AgentMode,
@@ -2327,6 +2460,10 @@ const currentProviderModels = computed(() =>
   [],
 )
 
+const currentModelDisplayName = computed(() =>
+  currentProviderModels.value.find((model) => model.id === store.selectedModel)?.displayName || store.selectedModel,
+)
+
 const contextWindowSize = computed(() =>
   MODEL_CONTEXT_WINDOWS[store.selectedModel] ?? 0,
 )
@@ -2389,58 +2526,28 @@ const affectionAccentStyle = computed(() => {
 })
 
 const affectionMeterClass = computed(() =>
-  overlayWindow.value.enabled
-    ? (locale.value === 'en' ? 'w-38' : 'w-34')
-    : (locale.value === 'en' ? 'w-70' : 'w-52'),
+  locale.value === 'en' ? 'w-70' : 'w-52',
 )
 
-const compactChatLayout = computed(() => overlayWindow.value.enabled)
+const compactChatLayout = false
 const hasStatusStrip = computed(() =>
-  store.usageTotals.turns > 0 || store.activeTodoList.length > 0 || (contextWindowSize.value > 0 && store.messages.length > 0),
+  store.usageTotals.turns > 0 || store.activeTodoList.length > 0,
 )
-const compactStatusSummary = computed(() => {
-  const parts: string[] = []
-  if (store.usageTotals.turns > 0) parts.push(`${store.usageTotals.turns} turns`)
-  if (contextWindowSize.value > 0 && store.messages.length > 0) parts.push(`ctx ${contextUsagePercent.value}%`)
-  if (store.activeTodoList.length > 0) parts.push(`${store.activeTodoList.length} todo`)
-  return parts.join(' · ')
-})
-
-function toggleCompactHeaderMenu() {
-  showCompactHeaderMenu.value = !showCompactHeaderMenu.value
-}
-
-function toggleCompactStatusDetails() {
-  showCompactStatusDetails.value = !showCompactStatusDetails.value
-}
 
 function openAgentPanel() {
-  showCompactHeaderMenu.value = false
   showAgent.value = true
 }
 
 function openMemoryPanel() {
-  showCompactHeaderMenu.value = false
   showMemory.value = true
 }
 
 function openSettingsPanel() {
-  showCompactHeaderMenu.value = false
   showSettings.value = true
 }
 
-function onGlobalPointerDown(e: PointerEvent) {
-  if (!showCompactHeaderMenu.value) return
-  const target = e.target as Node | null
-  if (compactHeaderMenuRef.value && target && !compactHeaderMenuRef.value.contains(target)) {
-    showCompactHeaderMenu.value = false
-  }
-}
-
 const appShellStyle = computed(() => ({
-  background: overlayWindow.value.enabled
-    ? 'transparent'
-    : `linear-gradient(135deg, ${theme.value.colors.bg}, ${theme.value.colors.surface})`,
+  background: `linear-gradient(135deg, ${theme.value.colors.bg}, ${theme.value.colors.surface})`,
   color: theme.value.colors.fg,
 }))
 
@@ -2541,6 +2648,7 @@ const emptyStateGlowStyle = computed(() => {
 })
 
 const telemetryHistory = computed(() => [...store.apiTelemetryHistory].reverse())
+const telemetryRecentHistory = computed(() => [...telemetryHistory.value].reverse().slice(0, 12))
 
 const telemetryStats = computed(() => {
   const history = store.apiTelemetryHistory
@@ -2717,8 +2825,6 @@ function onGlobalKeydown(e: KeyboardEvent) {
 
   // Esc closes the topmost modal.
   if (e.key === 'Escape') {
-    if (showCompactHeaderMenu.value) { showCompactHeaderMenu.value = false; e.preventDefault(); return }
-    if (showCompactStatusDetails.value) { showCompactStatusDetails.value = false; e.preventDefault(); return }
     if (showRenameConversationModal.value) { closeRenameConversationModal(); e.preventDefault(); return }
     if (showShortcuts.value) { showShortcuts.value = false; e.preventDefault(); return }
     if (showGamePicker.value) { showGamePicker.value = false; e.preventDefault(); return }
@@ -2727,6 +2833,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
     if (showSettings.value) { showSettings.value = false; e.preventDefault(); return }
     if (showAgent.value) { showAgent.value = false; e.preventDefault(); return }
     if (showModelPicker.value) { showModelPicker.value = false; e.preventDefault(); return }
+    if (showComposerMenu.value || showAgentAccessMenu.value) { showComposerMenu.value = false; showAgentAccessMenu.value = false; e.preventDefault(); return }
     if (showMemory.value) { showMemory.value = false; e.preventDefault(); return }
     if (showQrPair.value) { showQrPair.value = false; e.preventDefault(); return }
   }
@@ -2741,7 +2848,7 @@ onMounted(() => {
     store.loadSetup()
     await store.hydrateProviderConfig()
     await loadProviderModels(store.selectedProvider, store.apiKey)
-    await refreshOverlayWindowMode()
+      await refreshWindowPresentationState()
     // Hydrate user-authored waifus so they appear in pickers from the
     // first paint, not just after someone opens Settings → Waifus.
     store.refreshCustomWaifus()
@@ -2827,7 +2934,6 @@ onMounted(() => {
     if (skillImporting.value) skillImportStatus.value = msg
   })
   window.addEventListener('keydown', onGlobalKeydown)
-  window.addEventListener('pointerdown', onGlobalPointerDown)
   window.addEventListener('pointermove', updateLive2DPanelPointer)
   window.addEventListener('pointerup', endLive2DPanelPointer)
   window.addEventListener('pointercancel', endLive2DPanelPointer)
@@ -2842,6 +2948,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener(VOICE_OVER_EVENT, handleVoiceOverRequest)
   clearLive2DSpeech()
   removeMobileChatListener?.()
   removeWechatInboundListener?.()
@@ -2855,7 +2962,6 @@ onUnmounted(() => {
   window.removeEventListener('app:tool-proposed', onAppToolProposed as EventListener)
   window.removeEventListener('app-toast', onAppToast as EventListener)
   window.removeEventListener('keydown', onGlobalKeydown)
-  window.removeEventListener('pointerdown', onGlobalPointerDown)
   window.removeEventListener('pointermove', updateLive2DPanelPointer)
   window.removeEventListener('pointerup', endLive2DPanelPointer)
   window.removeEventListener('pointercancel', endLive2DPanelPointer)
@@ -3052,6 +3158,43 @@ async function finalizeSetup(apiKeyValue: string) {
     showSettings.value = false
   } catch (err: any) {
     showToast((err?.message || t('toast.exportFailed')), 'error')
+  }
+}
+
+async function saveProviderSettings() {
+  if (providerSettingsSaving.value) return
+  providerSettingsSaving.value = true
+  try {
+    const provider = store.selectedProvider
+    const apiKey = store.apiKey.trim()
+    if (providerRequiresApiKey(provider) && !apiKey) {
+      throw new Error(t('settings.apiKeyRequired'))
+    }
+    if (apiKey) await store.saveApiKey(apiKey)
+
+    const preferences = JSON.parse(localStorage.getItem('syntax-senpai-provider-preferences') || '{}')
+    preferences[provider] = {
+      ...(preferences[provider] || {}),
+      model: store.selectedModel,
+      ...(provider === 'ollama' ? { baseUrl: ollamaBaseUrl.value.trim() } : {}),
+    }
+    localStorage.setItem('syntax-senpai-provider-preferences', JSON.stringify(preferences))
+
+    const savedSetup = localStorage.getItem('syntax-senpai-setup')
+    if (savedSetup) {
+      const setup = JSON.parse(savedSetup)
+      localStorage.setItem('syntax-senpai-setup', JSON.stringify({
+        ...setup,
+        provider,
+        model: store.selectedModel,
+      }))
+    }
+
+    showToast(t('toast.providerSettingsSaved'), 'success')
+  } catch (err: any) {
+    showToast(err?.message || String(err), 'error')
+  } finally {
+    providerSettingsSaving.value = false
   }
 }
 
@@ -3343,12 +3486,6 @@ async function handleImportData() {
     if (payload?.settings?.executionPolicy?.version === 2) store.setAutoDecideActions(payload.settings.executionPolicy.autoDecideActions === true)
     if (typeof payload?.settings?.webSearchEnabled === 'boolean') {
       store.setWebSearchEnabled(payload.settings.webSearchEnabled)
-    }
-    if (typeof payload?.settings?.overlayWindowEnabled === 'boolean') {
-      const overlayResult = await invoke('window:setOverlayMode', payload.settings.overlayWindowEnabled)
-      if (overlayResult?.success) {
-        overlayWindow.value.enabled = !!overlayResult.enabled
-      }
     }
     if (typeof payload?.settings?.proactiveChatEnabled === 'boolean') {
       store.setProactiveChatEnabled(payload.settings.proactiveChatEnabled)
@@ -3845,32 +3982,7 @@ async function handleImportData() {
                 </label>
               </div>
               <p class="mt-3 text-[11px] text-neutral-500">
-                当前状态：{{ overlayWindow.enabled && warThunderCopilotEnabled ? '桌宠模式下监听中' : '未监听' }}
-              </p>
-            </div>
-
-            <div class="settings-card mt-4">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <div class="text-sm font-semibold text-neutral-200">{{ t('settings.overlayWindow') }}</div>
-                  <p class="mt-1 text-xs text-neutral-400">
-                    {{ t('settings.overlayWindowDescription') }}
-                  </p>
-                </div>
-                <button
-                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
-                  :style="{ background: overlayWindow.enabled ? 'linear-gradient(90deg,#22c55e,#06b6d4)' : '#404040' }"
-                  :aria-label="`${overlayWindow.enabled ? 'Disable' : 'Enable'} overlay window`"
-                  @click="toggleOverlayWindowMode"
-                >
-                  <span
-                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
-                    :style="{ transform: overlayWindow.enabled ? 'translateX(20px)' : 'translateX(0)' }"
-                  />
-                </button>
-              </div>
-              <p class="mt-4 text-[11px] text-neutral-500">
-                {{ t('settings.overlayWindowHint') }}
+                当前状态：{{ warThunderCopilotEnabled ? '监听中' : '未监听' }}
               </p>
             </div>
 
@@ -4249,6 +4361,16 @@ async function handleImportData() {
               >
             </div>
 
+            <div class="mb-6">
+              <button
+                class="btn-primary w-full"
+                :disabled="providerSettingsSaving"
+                @click="saveProviderSettings"
+              >
+                {{ providerSettingsSaving ? t('settings.saving') : t('settings.saveProviderSettings') }}
+              </button>
+            </div>
+
             <div v-if="store.selectedProvider === 'ollama'" class="mb-6">
               <label class="block text-sm font-semibold text-neutral-200 mb-2">Ollama API Base URL</label>
               <input
@@ -4319,7 +4441,10 @@ async function handleImportData() {
                 Export Audit Log (.jsonl)
               </button>
             </div>
+          </div>
 
+          <!-- Theme Tab -->
+          <div v-if="settingsTab === 'theme'">
             <!-- Color Presets -->
             <div class="settings-card">
               <div class="mb-3">
@@ -4545,6 +4670,129 @@ async function handleImportData() {
             </div>
           </div>
 
+          <!-- Metrics Tab -->
+          <div v-if="settingsTab === 'metrics'">
+            <div class="settings-card">
+              <div class="mb-4">
+                <h3 class="text-sm font-bold text-white">{{ t('settings.metricsTitle') }}</h3>
+                <p class="text-xs text-neutral-400">{{ t('settings.metricsDescription') }}</p>
+              </div>
+
+              <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                <div class="rounded-xl border border-neutral-700/50 bg-black/15 p-3">
+                  <div class="text-[11px] text-neutral-400">{{ t('settings.metricsLatest') }}</div>
+                  <div class="mt-1 text-lg font-semibold text-white">
+                    {{ formatDuration(telemetryStats.latest).value }}<span class="ml-1 text-xs text-neutral-400">{{ formatDuration(telemetryStats.latest).unit }}</span>
+                  </div>
+                </div>
+                <div class="rounded-xl border border-neutral-700/50 bg-black/15 p-3">
+                  <div class="text-[11px] text-neutral-400">{{ t('settings.metricsAverage') }}</div>
+                  <div class="mt-1 text-lg font-semibold text-white">
+                    {{ formatDuration(telemetryStats.average).value }}<span class="ml-1 text-xs text-neutral-400">{{ formatDuration(telemetryStats.average).unit }}</span>
+                  </div>
+                </div>
+                <div class="rounded-xl border border-neutral-700/50 bg-black/15 p-3">
+                  <div class="text-[11px] text-neutral-400">{{ t('settings.metricsP95') }}</div>
+                  <div class="mt-1 text-lg font-semibold text-white">
+                    {{ formatDuration(telemetryStats.p95).value }}<span class="ml-1 text-xs text-neutral-400">{{ formatDuration(telemetryStats.p95).unit }}</span>
+                  </div>
+                </div>
+                <div class="rounded-xl border border-neutral-700/50 bg-black/15 p-3">
+                  <div class="text-[11px] text-neutral-400">{{ t('settings.metricsAlerts') }}</div>
+                  <div class="mt-1 text-lg font-semibold" :class="telemetryStats.alertCount ? 'text-amber-300' : 'text-white'">
+                    {{ telemetryStats.alertCount }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <h3 class="mb-3 text-sm font-bold text-white">{{ t('settings.metricsHistory') }}</h3>
+              <p v-if="telemetryHistory.length === 0" class="py-5 text-center text-xs text-neutral-400">
+                {{ t('settings.metricsEmpty') }}
+              </p>
+              <template v-else>
+                <div class="flex h-32 items-end gap-1 rounded-lg border border-neutral-700/40 bg-black/15 px-3 pt-3 pb-2" aria-label="Recent response times">
+                  <div
+                    v-for="sample in telemetryHistory.slice(-24)"
+                    :key="sample.id"
+                    class="flex h-full min-w-0 flex-1 items-end"
+                    :title="`${sample.provider} · ${sample.model}: ${formatDuration(sample.totalMs).value}${formatDuration(sample.totalMs).unit}`"
+                  >
+                    <div
+                      class="w-full rounded-t-sm"
+                      :class="sample.alert ? 'bg-amber-400' : 'bg-primary-500'"
+                      :style="{ height: telemetryBarHeight(sample.totalMs) }"
+                    />
+                  </div>
+                </div>
+                <div class="mt-3 divide-y divide-white/5">
+                  <div v-for="sample in telemetryRecentHistory" :key="sample.id" class="flex items-center gap-3 py-2 text-xs">
+                    <span class="min-w-0 flex-1 truncate text-neutral-300">{{ sample.provider }} · {{ sample.model }}</span>
+                    <span class="shrink-0 text-neutral-500">{{ sample.roundTrips }} {{ t('settings.apiCalls') }}</span>
+                    <span class="shrink-0 font-mono" :class="sample.alert ? 'text-amber-300' : 'text-neutral-300'">
+                      {{ formatDuration(sample.totalMs).value }}{{ formatDuration(sample.totalMs).unit }}
+                    </span>
+                    <time class="hidden shrink-0 text-neutral-500 sm:block">{{ new Date(sample.measuredAt).toLocaleString() }}</time>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <div class="settings-card">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <h3 class="text-sm font-bold text-white">{{ t('settings.runtimeLimits') }}</h3>
+                  <p class="mt-1 text-xs text-neutral-400">{{ t('settings.maxIterationsDescription') }}</p>
+                </div>
+                <button
+                  class="relative h-6 w-11 shrink-0 rounded-full transition-colors"
+                  :class="store.enableTimeoutsAndIterationCaps ? 'bg-primary-500' : 'bg-neutral-700'"
+                  :aria-label="t('settings.runtimeLimits')"
+                  :aria-pressed="store.enableTimeoutsAndIterationCaps"
+                  @click="store.setEnableTimeoutsAndIterationCaps(!store.enableTimeoutsAndIterationCaps)"
+                >
+                  <span class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform" :class="store.enableTimeoutsAndIterationCaps ? 'translate-x-5' : ''" />
+                </button>
+              </div>
+
+              <div class="mt-4 grid gap-4 md:grid-cols-2" :class="!store.enableTimeoutsAndIterationCaps && 'opacity-50'">
+                <label class="block text-xs text-neutral-300">
+                  <span class="flex items-center justify-between gap-2">
+                    <span>{{ t('settings.maxIterations') }}</span>
+                    <span class="font-mono text-neutral-400">{{ store.maxToolIterations }}</span>
+                  </span>
+                  <input
+                    type="range"
+                    min="1"
+                    max="24"
+                    :value="store.maxToolIterations"
+                    :disabled="!store.enableTimeoutsAndIterationCaps"
+                    class="mt-2 w-full accent-primary-500"
+                    @input="store.setMaxToolIterations(Number(($event.target as HTMLInputElement).value))"
+                  >
+                </label>
+                <label class="block text-xs text-neutral-300">
+                  <span class="flex items-center justify-between gap-2">
+                    <span>{{ t('settings.metricsThreshold') }}</span>
+                    <span class="font-mono text-neutral-400">{{ store.apiSpikeThresholdMs }} ms</span>
+                  </span>
+                  <input
+                    type="range"
+                    min="250"
+                    max="60000"
+                    step="250"
+                    :value="store.apiSpikeThresholdMs"
+                    :disabled="!store.enableTimeoutsAndIterationCaps"
+                    class="mt-2 w-full accent-primary-500"
+                    @input="store.setApiSpikeThresholdMs(Number(($event.target as HTMLInputElement).value))"
+                  >
+                  <span class="mt-1 block text-[10px] text-neutral-500">{{ t('settings.responseThresholdDescription') }}</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
           <!-- Interface Tab: density, radius, blur, petals -->
           <div v-if="settingsTab === 'interface'">
             <div class="settings-card">
@@ -4661,7 +4909,7 @@ async function handleImportData() {
               <div class="flex items-center justify-between mb-1">
                 <div>
                   <h3 class="text-sm font-bold text-white">Waifu voice (TTS)</h3>
-                  <p class="text-xs text-neutral-400">Reads assistant replies aloud using a per-waifu voice profile.</p>
+                  <p class="text-xs text-neutral-400">Speaks the short, natural line the assistant selects, using the selected waifu's voice.</p>
                 </div>
                 <button
                   aria-label="Toggle waifu voice"
@@ -4678,6 +4926,35 @@ async function handleImportData() {
               <p v-if="voice.enabled.value && voice.voices.value.length === 0" class="text-xs text-amber-400 mt-2">
                 No voices are installed on this system. Install a system voice pack or leave this off.
               </p>
+              <label class="block mt-4 text-xs font-semibold text-neutral-300" for="waifu-tts-provider">Voice engine</label>
+              <select
+                id="waifu-tts-provider"
+                class="w-full mt-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100"
+                :value="selectedWaifuTtsProvider"
+                @change="setSelectedWaifuTtsProvider"
+              >
+                <option value="web-speech">System voice</option>
+                <option value="indextts">IndexTTS</option>
+                <option value="minimax-clone">MiniMax CN cloned voice</option>
+              </select>
+              <div v-if="selectedWaifuTtsProvider === 'minimax-clone'" class="mt-3 rounded-lg border border-neutral-700/70 bg-black/15 p-3">
+                <p class="text-xs text-neutral-300">
+                  Choose a clean MP3, M4A, or WAV sample (10 seconds–5 minutes, up to 20 MB). It will be uploaded to MiniMax CN to create this waifu's voice. A MiniMax CN key must be saved in AI provider settings.
+                </p>
+                <button
+                  class="btn-secondary w-full mt-3"
+                  :disabled="miniMaxCloneBusy || !store.selectedWaifu"
+                  @click="cloneSelectedWaifuVoice"
+                >
+                  {{ miniMaxCloneBusy ? 'Uploading and cloning…' : selectedWaifuMiniMaxVoiceId ? 'Replace cloned voice…' : 'Clone voice from audio…' }}
+                </button>
+                <p v-if="selectedWaifuMiniMaxVoiceId" class="mt-2 text-[11px] text-neutral-500 break-all">
+                  Voice ID: {{ selectedWaifuMiniMaxVoiceId }}
+                </p>
+                <p v-if="miniMaxCloneStatus" class="mt-2 text-xs" :class="miniMaxCloneStatusOk ? 'text-emerald-300' : 'text-red-300'">
+                  {{ miniMaxCloneStatus }}
+                </p>
+              </div>
             </div>
 
             <div class="flex gap-2">
@@ -5142,7 +5419,13 @@ async function handleImportData() {
                     <p class="text-xs font-semibold text-neutral-400 mb-2">Preview</p>
                     <div class="flex items-center gap-3">
                       <div class="w-10 h-10 rounded-full overflow-hidden bg-gradient-to-br from-primary-500 to-accent-500 flex items-center justify-center text-sm font-bold text-white shrink-0">
-                        <img v-if="newWaifuAvatarNeutral" :src="newWaifuAvatarNeutral" alt="Waifu preview avatar" class="w-full h-full object-cover" />
+                        <img
+                          v-if="newWaifuAvatarNeutral && !newWaifuAvatarPreviewFailed"
+                          :src="newWaifuAvatarNeutral"
+                          alt="Waifu preview avatar"
+                          class="w-full h-full object-cover"
+                          @error="newWaifuAvatarPreviewFailed = true"
+                        >
                         <span v-else>{{ (newWaifuDisplayName || '?')[0] }}</span>
                       </div>
                       <div class="flex-1 min-w-0">
@@ -5215,7 +5498,13 @@ async function handleImportData() {
                 >
                   <div class="min-w-0 flex items-start gap-3 flex-1">
                     <div class="w-10 h-10 rounded-full overflow-hidden bg-gradient-to-br from-primary-500/50 to-accent-500/40 flex items-center justify-center text-sm font-bold text-white shrink-0">
-                      <img v-if="getCustomWaifuThumbnail(waifu)" :src="getCustomWaifuThumbnail(waifu)" :alt="`${waifu.displayName || waifu.name || waifu.id} avatar`" class="w-full h-full object-cover" />
+                      <img
+                        v-if="getCustomWaifuThumbnail(waifu) && failedCustomWaifuThumbnails[waifu.id] !== getCustomWaifuThumbnail(waifu)"
+                        :src="getCustomWaifuThumbnail(waifu)"
+                        :alt="`${waifu.displayName || waifu.name || waifu.id} avatar`"
+                        class="w-full h-full object-cover"
+                        @error="markCustomWaifuThumbnailFailed(waifu.id, getCustomWaifuThumbnail(waifu))"
+                      >
                       <span v-else>{{ (waifu.displayName || waifu.name || waifu.id || '?')[0] }}</span>
                     </div>
                     <div class="min-w-0">
@@ -5271,7 +5560,7 @@ async function handleImportData() {
               <div class="mb-3">
                 <h3 class="text-sm font-bold text-white">Live2D resolution</h3>
                 <p class="text-xs text-neutral-400">
-                  Choose the floating avatar window size. This changes the Live2D canvas resolution; character scale and position stay separate.
+                Choose the Live2D display canvas size. Character scale and position stay separate.
                 </p>
               </div>
               <select
@@ -5288,14 +5577,9 @@ async function handleImportData() {
                   {{ option.label }}
                 </option>
               </select>
-              <div class="mt-3 flex gap-2">
-                <button class="btn-secondary flex-1 text-xs" @click="resetLive2DPanelLayout">
-                  Reset Live2D layout
-                </button>
-                <button class="btn-secondary flex-1 text-xs" @click="toggleOverlayWindowMode">
-                  Show avatar panel
-                </button>
-              </div>
+              <button class="btn-secondary mt-3 w-full text-xs" @click="resetLive2DPanelLayout">
+                Reset Live2D layout
+              </button>
             </div>
 
             <div class="settings-card mb-3">
@@ -5985,18 +6269,7 @@ async function handleImportData() {
             </div>
           </div>
         </div>
-        <div ref="compactHeaderMenuRef" :class="['flex items-center relative', compactChatLayout ? 'gap-1.5 overlay-no-drag' : 'gap-1']">
-          <template v-if="!compactChatLayout">
-          <button
-            v-if="currentWaifuLive2D"
-            class="btn-ghost p-2"
-            :style="ghostButtonStyle"
-            :title="overlayWindow.enabled ? 'Restore normal window' : 'Open desktop pet'"
-            :aria-label="overlayWindow.enabled ? 'Restore normal window' : 'Open desktop pet'"
-            @click="toggleOverlayWindowMode"
-          >
-            <span class="text-xs font-bold">宠</span>
-          </button>
+        <div class="flex items-center relative gap-1">
           <button
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
@@ -6026,6 +6299,17 @@ async function handleImportData() {
             <PhGameController :size="18" weight="regular" aria-hidden="true" />
           </button>
           <button
+            v-if="currentWaifuLive2D?.modelJsonPath"
+            :class="['btn-ghost p-2', showLive2DPanel ? 'bg-white/10' : '']"
+            :style="ghostButtonStyle"
+            :title="showLive2DPanel ? 'Hide Live2D avatar' : 'Show Live2D avatar'"
+            :aria-label="showLive2DPanel ? 'Hide Live2D avatar' : 'Show Live2D avatar'"
+            :aria-pressed="showLive2DPanel"
+            @click="showLive2DPanel = !showLive2DPanel"
+          >
+            <PhMaskHappy :size="18" weight="regular" aria-hidden="true" />
+          </button>
+          <button
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             title="AI Memory"
@@ -6043,31 +6327,11 @@ async function handleImportData() {
           >
             <PhGear :size="18" weight="regular" aria-hidden="true" />
           </button>
-          </template>
         </div>
       </div>
 
       <!-- Usage + todo status strip (only when there's something to show) -->
-      <div
-        v-if="hasStatusStrip"
-        :class="[
-          compactChatLayout
-            ? 'px-3 py-1.5 border-b border-white/5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-neutral-400'
-            : 'px-4 py-2 border-b border-white/5 flex items-center gap-4 text-[11px] text-neutral-400',
-        ]"
-      >
-        <template v-if="compactChatLayout && !showCompactStatusDetails">
-          <button
-            class="compact-status-pill"
-            :title="compactStatusSummary"
-            @click="toggleCompactStatusDetails"
-          >
-            <span class="font-semibold text-neutral-200">Status</span>
-            <span class="truncate">{{ compactStatusSummary }}</span>
-            <span class="text-neutral-500">▾</span>
-          </button>
-        </template>
-        <template v-else>
+      <div v-if="hasStatusStrip" class="px-4 py-2 border-b border-white/5 flex items-center gap-4 text-[11px] text-neutral-400">
         <div v-if="store.usageTotals.turns > 0" :class="['font-mono', compactChatLayout ? 'flex items-center gap-2' : 'flex items-center gap-3']">
           <span :title="t('usage.promptTokens')">
             ↑ {{ store.usageTotals.promptTokens.toLocaleString(bcp47Locale(locale)) }}
@@ -6079,23 +6343,6 @@ async function handleImportData() {
             ≈ {{ store.usageTotals.costUnpriced && store.usageTotals.costUsd === 0
                    ? '—'
                    : formatLocalizedCost(store.usageTotals.costUsd, locale) }}
-          </span>
-        </div>
-        <div
-          v-if="contextWindowSize > 0 && store.messages.length > 0"
-          :class="['flex items-center gap-2', compactChatLayout ? '' : 'ml-auto']"
-          :title="`~${estimatedTokensUsed.toLocaleString()} / ${contextWindowSize.toLocaleString()} tokens (estimated)`"
-        >
-          <span class="font-mono">ctx</span>
-          <div :class="[compactChatLayout ? 'w-18 h-1.5' : 'w-24 h-1.5', 'rounded-full bg-neutral-700/50 overflow-hidden']">
-            <div
-              class="h-full rounded-full transition-all duration-500"
-              :class="contextUsagePercent >= 90 ? 'bg-red-400' : contextUsagePercent >= 70 ? 'bg-amber-400' : 'bg-emerald-500/70'"
-              :style="{ width: contextUsagePercent + '%' }"
-            />
-          </div>
-          <span :class="contextUsagePercent >= 90 ? 'text-red-400' : contextUsagePercent >= 70 ? 'text-amber-400' : ''">
-            {{ contextUsagePercent }}%
           </span>
         </div>
         <div v-if="store.activeTodoList.length > 0" :class="[compactChatLayout ? 'w-full flex flex-wrap gap-x-2 gap-y-1' : 'flex-1 flex flex-wrap gap-x-3 gap-y-1']">
@@ -6113,15 +6360,6 @@ async function handleImportData() {
             <span>{{ item.text }}</span>
           </span>
         </div>
-        <button
-          v-if="compactChatLayout"
-          class="compact-status-collapse-btn"
-          aria-label="Collapse compact status details"
-          @click="toggleCompactStatusDetails"
-        >
-          ✕
-        </button>
-        </template>
       </div>
 
       <div v-if="showGamePicker" class="game-picker-strip" aria-label="Choose a minigame">
@@ -6163,19 +6401,19 @@ async function handleImportData() {
           </p>
           <div class="new-chat-suggestions" :class="{ 'new-chat-suggestions-compact': compactChatLayout }">
             <p class="new-chat-suggestions-heading">
-              {{ store.userMemories.length ? t('chat.suggestionsMemoryHeading') : t('chat.suggestionsQuickHeading') }}
+              {{ newChatSuggestionHeading }}
             </p>
             <div class="new-chat-suggestions-grid">
               <button
-                v-for="kind in newChatSuggestionKinds"
-                :key="kind"
+                v-for="(suggestion, index) in newChatSuggestionCards"
+                :key="`${suggestion.kind}-${index}`"
                 type="button"
                 class="new-chat-suggestion"
                 :disabled="store.isLoading"
-                @click="sendNewChatSuggestion(kind)"
+                @click="sendNewChatSuggestion(suggestion)"
               >
-                <component :is="newChatSuggestionIcons[kind]" :size="18" weight="regular" aria-hidden="true" />
-                <span>{{ t(`chat.suggestion.${kind}`) }}</span>
+                <component :is="newChatSuggestionIcons[suggestion.kind]" :size="18" weight="regular" aria-hidden="true" />
+                <span>{{ suggestion.label }}</span>
                 <PhArrowUpRight :size="14" class="new-chat-suggestion-arrow" aria-hidden="true" />
               </button>
             </div>
@@ -6285,7 +6523,6 @@ async function handleImportData() {
                     <ChatBubble
                       role="assistant"
                       :content="step.content"
-                      :show-copy="false"
                     />
                     <SubagentPanel
                       v-if="step.subagents && step.subagents.length > 0"
@@ -6300,9 +6537,7 @@ async function handleImportData() {
                 :content="group.msg.content"
                 :display-content="group.msg.displayContent"
                 :source="group.msg.source"
-                :timestamp="group.msg.timestamp"
                 :recent="group.msg.id === store.recentMessageId"
-                :show-copy="group.msg.role === 'assistant'"
               />
               <SubagentPanel
                 v-if="group.msg.subagents && group.msg.subagents.length > 0"
@@ -6336,6 +6571,17 @@ async function handleImportData() {
                   @click="store.regenerateFromMessage(group.msg.id)"
                 >
                   {{ t('message.regenerate') }}
+                </button>
+                <button
+                  v-if="voiceReplayByMessageId.has(group.msg.id)"
+                  type="button"
+                  :class="[compactChatLayout ? 'text-[10px] text-neutral-500 hover:text-primary-300 transition-colors inline-flex items-center gap-1' : 'text-[11px] text-neutral-500 hover:text-primary-300 transition-colors inline-flex items-center gap-1']"
+                  title="Replay spoken audio"
+                  aria-label="Replay spoken audio"
+                  @click="replayVoice(group.msg.id)"
+                >
+                  <PhSpeakerHigh :size="14" weight="regular" aria-hidden="true" />
+                  Replay voice
                 </button>
                 <button
                   :class="[compactChatLayout ? 'text-[10px] text-neutral-500 hover:text-red-400 transition-colors' : 'text-[11px] text-neutral-500 hover:text-red-400 transition-colors']"
@@ -6373,11 +6619,11 @@ async function handleImportData() {
       <div
         :class="[
           'composer-footer relative',
-          compactChatLayout ? 'px-3 pt-2.5 pb-3' : 'px-4 pt-3 pb-4',
+          compactChatLayout ? 'px-3 pt-2.5 pb-3' : 'chat-composer-footer pt-3 pb-4',
           !startupAnimDone && appReady ? 'app-slide-in-bottom' : '',
           !appReady ? 'opacity-0' : '',
         ]"
-        :style="secondaryPanelStyle"
+        :style="compactChatLayout ? secondaryPanelStyle : undefined"
         @dragover.prevent="isDraggingFiles = true"
         @dragleave.prevent="isDraggingFiles = false"
         @drop.prevent="handleFileDrop"
@@ -6389,11 +6635,6 @@ async function handleImportData() {
           {{ t('input.dropHint') }}
         </div>
 
-        <!-- Coding-mode pill -->
-        <div v-if="!compactChatLayout" class="flex items-center gap-2 mb-2 text-xs">
-          <button v-for="m in (['auto','chat','code'] as const)" :key="m" class="px-2 py-1 rounded" :class="workspace.mode === m ? 'bg-primary-500/20 text-primary-200' : 'text-neutral-500'" @click="workspace.setMode(m)">{{ m === 'auto' ? 'Auto' : m === 'chat' ? 'Chat' : 'Code' }}</button>
-          <button class="ml-auto text-neutral-400" @click="workspace.open = !workspace.open">Workspace {{ workspace.open ? '›' : '‹' }}</button>
-        </div>
         <div v-if="store.activeCodingRepo && !compactChatLayout" :class="[compactChatLayout ? 'flex flex-wrap items-center gap-1.5 mb-2' : 'flex items-center gap-2 mb-2']">
           <button
             :class="[
@@ -6506,6 +6747,7 @@ async function handleImportData() {
               v-model="store.inputValue"
               :placeholder="t('chat.inputPlaceholder')"
               :aria-label="t('chat.inputPlaceholder')"
+              aria-describedby="chat-input-hint"
               :disabled="store.isLoading"
               rows="1"
               class="composer-input compact-chat-input w-full resize-none text-sm leading-6 disabled:opacity-50"
@@ -6516,39 +6758,132 @@ async function handleImportData() {
             />
           </div>
           <div class="composer-toolbar">
-            <button
-              type="button"
-              class="composer-tool-button"
-              :title="t('input.attachImage')"
-              :aria-label="t('input.attachImage')"
-              :disabled="store.isLoading"
-              @click="fileInputRef?.click()"
-            >
-              <PhPaperclip :size="18" aria-hidden="true" />
-            </button>
-            <span class="composer-hint">{{ t('chat.inputHint') }}</span>
-            <button
-              v-if="store.isLoading"
-              type="button"
-              class="composer-send-button composer-stop-button"
-              :aria-label="t('chat.stop')"
-              :title="t('chat.stop')"
-              @click="store.stopStream()"
-            >
-              <span aria-hidden="true" class="inline-block w-2.5 h-2.5 bg-current rounded-sm" />
-            </button>
-            <button
-              v-else
-              type="button"
-              class="composer-send-button"
-              :style="primaryButtonStyle"
-              :aria-label="t('chat.send')"
-              :title="t('chat.send')"
-              :disabled="!store.inputValue.trim() && store.pendingAttachments.length === 0"
-              @click="submitChatMessage"
-            >
-              <PhArrowUp :size="19" weight="bold" aria-hidden="true" />
-            </button>
+            <div class="composer-toolbar-start">
+              <div class="relative">
+                <button
+                  type="button"
+                  class="composer-tool-button composer-plus-button"
+                  title="Add attachments or workspace controls"
+                  aria-label="Add attachments or workspace controls"
+                  :aria-expanded="showComposerMenu"
+                  :disabled="store.isLoading"
+                  @click="showComposerMenu = !showComposerMenu; showAgentAccessMenu = false"
+                >
+                  <PhPlus :size="20" weight="bold" aria-hidden="true" />
+                </button>
+                <div v-if="showComposerMenu" class="composer-popover composer-add-popover" @click.stop>
+                  <button
+                    type="button"
+                    class="composer-menu-item"
+                    :disabled="store.isLoading"
+                    @click="showComposerMenu = false; fileInputRef?.click()"
+                  >
+                    <span>{{ t('input.attachImage') }}</span>
+                  </button>
+                  <template v-if="!compactChatLayout">
+                    <div class="composer-menu-divider" />
+                    <div class="composer-menu-label">Workspace mode</div>
+                    <button
+                      v-for="mode in (['auto', 'chat', 'code'] as const)"
+                      :key="mode"
+                      type="button"
+                      :class="['composer-menu-item', workspace.mode === mode ? 'is-selected' : '']"
+                      @click="workspace.setMode(mode); showComposerMenu = false"
+                    >
+                      <span>{{ mode === 'auto' ? 'Auto' : mode === 'chat' ? 'Chat' : 'Code' }}</span>
+                      <span v-if="workspace.mode === mode" class="composer-menu-check" aria-hidden="true">✓</span>
+                    </button>
+                    <div class="composer-menu-divider" />
+                    <button
+                      type="button"
+                      class="composer-menu-item"
+                      @click="workspace.open = !workspace.open; showComposerMenu = false"
+                    >
+                      <span>{{ workspace.open ? 'Close workspace panel' : 'Open workspace panel' }}</span>
+                    </button>
+                  </template>
+                </div>
+              </div>
+              <div class="relative">
+                <button
+                  type="button"
+                  class="composer-access-button"
+                  :aria-expanded="showAgentAccessMenu"
+                  @click="showAgentAccessMenu = !showAgentAccessMenu; showComposerMenu = false"
+                >
+                  <span>{{ agentMode === 'full' ? 'Full access' : 'Auto review' }}</span>
+                  <PhCaretDown :size="14" aria-hidden="true" />
+                </button>
+                <div v-if="showAgentAccessMenu" class="composer-popover composer-access-popover" @click.stop>
+                  <button
+                    v-for="mode in (['auto', 'full'] as const)"
+                    :key="mode"
+                    type="button"
+                    :class="['composer-menu-item', agentMode === mode ? 'is-selected' : '']"
+                    @click="agentMode = mode; showAgentAccessMenu = false"
+                  >
+                    <span>{{ mode === 'auto' ? 'Auto review' : 'Full access' }}</span>
+                    <span v-if="agentMode === mode" class="composer-menu-check" aria-hidden="true">✓</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <span id="chat-input-hint" class="sr-only">{{ t('chat.inputHint') }}</span>
+            <div class="composer-toolbar-end">
+              <button
+                type="button"
+                :class="['composer-context-button', contextUsagePercent >= 90 ? 'is-high' : contextUsagePercent >= 70 ? 'is-warn' : '']"
+                :title="contextWindowSize > 0 ? `~${estimatedTokensUsed.toLocaleString()} / ${contextWindowSize.toLocaleString()} context tokens (${contextUsagePercent}% estimated)` : 'Context window size unavailable for this model'"
+                :aria-label="contextWindowSize > 0 ? `Estimated context usage ${contextUsagePercent}%` : 'Context usage unavailable'"
+                :disabled="contextWindowSize <= 0"
+              >
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <circle class="composer-context-track" cx="10" cy="10" r="7.5" />
+                  <circle
+                    class="composer-context-progress"
+                    cx="10"
+                    cy="10"
+                    r="7.5"
+                    :stroke-dasharray="47.12"
+                    :stroke-dashoffset="47.12 * (1 - contextUsagePercent / 100)"
+                    transform="rotate(-90 10 10)"
+                  />
+                </svg>
+              </button>
+              <button
+                type="button"
+                class="composer-model-button"
+                :title="`${currentProviderMeta?.displayName || store.selectedProvider} · ${currentModelDisplayName}`"
+                :disabled="store.isLoading"
+                @click="showComposerMenu = false; showAgentAccessMenu = false; showModelPicker = true"
+              >
+                <span class="composer-model-provider">{{ currentProviderMeta?.displayName || store.selectedProvider }}</span>
+                <span class="composer-model-name">{{ currentModelDisplayName }}</span>
+                <PhCaretDown :size="14" aria-hidden="true" />
+              </button>
+              <button
+                v-if="store.isLoading"
+                type="button"
+                class="composer-send-button composer-stop-button"
+                :aria-label="t('chat.stop')"
+                :title="t('chat.stop')"
+                @click="store.stopStream()"
+              >
+                <span aria-hidden="true" class="inline-block w-2.5 h-2.5 bg-current rounded-sm" />
+              </button>
+              <button
+                v-else
+                type="button"
+                class="composer-send-button"
+                :style="primaryButtonStyle"
+                :aria-label="t('chat.send')"
+                :title="t('chat.send')"
+                :disabled="!store.inputValue.trim() && store.pendingAttachments.length === 0"
+                @click="submitChatMessage"
+              >
+                <PhArrowUp :size="19" weight="bold" aria-hidden="true" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -6603,7 +6938,7 @@ async function handleImportData() {
         leave-to-class="opacity-0 scale-90 translate-y-4"
       >
         <div
-          v-if="false && showLive2DPanel && currentWaifuLive2D"
+          v-if="showLive2DPanel && currentWaifuLive2D?.modelJsonPath"
           class="live2d-panel fixed z-[60] rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-black/30 backdrop-blur-sm select-none touch-none"
           :class="[
             live2dPanelDragging || live2dCharacterDragging ? 'cursor-grabbing' : '',
@@ -6618,11 +6953,6 @@ async function handleImportData() {
           >
             <span class="text-xs font-semibold text-white/80 truncate">{{ store.selectedWaifu?.displayName }}</span>
             <div class="flex items-center gap-1" data-live2d-panel-control>
-              <button
-                class="text-[11px] leading-none px-1.5 py-1 rounded text-white/60 hover:text-white/90 hover:bg-white/10"
-                title="Open immersive Live2D window"
-                @click.stop="openImmersiveLive2D"
-              >Immersive</button>
               <button
                 class="text-[11px] leading-none px-1.5 py-1 rounded text-white/60 hover:text-white/90 hover:bg-white/10"
                 title="Reset avatar position and scale"
@@ -6693,35 +7023,6 @@ async function handleImportData() {
       </Transition>
     </Teleport>
 
-    <Teleport to="body">
-      <DesktopPetOverlay
-        v-if="overlayWindow.enabled && currentWaifuLive2D"
-        :model-path="currentWaifuLive2D.modelJsonPath"
-        :model-name="store.selectedWaifu?.displayName"
-        :expression="latestSentimentExpression"
-        :expression-revision="store.live2dExpressionRevision"
-        :motion-map="currentWaifuLive2D.expressionMotions"
-        :model-width="live2dPanelWidth"
-        :model-height="live2dPanelHeight"
-        :model-scale="live2dCharacterScale"
-        :model-offset-x="live2dCharacterOffset.x"
-        :model-offset-y="live2dCharacterOffset.y"
-        :render-scale="live2dRenderScale"
-        :locked="desktopPetLocked"
-        :bubble-opacity="desktopPetBubbleOpacity"
-        :latest-message="latestAssistantMessage"
-        :input-value="store.inputValue"
-        :loading="store.isLoading"
-        @update:locked="desktopPetLocked = $event"
-        @update:bubble-opacity="desktopPetBubbleOpacity = $event"
-        @update:model-scale="live2dCharacterScale = $event; saveLive2DPanelLayout()"
-        @update:input-value="store.inputValue = $event"
-        @send="store.sendMessage(store.inputValue)"
-        @mini-game="openPetMiniGame"
-        @reset-layout="resetLive2DPanelLayout"
-        @reset-window="restoreNormalWindow"
-      />
-    </Teleport>
   </div>
 </template>
 
@@ -7345,11 +7646,18 @@ async function handleImportData() {
   flex: none;
 }
 
+.chat-composer-footer {
+  padding-inline: clamp(1rem, 3vw, 2.5rem);
+  background: transparent;
+}
+
 .composer-shell {
+  width: min(100%, 1160px);
+  margin-inline: auto;
   overflow: visible;
   border: 1px solid;
   border-radius: calc(1.45rem * var(--radius-scale, 1));
-  padding: 0.65rem 0.8rem 0.7rem;
+  padding: 0.4rem 0.65rem 0.45rem;
   transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
 }
 
@@ -7360,17 +7668,17 @@ async function handleImportData() {
 
 .composer-input {
   display: block;
-  min-height: 2.8rem;
+  min-height: 2.3rem;
   max-height: 10rem;
   border: 0 !important;
   border-radius: 0.7rem;
   outline: 0;
   background: transparent !important;
-  padding: 0.75rem 0.7rem 0.8rem;
+  padding: 0.45rem 0.65rem;
   color: var(--fg);
   box-shadow: none !important;
   font: inherit;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 
 .composer-input::placeholder {
@@ -7379,17 +7687,29 @@ async function handleImportData() {
 
 .composer-toolbar {
   display: flex;
-  min-height: 2.55rem;
+  min-height: 2.2rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-top: 0.1rem;
+}
+
+.composer-toolbar-start,
+.composer-toolbar-end {
+  display: flex;
+  min-width: 0;
   align-items: center;
   gap: 0.65rem;
-  border-top: 1px solid color-mix(in srgb, var(--fg) 9%, transparent);
-  padding-top: 0.55rem;
+}
+
+.composer-toolbar-end {
+  margin-left: auto;
 }
 
 .composer-tool-button {
   display: grid;
-  width: 2.2rem;
-  height: 2.2rem;
+  width: 1.9rem;
+  height: 1.9rem;
   flex: none;
   place-items: center;
   border-radius: 999px;
@@ -7407,24 +7727,203 @@ async function handleImportData() {
   opacity: 0.45;
 }
 
-.composer-hint {
+.composer-plus-button {
+  width: 2rem;
+  height: 2rem;
+}
+
+.composer-access-button,
+.composer-model-button {
+  display: inline-flex;
   min-width: 0;
-  flex: 1;
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
-  font-size: 0.68rem;
+  align-items: center;
+  gap: 0.4rem;
+  border-radius: 999px;
+  padding: 0.4rem 0.65rem;
+  color: color-mix(in srgb, var(--fg) 82%, transparent);
+  font-size: 0.75rem;
   line-height: 1.2;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.composer-access-button:hover,
+.composer-model-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  color: var(--fg);
+}
+
+.composer-access-button svg,
+.composer-model-button svg {
+  flex: none;
+  color: color-mix(in srgb, var(--fg) 54%, transparent);
+}
+
+.composer-model-button {
+  max-width: min(34vw, 25rem);
+  gap: 0.45rem;
+  border-radius: 0.75rem;
+  text-align: left;
+}
+
+.composer-model-provider {
+  flex: none;
+  color: color-mix(in srgb, var(--fg) 48%, transparent);
+  font-size: 0.62rem;
+}
+
+.composer-model-name {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-context-button {
+  display: grid;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  color: color-mix(in srgb, var(--primary) 85%, var(--fg));
+}
+
+.composer-context-button svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  overflow: visible;
+}
+
+.composer-context-track,
+.composer-context-progress {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+}
+
+.composer-context-track {
+  opacity: 0.2;
+}
+
+.composer-context-progress {
+  stroke-linecap: round;
+  transition: stroke-dashoffset 220ms ease, color 160ms ease;
+}
+
+.composer-context-button.is-warn {
+  color: #fbbf24;
+}
+
+.composer-context-button.is-high {
+  color: #fb7185;
+}
+
+.composer-context-button:disabled {
+  cursor: help;
+  opacity: 0.55;
+}
+
+.composer-popover {
+  position: absolute;
+  z-index: 40;
+  bottom: calc(100% + 0.55rem);
+  min-width: 13rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, var(--surface) 94%, black 6%);
+  padding: 0.35rem;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(18px);
+}
+
+.composer-add-popover {
+  left: 0;
+  width: min(17rem, calc(100vw - 2rem));
+  max-height: min(70vh, 28rem);
+  overflow-y: auto;
+}
+
+.composer-access-popover {
+  left: 0;
+  min-width: 11rem;
+}
+
+.composer-menu-label {
+  padding: 0.45rem 0.6rem 0.25rem;
+  color: color-mix(in srgb, var(--fg) 48%, transparent);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.composer-menu-divider {
+  height: 1px;
+  margin: 0.3rem 0.25rem;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+
+.composer-menu-item {
+  display: flex;
+  width: 100%;
+  min-height: 2.1rem;
+  align-items: center;
+  gap: 0.55rem;
+  border-radius: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  color: color-mix(in srgb, var(--fg) 82%, transparent);
+  font-size: 0.75rem;
+  text-align: left;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.composer-menu-item:hover:not(:disabled),
+.composer-menu-item.is-selected {
+  background: color-mix(in srgb, var(--primary) 15%, transparent);
+  color: var(--fg);
+}
+
+.composer-menu-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.composer-menu-check {
+  margin-left: auto;
+  color: var(--primary);
 }
 
 .composer-send-button {
   display: grid;
-  width: 2.45rem;
-  height: 2.45rem;
+  width: 2.1rem;
+  height: 2.1rem;
   flex: none;
   place-items: center;
   border: 1px solid transparent;
   border-radius: 999px;
   color: white;
   transition: transform 140ms ease, opacity 140ms ease, filter 140ms ease;
+}
+
+@media (max-width: 640px) {
+  .chat-composer-footer {
+    padding-inline: 0.65rem;
+  }
+
+  .composer-toolbar-start,
+  .composer-toolbar-end {
+    gap: 0.3rem;
+  }
+
+  .composer-model-button {
+    max-width: 42vw;
+    padding-inline: 0.4rem;
+  }
+
+  .composer-model-provider {
+    display: none;
+  }
 }
 
 .composer-send-button:hover:not(:disabled) {

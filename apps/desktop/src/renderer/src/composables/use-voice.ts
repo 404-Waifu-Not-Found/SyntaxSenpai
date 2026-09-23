@@ -9,12 +9,13 @@ import {
   type Expression,
 } from '@syntax-senpai/waifu-core'
 import { useIpc } from './use-ipc'
+import { normalizeVoiceoverText } from '../utils/assistant-output'
 
 const ENABLED_STORAGE_KEY = 'syntax-senpai-voice-enabled'
 
 /**
- * Speech synthesis composable. Pronounces waifu messages via the browser's
- * Web Speech API using the per-waifu profile from waifu-core.
+ * Speech synthesis composable. Assistant-selected voice-over uses the
+ * waifu's MiniMax clone; other configured engines remain available for previews.
  *
  * The toggle persists across sessions; calls to speak() while disabled are
  * silent no-ops so we don't have to gate every call-site.
@@ -48,6 +49,14 @@ export function useVoice() {
   }
 
   function cancel() {
+    stopCurrentPlayback()
+    if (activeRequestId.value) {
+      invoke('tts:cancel', activeRequestId.value).catch(() => {})
+      activeRequestId.value = null
+    }
+  }
+
+  function stopCurrentPlayback() {
     if (webSpeechSupported) {
       try {
         window.speechSynthesis.cancel()
@@ -62,10 +71,6 @@ export function useVoice() {
         /* best effort */
       }
       activeAudio.value = null
-    }
-    if (activeRequestId.value) {
-      invoke('tts:cancel', activeRequestId.value).catch(() => {})
-      activeRequestId.value = null
     }
     speaking.value = false
   }
@@ -100,7 +105,9 @@ export function useVoice() {
   }
 
   async function playAudio(audioPath: string) {
-    cancel()
+    // A synthesis request has already completed by the time its audio is
+    // played. Stop the previous player without cancelling that request again.
+    stopCurrentPlayback()
     const audio = new Audio(audioPath)
     activeAudio.value = audio
     speaking.value = true
@@ -125,18 +132,78 @@ export function useVoice() {
     enabled: boolean
     voicePresetId: string
     referenceWavId: string
+    minimaxVoiceId: string
     emotionMode: 'auto' | 'manual'
     manualEmotion: string
   } {
     const tts = (waifu?.tts || {}) as WaifuTtsConfig
     return {
-      provider: tts.provider === 'indextts' ? 'indextts' : 'web-speech',
+      provider: tts.provider === 'web-speech' || tts.provider === 'indextts' ? tts.provider : 'minimax-clone',
       fallback: tts.fallback === 'silent' ? 'silent' : 'web-speech',
       enabled: typeof tts.enabled === 'boolean' ? tts.enabled : enabled.value,
       voicePresetId: typeof tts.voicePresetId === 'string' ? tts.voicePresetId : '',
       referenceWavId: typeof tts.referenceWavId === 'string' ? tts.referenceWavId : '',
+      minimaxVoiceId: typeof tts.minimaxVoiceId === 'string' ? tts.minimaxVoiceId : '',
       emotionMode: tts.emotion?.mode === 'manual' ? 'manual' : 'auto',
       manualEmotion: typeof tts.emotion?.manual === 'string' ? tts.emotion.manual : 'neutral',
+    }
+  }
+
+  function canSpeak(waifu?: Waifu | null) {
+    return supported && resolveTtsConfig(waifu).enabled
+  }
+
+  function canSpeakMiniMaxClone(waifu?: Waifu | null) {
+    const config = resolveTtsConfig(waifu)
+    return ipcAvailable && config.enabled && !!config.minimaxVoiceId.trim()
+  }
+
+  async function speakMiniMaxClone(
+    text: string,
+    waifuId: string,
+    waifu?: Waifu | null,
+    expression?: Expression,
+  ): Promise<{ success: boolean; error?: string }> {
+    if (!ipcAvailable) return { success: false, error: 'MiniMax voice playback requires the desktop app.' }
+    const config = resolveTtsConfig(waifu)
+    if (!config.enabled) return { success: false, error: 'Voice output is disabled for this waifu.' }
+    if (!config.minimaxVoiceId.trim()) {
+      return { success: false, error: 'No MiniMax cloned voice is configured for this waifu.' }
+    }
+
+    const spokenText = normalizeVoiceoverText(text)
+    const profile = getVoiceProfile(waifuId)
+    const trimmed = trimForSpeech(spokenText, profile.maxChars)
+    if (!trimmed) return { success: false, error: 'There is no speakable text to read.' }
+
+    cancel()
+    const requestId = `tts_${Date.now()}_${Math.random().toString(16).slice(2)}`
+    activeRequestId.value = requestId
+    try {
+      const emotion = config.emotionMode === 'manual'
+        ? config.manualEmotion
+        : mapExpressionToTtsEmotion(expression as any)
+      const result: any = await invoke('tts:synthesize', {
+        provider: 'minimax-clone',
+        text: trimmed,
+        waifuId,
+        voiceId: config.minimaxVoiceId,
+        emotion,
+        requestId,
+      })
+      if (!result?.success || typeof result.audioPath !== 'string' || !result.audioPath) {
+        return { success: false, error: result?.error || 'MiniMax voice synthesis returned no audio.' }
+      }
+      if (activeRequestId.value !== requestId) {
+        return { success: false, error: 'MiniMax voice playback was cancelled before it started.' }
+      }
+
+      await playAudio(result.audioPath)
+      return { success: true }
+    } catch (error: any) {
+      return { success: false, error: error?.message || String(error) || 'MiniMax voice playback failed.' }
+    } finally {
+      if (activeRequestId.value === requestId) activeRequestId.value = null
     }
   }
 
@@ -144,14 +211,21 @@ export function useVoice() {
     if (!supported) return
     const config = resolveTtsConfig(waifu)
     if (!config.enabled) return
+    const spokenText = normalizeVoiceoverText(text)
+    if (!spokenText) return
 
-    if (config.provider !== 'indextts') {
-      speakViaWebSpeech(text, waifuId)
+    if (config.provider === 'web-speech') {
+      speakViaWebSpeech(spokenText, waifuId)
+      return
+    }
+    if (config.provider === 'minimax-clone') {
+      const result = await speakMiniMaxClone(spokenText, waifuId, waifu, expression)
+      if (!result.success) console.warn('MiniMax voice playback failed:', result.error)
       return
     }
 
     const profile = getVoiceProfile(waifuId)
-    const trimmed = trimForSpeech(text, profile.maxChars)
+    const trimmed = trimForSpeech(spokenText, profile.maxChars)
     if (!trimmed) return
     const requestId = `tts_${Date.now()}_${Math.random().toString(16).slice(2)}`
     activeRequestId.value = requestId
@@ -172,15 +246,19 @@ export function useVoice() {
         return
       }
       if (config.fallback === 'web-speech') {
-        speakViaWebSpeech(text, waifuId)
+        speakViaWebSpeech(spokenText, waifuId)
       }
     } catch {
       if (config.fallback === 'web-speech') {
-        speakViaWebSpeech(text, waifuId)
+        speakViaWebSpeech(spokenText, waifuId)
       }
     } finally {
       if (activeRequestId.value === requestId) activeRequestId.value = null
     }
+  }
+
+  async function cloneMiniMaxVoice(displayName: string) {
+    return invoke('tts:minimaxCloneVoice', { displayName })
   }
 
   const voiceOptions = computed(() =>
@@ -202,12 +280,16 @@ export function useVoice() {
 
   return {
     supported,
+    canSpeak,
+    canSpeakMiniMaxClone,
     enabled,
     voices,
     voiceOptions,
     speaking,
     setEnabled,
     speak,
+    speakMiniMaxClone,
+    cloneMiniMaxVoice,
     cancel,
     refreshVoices,
   }

@@ -15,7 +15,16 @@ async function appendExecutionLog(entry: Record<string, unknown>) {
 export function registerTerminalIpc() {
   if (registered) return
   registered = true
-  registerHostHandler('terminal:systemInfo', () => ({ platform: process.platform, homedir: os.homedir(), username: os.userInfo().username, shell: getActiveShellName() }))
+  registerHostHandler('terminal:systemInfo', () => ({
+    platform: process.platform,
+    arch: process.arch,
+    electronVersion: process.versions.electron,
+    nodeVersion: process.versions.node,
+    chromiumVersion: process.versions.chrome,
+    homedir: os.homedir(),
+    username: os.userInfo().username,
+    shell: getActiveShellName(),
+  }))
   registerHostHandler('terminal:exec', async (_event: any, command: string, cwd?: string) => {
     const workingDirectory = cwd ? resolveWorkspacePath(cwd) : resolveWorkspacePath('.')
     const startedAt = Date.now()

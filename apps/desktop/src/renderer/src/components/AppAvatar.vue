@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 
 const Live2DAvatar = defineAsyncComponent(() => import('./Live2DAvatar.vue'))
 
@@ -18,6 +18,9 @@ const props = withDefaults(defineProps<{
   size: 40,
   expression: 'neutral',
 })
+const imageFailed = ref(false)
+
+watch(() => props.src, () => { imageFailed.value = false })
 
 const initials = computed(() =>
   (props.name || 'A').trim().split(/\s+/).map(s => s[0] || '').slice(0, 2).join('').toUpperCase(),
@@ -47,10 +50,11 @@ const initials = computed(() =>
     :style="{ width: `${size}px`, height: `${size}px` }"
   >
     <img
-      v-if="src"
+      v-if="src && !imageFailed"
       :src="src"
       :alt="name"
       class="w-full h-full object-cover rounded-lg"
+      @error="imageFailed = true"
     >
     <span v-else class="text-xs font-bold">{{ initials }}</span>
   </div>

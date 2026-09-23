@@ -52,7 +52,7 @@ describe('headless runtime', () => {
   it.each([
     ['tictactoe', 'Perfect minimax'],
     ['connect4', 'Alpha-beta Connect Four (strong)'],
-    ['chess', 'Chess alpha-beta (strong)'],
+    ['chess', 'Stockfish 19 Lite · MultiPV third choice'],
   ] as const)('keeps the real %s engine snapshot while replacing the window with state', async (kind, engine) => {
     const host = createHeadlessHost()
     const started = await host.executeTool({ name: 'game_start', id: `start-${kind}`, arguments: { kind, difficulty: 'strong' } })
@@ -131,7 +131,7 @@ describe('headless runtime', () => {
   it('rejects an illegal human move without advancing the game', async () => {
     const host = createHeadlessHost()
     await host.executeTool({ name: 'game_start', id: 'start', arguments: { kind: 'tictactoe' } })
-    expect(() => host.playHumanMove('99')).toThrow()
+    await expect(host.playHumanMove('99')).rejects.toThrow()
     expect(host.getGameSnapshot()?.moveCount).toBe(0)
   })
 

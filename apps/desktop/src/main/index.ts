@@ -79,30 +79,21 @@ let live2dWindow: any = null
 let pendingLive2DSession: any = null
 let pendingLive2DSpeech: any = null
 let tray: any = null
-let currentWindowFrameless = false
-
 const NORMAL_WINDOW_MIN_WIDTH = 800
 const NORMAL_WINDOW_MIN_HEIGHT = 600
 const NORMAL_WINDOW_DEFAULT_BOUNDS = { width: 1200, height: 800 }
-const OVERLAY_WINDOW_MIN_WIDTH = 320
-const OVERLAY_WINDOW_MIN_HEIGHT = 240
-const OVERLAY_WINDOW_DEFAULT_BOUNDS = { width: 420, height: 620 }
-const OVERLAY_WIDTH_RATIO = 0.38
-const OVERLAY_HEIGHT_RATIO = 0.82
 const WINDOW_STATE_FILE = 'window-state.json'
 
-type WindowMode = 'normal' | 'overlay' | 'fullscreen'
+type WindowMode = 'normal' | 'fullscreen'
 type WindowBounds = { width: number; height: number; x?: number; y?: number }
 type WindowState = {
   mode: WindowMode
   normalBounds: WindowBounds
-  overlayBounds: WindowBounds
 }
 
 const defaultWindowState = (): WindowState => ({
   mode: 'normal',
   normalBounds: { ...NORMAL_WINDOW_DEFAULT_BOUNDS },
-  overlayBounds: { ...OVERLAY_WINDOW_DEFAULT_BOUNDS },
 })
 
 let windowState: WindowState = defaultWindowState()
@@ -124,15 +115,20 @@ function loadWindowState(): WindowState {
   try {
     const raw = fs.readFileSync(getWindowStatePath(), 'utf8')
     const parsed = JSON.parse(raw)
-    return {
-      mode: parsed?.mode === 'overlay'
-        ? 'overlay'
-        : parsed?.mode === 'fullscreen'
-          ? 'fullscreen'
-          : 'normal',
+    const normalizedState: WindowState = {
+      // Overlay mode was removed. Normalize old persisted overlay state so
+      // upgrades always reopen the regular app window.
+      mode: parsed?.mode === 'fullscreen' ? 'fullscreen' : 'normal',
       normalBounds: sanitizeBounds(parsed?.normalBounds, NORMAL_WINDOW_DEFAULT_BOUNDS, NORMAL_WINDOW_MIN_WIDTH, NORMAL_WINDOW_MIN_HEIGHT),
-      overlayBounds: sanitizeBounds(parsed?.overlayBounds, OVERLAY_WINDOW_DEFAULT_BOUNDS, OVERLAY_WINDOW_MIN_WIDTH, OVERLAY_WINDOW_MIN_HEIGHT),
     }
+    if (parsed?.mode === 'overlay') {
+      try {
+        fs.writeFileSync(getWindowStatePath(), JSON.stringify(normalizedState, null, 2), 'utf8')
+      } catch (err) {
+        mainLogger.warn({ err }, 'legacy overlay window state migration failed')
+      }
+    }
+    return normalizedState
   } catch {
     return defaultWindowState()
   }
@@ -150,86 +146,16 @@ function updateStoredBoundsFromWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return
   if (windowState.mode === 'fullscreen') return
   const bounds = mainWindow.getBounds()
-  const key = windowState.mode === 'overlay' ? 'overlayBounds' : 'normalBounds'
-  const minWidth = windowState.mode === 'overlay' ? OVERLAY_WINDOW_MIN_WIDTH : NORMAL_WINDOW_MIN_WIDTH
-  const minHeight = windowState.mode === 'overlay' ? OVERLAY_WINDOW_MIN_HEIGHT : NORMAL_WINDOW_MIN_HEIGHT
-  windowState[key] = sanitizeBounds(bounds, windowState[key], minWidth, minHeight)
+  windowState.normalBounds = sanitizeBounds(bounds, windowState.normalBounds, NORMAL_WINDOW_MIN_WIDTH, NORMAL_WINDOW_MIN_HEIGHT)
   saveWindowState()
-}
-
-function getActiveBoundsForMode(mode: WindowMode): WindowBounds {
-  return mode === 'overlay' ? windowState.overlayBounds : windowState.normalBounds
-}
-
-function shouldUseFramelessWindow(mode: WindowMode): boolean {
-  return mode === 'overlay'
-}
-
-function shouldUseTransparentWindow(mode: WindowMode): boolean {
-  return mode === 'overlay'
 }
 
 function clampToRange(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
 }
 
-function hasDefaultOverlaySize(bounds: WindowBounds): boolean {
-  return bounds.width === OVERLAY_WINDOW_DEFAULT_BOUNDS.width
-    && bounds.height === OVERLAY_WINDOW_DEFAULT_BOUNDS.height
-}
-
-function getCenteredOverlayBounds(width: number, height: number, currentBounds?: { x: number; y: number; width: number; height: number }): WindowBounds {
-  const display = currentBounds
-    ? screen.getDisplayMatching(currentBounds)
-    : screen.getPrimaryDisplay()
-  const workArea = display?.workArea ?? display?.bounds ?? { x: 0, y: 0, width, height }
-  return {
-    width,
-    height,
-    x: Math.round(workArea.x + (workArea.width - width) / 2),
-    y: Math.round(workArea.y + (workArea.height - height) / 2),
-  }
-}
-
-function getOverlayBoundsForActivation(currentBounds?: { x: number; y: number; width: number; height: number }, preferredBounds?: WindowBounds): WindowBounds {
-  const display = currentBounds
-    ? screen.getDisplayMatching(currentBounds)
-    : screen.getPrimaryDisplay()
-  const workArea = display?.workArea ?? display?.bounds ?? {
-    x: 0,
-    y: 0,
-    width: NORMAL_WINDOW_DEFAULT_BOUNDS.width,
-    height: NORMAL_WINDOW_DEFAULT_BOUNDS.height,
-  }
-
-  const useStoredOverlaySize = preferredBounds && !hasDefaultOverlaySize(preferredBounds)
-  const referenceWidth = currentBounds?.width
-    ?? Math.min(NORMAL_WINDOW_DEFAULT_BOUNDS.width, Math.round(workArea.width * 0.7))
-  const referenceHeight = currentBounds?.height
-    ?? Math.min(NORMAL_WINDOW_DEFAULT_BOUNDS.height, Math.round(workArea.height * 0.9))
-  const maxWidth = Math.max(OVERLAY_WINDOW_MIN_WIDTH, Math.round(workArea.width * 0.55))
-  const maxHeight = Math.max(OVERLAY_WINDOW_MIN_HEIGHT, Math.round(workArea.height * 0.9))
-  const width = clampToRange(
-    Math.round(useStoredOverlaySize ? preferredBounds.width : referenceWidth * OVERLAY_WIDTH_RATIO),
-    OVERLAY_WINDOW_MIN_WIDTH,
-    maxWidth,
-  )
-  const height = clampToRange(
-    Math.round(useStoredOverlaySize ? preferredBounds.height : referenceHeight * OVERLAY_HEIGHT_RATIO),
-    OVERLAY_WINDOW_MIN_HEIGHT,
-    maxHeight,
-  )
-
-  return getCenteredOverlayBounds(width, height, currentBounds)
-}
-
 function applyWindowMode(mode: WindowMode) {
   if (!mainWindow || mainWindow.isDestroyed()) return
-  const targetFrameless = shouldUseFramelessWindow(mode)
-  if (currentWindowFrameless !== targetFrameless) {
-    recreateWindowForMode(mode)
-    return
-  }
   const wasFullscreen = mainWindow.isFullScreen()
   if (mode !== 'fullscreen' && wasFullscreen) {
     mainWindow.setFullScreen(false)
@@ -247,19 +173,10 @@ function applyWindowMode(mode: WindowMode) {
     return
   }
 
-  const minWidth = mode === 'overlay' ? OVERLAY_WINDOW_MIN_WIDTH : NORMAL_WINDOW_MIN_WIDTH
-  const minHeight = mode === 'overlay' ? OVERLAY_WINDOW_MIN_HEIGHT : NORMAL_WINDOW_MIN_HEIGHT
-  const rawBounds = getActiveBoundsForMode(mode)
-  const currentBounds = mainWindow.getBounds()
-  const bounds = mode === 'overlay'
-    ? getOverlayBoundsForActivation(currentBounds, rawBounds)
-    : sanitizeBounds(rawBounds, NORMAL_WINDOW_DEFAULT_BOUNDS, minWidth, minHeight)
+  const bounds = sanitizeBounds(windowState.normalBounds, NORMAL_WINDOW_DEFAULT_BOUNDS, NORMAL_WINDOW_MIN_WIDTH, NORMAL_WINDOW_MIN_HEIGHT)
   windowState.mode = mode
-  if (mode === 'overlay') {
-    windowState.overlayBounds = bounds
-  }
-  mainWindow.setMinimumSize(minWidth, minHeight)
-  mainWindow.setAlwaysOnTop(mode === 'overlay', mode === 'overlay' ? 'floating' : 'normal')
+  mainWindow.setMinimumSize(NORMAL_WINDOW_MIN_WIDTH, NORMAL_WINDOW_MIN_HEIGHT)
+  mainWindow.setAlwaysOnTop(false, 'normal')
   mainWindow.setBounds({
     x: bounds.x,
     y: bounds.y,
@@ -276,53 +193,6 @@ function registerWindowStateTracking() {
   if (!mainWindow) return
   mainWindow.on('resize', () => updateStoredBoundsFromWindow())
   mainWindow.on('move', () => updateStoredBoundsFromWindow())
-}
-
-function recreateWindowForMode(mode: WindowMode) {
-  const previousWindow = mainWindow
-  const previousBounds = previousWindow && !previousWindow.isDestroyed()
-    ? previousWindow.getBounds()
-    : undefined
-
-  if (previousBounds && windowState.mode !== 'fullscreen') {
-    const previousKey = windowState.mode === 'overlay' ? 'overlayBounds' : 'normalBounds'
-    const previousMinWidth = windowState.mode === 'overlay' ? OVERLAY_WINDOW_MIN_WIDTH : NORMAL_WINDOW_MIN_WIDTH
-    const previousMinHeight = windowState.mode === 'overlay' ? OVERLAY_WINDOW_MIN_HEIGHT : NORMAL_WINDOW_MIN_HEIGHT
-    windowState[previousKey] = sanitizeBounds(previousBounds, windowState[previousKey], previousMinWidth, previousMinHeight)
-  }
-
-  const nextMinWidth = mode === 'overlay' ? OVERLAY_WINDOW_MIN_WIDTH : NORMAL_WINDOW_MIN_WIDTH
-  const nextMinHeight = mode === 'overlay' ? OVERLAY_WINDOW_MIN_HEIGHT : NORMAL_WINDOW_MIN_HEIGHT
-  const nextBounds = mode === 'overlay'
-    ? getOverlayBoundsForActivation(previousBounds, windowState.overlayBounds)
-    : sanitizeBounds(previousBounds ?? windowState.normalBounds, NORMAL_WINDOW_DEFAULT_BOUNDS, nextMinWidth, nextMinHeight)
-
-  windowState.mode = mode
-  if (mode === 'overlay') {
-    windowState.overlayBounds = nextBounds
-  } else if (mode === 'normal') {
-    windowState.normalBounds = nextBounds
-  }
-  saveWindowState()
-
-  createWindow(mode)
-  const replacementWindow = mainWindow
-
-  if (replacementWindow && !replacementWindow.isDestroyed()) {
-    if (mode === 'fullscreen') {
-      replacementWindow.setFullScreen(true)
-    }
-    replacementWindow.show()
-    replacementWindow.focus()
-  }
-
-  if (previousWindow && !previousWindow.isDestroyed()) {
-    previousWindow.removeAllListeners('resize')
-    previousWindow.removeAllListeners('move')
-    previousWindow.removeAllListeners('closed')
-    previousWindow.hide()
-    previousWindow.destroy()
-  }
 }
 
 function toggleMainWindow() {
@@ -471,29 +341,22 @@ function createLive2DWindow(session: any) {
 
 function createWindow(forcedMode?: WindowMode): void {
   if (!windowState) windowState = loadWindowState()
-  const mode = forcedMode
-    ?? (windowState.mode === 'overlay'
-      ? 'overlay'
-      : windowState.mode === 'fullscreen'
-        ? 'fullscreen'
-        : 'normal')
-  const bounds = mode === 'overlay'
-    ? getOverlayBoundsForActivation(undefined, getActiveBoundsForMode(mode))
-    : getActiveBoundsForMode(mode)
+  const mode = forcedMode ?? windowState.mode
+  const bounds = windowState.normalBounds
   const createdWindow = new BrowserWindow({
     width: bounds.width,
     height: bounds.height,
     ...(typeof bounds.x === 'number' ? { x: bounds.x } : {}),
     ...(typeof bounds.y === 'number' ? { y: bounds.y } : {}),
-    transparent: shouldUseTransparentWindow(mode),
-    backgroundColor: shouldUseTransparentWindow(mode) ? '#00000000' : '#10131c',
-    frame: !shouldUseFramelessWindow(mode),
-    hasShadow: mode !== 'overlay',
-    maximizable: mode !== 'overlay',
-    fullscreenable: mode !== 'overlay',
-    minWidth: mode === 'overlay' ? OVERLAY_WINDOW_MIN_WIDTH : NORMAL_WINDOW_MIN_WIDTH,
-    minHeight: mode === 'overlay' ? OVERLAY_WINDOW_MIN_HEIGHT : NORMAL_WINDOW_MIN_HEIGHT,
-    alwaysOnTop: mode === 'overlay',
+    transparent: false,
+    backgroundColor: '#10131c',
+    frame: true,
+    hasShadow: true,
+    maximizable: true,
+    fullscreenable: true,
+    minWidth: NORMAL_WINDOW_MIN_WIDTH,
+    minHeight: NORMAL_WINDOW_MIN_HEIGHT,
+    alwaysOnTop: false,
     fullscreen: mode === 'fullscreen',
     acceptFirstMouse: true,
     webPreferences: {
@@ -510,12 +373,6 @@ function createWindow(forcedMode?: WindowMode): void {
   })
   mainWindow = createdWindow
 
-  createdWindow.on('minimize', (event: any) => {
-    if (mode !== 'overlay') return
-    event.preventDefault()
-    createdWindow.showInactive()
-  })
-
   // Lock down every <webview> the renderer attaches: sandboxed guest, no
   // node, no preload, http(s) only, and only our persistent browser session.
   createdWindow.webContents.on('will-attach-webview', (event: any, webPreferences: any, params: any) => {
@@ -530,8 +387,6 @@ function createWindow(forcedMode?: WindowMode): void {
       event.preventDefault()
     }
   })
-  currentWindowFrameless = shouldUseFramelessWindow(mode)
-
   if (isDev) {
     createdWindow.loadURL('http://localhost:5173')
     createdWindow.webContents.openDevTools()
@@ -542,7 +397,6 @@ function createWindow(forcedMode?: WindowMode): void {
   createdWindow.on('closed', () => {
     if (mainWindow === createdWindow) {
       mainWindow = null
-      currentWindowFrameless = false
     }
   })
 
@@ -586,11 +440,10 @@ ipcMain.handle('window:getViewState', () => {
   try {
     const bounds = mainWindow && !mainWindow.isDestroyed()
       ? mainWindow.getBounds()
-      : getActiveBoundsForMode(windowState.mode)
+      : windowState.normalBounds
     return {
       success: true,
       mode: mainWindow?.isFullScreen() ? 'fullscreen' : windowState.mode,
-      overlayEnabled: windowState.mode === 'overlay',
       fullscreenEnabled: !!mainWindow?.isFullScreen() || windowState.mode === 'fullscreen',
       bounds: {
         width: bounds.width,
@@ -604,25 +457,16 @@ ipcMain.handle('window:getViewState', () => {
   }
 })
 
-ipcMain.handle('window:getOverlayMode', () => {
-  try {
-    return { success: true, mode: windowState.mode, enabled: windowState.mode === 'overlay' }
-  } catch (err: any) {
-    return { success: false, error: err?.message || String(err) }
-  }
-})
-
 ipcMain.handle('window:setDisplayMode', (_e: any, mode: WindowMode) => {
   try {
     if (!mainWindow) createWindow()
-    if (!['normal', 'overlay', 'fullscreen'].includes(mode)) {
+    if (!['normal', 'fullscreen'].includes(mode)) {
       throw new Error(`Unsupported display mode: ${String(mode)}`)
     }
     applyWindowMode(mode)
     return {
       success: true,
       mode: mainWindow?.isFullScreen() ? 'fullscreen' : windowState.mode,
-      overlayEnabled: windowState.mode === 'overlay',
       fullscreenEnabled: !!mainWindow?.isFullScreen() || windowState.mode === 'fullscreen',
     }
   } catch (err: any) {
@@ -635,14 +479,11 @@ ipcMain.handle('window:setResolution', (_e: any, size: { width?: number; height?
     if (!mainWindow) createWindow()
     if (!mainWindow || mainWindow.isDestroyed()) throw new Error('Window is not available')
 
-    const mode: WindowMode = windowState.mode === 'overlay' ? 'overlay' : 'normal'
     if (mainWindow.isFullScreen()) {
       mainWindow.setFullScreen(false)
       windowState.mode = 'normal'
     }
 
-    const minWidth = mode === 'overlay' ? OVERLAY_WINDOW_MIN_WIDTH : NORMAL_WINDOW_MIN_WIDTH
-    const minHeight = mode === 'overlay' ? OVERLAY_WINDOW_MIN_HEIGHT : NORMAL_WINDOW_MIN_HEIGHT
     const display = screen.getDisplayMatching(mainWindow.getBounds())
     const workArea = display?.workArea ?? display?.bounds ?? {
       x: 0,
@@ -650,8 +491,8 @@ ipcMain.handle('window:setResolution', (_e: any, size: { width?: number; height?
       width: NORMAL_WINDOW_DEFAULT_BOUNDS.width,
       height: NORMAL_WINDOW_DEFAULT_BOUNDS.height,
     }
-    const width = clampToRange(Math.round(Number(size?.width) || NORMAL_WINDOW_DEFAULT_BOUNDS.width), minWidth, workArea.width)
-    const height = clampToRange(Math.round(Number(size?.height) || NORMAL_WINDOW_DEFAULT_BOUNDS.height), minHeight, workArea.height)
+    const width = clampToRange(Math.round(Number(size?.width) || NORMAL_WINDOW_DEFAULT_BOUNDS.width), NORMAL_WINDOW_MIN_WIDTH, workArea.width)
+    const height = clampToRange(Math.round(Number(size?.height) || NORMAL_WINDOW_DEFAULT_BOUNDS.height), NORMAL_WINDOW_MIN_HEIGHT, workArea.height)
     const bounds = {
       width,
       height,
@@ -660,35 +501,17 @@ ipcMain.handle('window:setResolution', (_e: any, size: { width?: number; height?
     }
 
     mainWindow.setBounds(bounds)
-    if (mode === 'overlay') {
-      windowState.overlayBounds = bounds
-    } else {
-      windowState.mode = 'normal'
-      windowState.normalBounds = bounds
-    }
+    windowState.mode = 'normal'
+    windowState.normalBounds = bounds
     saveWindowState()
     mainWindow.show()
     mainWindow.focus()
     return {
       success: true,
       mode: windowState.mode,
-      overlayEnabled: windowState.mode === 'overlay',
       fullscreenEnabled: false,
       bounds,
     }
-  } catch (err: any) {
-    return { success: false, error: err?.message || String(err) }
-  }
-})
-
-ipcMain.handle('window:setOverlayMode', (_e: any, enabled: boolean) => {
-  try {
-    if (!mainWindow) createWindow()
-    applyWindowMode(enabled ? 'overlay' : 'normal')
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setIgnoreMouseEvents(false)
-    }
-    return { success: true, mode: windowState.mode, enabled: windowState.mode === 'overlay' }
   } catch (err: any) {
     return { success: false, error: err?.message || String(err) }
   }
@@ -784,6 +607,7 @@ app.whenReady().then(() => {
     '.jpg': 'image/jpeg',
     '.jpeg': 'image/jpeg',
     '.webp': 'image/webp',
+    '.mp3': 'audio/mpeg',
   }
   protocol.handle('userdata', async (request: any) => {
     try {

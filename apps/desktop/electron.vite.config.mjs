@@ -70,6 +70,7 @@ export default defineConfig({
   },
   renderer: {
     entry: 'src/renderer/index.html',
+    publicDir: path.resolve(__dirname, '../../packages/game-engine/assets'),
     resolve: {
       alias: {
         ...workspaceAlias,

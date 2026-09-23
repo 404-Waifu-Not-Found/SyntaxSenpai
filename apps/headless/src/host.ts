@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { createGameController, type GameController, type GameDifficulty, type GameKind, type GameSnapshot } from '@syntax-senpai/game-engine/dist/index.js'
+import { headlessStockfishAnalysisProvider } from './stockfish.js'
 import type { AgentSessionHost } from '@syntax-senpai/agent-session/dist/index.js'
 import type { ToolCall } from '@syntax-senpai/ai-core/dist/index.js'
 import { agentTools } from '@syntax-senpai/agent-tools/dist/catalog.js'
@@ -28,7 +29,7 @@ export interface HumanGameMoveResult {
 
 export interface HeadlessHost extends AgentSessionHost {
   state: HeadlessState
-  playHumanMove(move: string): HumanGameMoveResult
+  playHumanMove(move: string): Promise<HumanGameMoveResult>
   getGameSnapshot(): GameSnapshot | null
 }
 
@@ -290,14 +291,14 @@ export function createHeadlessHost(options: { cwd?: string; state?: HeadlessStat
   const host: HeadlessHost = {
     state,
     getGameSnapshot: () => game?.snapshot() ?? null,
-    playHumanMove(move) {
+    async playHumanMove(move) {
       if (!game) throw new Error('No minigame is currently open.')
       const humanSnapshot = game.applyMove(move, 'human')
       state.effects.push({ type: 'game_session', action: 'human_move', snapshot: humanSnapshot })
       let snapshot = humanSnapshot
       let agentMove: string | null = null
       if (humanSnapshot.turn === 'agent') {
-        agentMove = game.bestMove()
+        agentMove = await game.bestMove()
         if (!agentMove) throw new Error('The engine has no legal move in this position.')
         snapshot = game.applyMove(agentMove, 'agent')
         state.effects.push({ type: 'game_session', action: 'agent_move', snapshot })
@@ -434,10 +435,15 @@ export function createHeadlessHost(options: { cwd?: string; state?: HeadlessStat
             const difficulty = String(args.difficulty || 'balanced') as GameDifficulty
             if (!['tictactoe', 'connect4', 'chess'].includes(kind)) return 'Error: game_start requires kind=tictactoe, connect4, or chess.'
             if (!['casual', 'balanced', 'strong'].includes(difficulty)) return 'Error: game_start difficulty must be casual, balanced, or strong.'
-            game = createGameController(kind, { difficulty, humanSide: args.human_side === 'b' ? 'b' : 'w', humanStarts: args.human_starts !== false && String(args.human_starts) !== 'false' })
+            game = createGameController(kind, {
+              difficulty,
+              humanSide: args.human_side === 'b' ? 'b' : 'w',
+              humanStarts: args.human_starts !== false && String(args.human_starts) !== 'false',
+              ...(kind === 'chess' ? { chessAnalysisProvider: headlessStockfishAnalysisProvider } : {}),
+            })
             let snapshot = game.snapshot()
             if (snapshot.turn === 'agent') {
-              const move = game.bestMove()
+              const move = await game.bestMove()
               if (move) snapshot = game.applyMove(move, 'agent')
             }
             state.effects.push({ type: 'game_session', action: 'started', snapshot })
@@ -447,8 +453,8 @@ export function createHeadlessHost(options: { cwd?: string; state?: HeadlessStat
             if (!game) return 'Error: No minigame is currently open.'
             const requested = String(args.move || '').trim()
             if (!requested) return 'Error: game_move requires a move.'
-            const snapshot = requested.toLowerCase() === 'best'
-              ? (() => { const move = game!.bestMove(); if (!move) throw new Error('The engine has no legal move in this position.'); return game!.applyMove(move, 'agent') })()
+            const snapshot = requested.toLowerCase() === 'best' || game.snapshot().kind === 'chess'
+              ? await (async () => { const move = await game!.bestMove(); if (!move) throw new Error('The engine has no legal move in this position.'); return game!.applyMove(move, 'agent') })()
               : game.applyMove(requested, 'agent')
             state.effects.push({ type: 'game_session', action: 'move', snapshot })
             return `Agent played ${snapshot.lastMove || requested}. It is now ${snapshot.turn === 'human' ? 'the user' : snapshot.turn === 'agent' ? 'the agent' : 'game over'} turn.\nCurrent state:\n${json(snapshot)}`

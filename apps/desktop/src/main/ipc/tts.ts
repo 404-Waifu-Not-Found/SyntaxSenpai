@@ -2,6 +2,8 @@ const electronModule = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
+import { createMiniMaxVoiceClient } from '../tts/minimax-client'
+import { getStoredApiKey } from './keystore'
 
 const { ipcMain, app, dialog } = electronModule
 
@@ -276,6 +278,60 @@ export function registerTtsIpc() {
     }
   })
 
+  ipcMain.handle('tts:minimaxCloneVoice', async (_e: any, payload?: any) => {
+    let apiKey = ''
+    try {
+      apiKey = await getStoredApiKey('minimax-cn') || await getStoredApiKey('minimax-global') || ''
+      if (!apiKey) {
+        return { success: false, errorCode: 'CONFIG_ERROR', error: 'Save a MiniMax CN API key in Settings → AI providers before cloning a voice.' }
+      }
+
+      const result = await dialog.showOpenDialog({
+        title: 'Choose voice sample for MiniMax cloning',
+        buttonLabel: 'Clone voice',
+        filters: [{ name: 'Voice sample (10 seconds–5 minutes)', extensions: ['mp3', 'm4a', 'wav'] }],
+        properties: ['openFile'],
+      })
+      if (result.canceled || !result.filePaths.length) return { success: false, canceled: true }
+
+      const sourcePath = result.filePaths[0]
+      const extension = path.extname(sourcePath).slice(1).toLowerCase()
+      if (!['mp3', 'm4a', 'wav'].includes(extension)) {
+        return { success: false, errorCode: 'CONFIG_ERROR', error: 'Choose an MP3, M4A, or WAV voice sample.' }
+      }
+      const fileStats = fs.statSync(sourcePath)
+      if (fileStats.size <= 0 || fileStats.size > 20 * 1024 * 1024) {
+        return { success: false, errorCode: 'CONFIG_ERROR', error: 'MiniMax voice samples must be no larger than 20 MB.' }
+      }
+      if (extension === 'wav') {
+        const info = parseWavInfo(fs.readFileSync(sourcePath))
+        if (!info || info.durationMs < 10_000 || info.durationMs > 300_000) {
+          return { success: false, errorCode: 'CONFIG_ERROR', error: 'The WAV sample must be valid and 10 seconds to 5 minutes long.' }
+        }
+      }
+
+      const contentType = extension === 'wav' ? 'audio/wav' : extension === 'm4a' ? 'audio/mp4' : 'audio/mpeg'
+      const client = createMiniMaxVoiceClient(apiKey)
+      const fileId = await client.uploadCloneAudio({
+        fileName: path.basename(sourcePath),
+        bytes: new Uint8Array(fs.readFileSync(sourcePath)),
+        mimeType: contentType,
+      })
+      const name = String(payload?.displayName || 'assistant').normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 24) || 'assistant'
+      const voiceId = `syntaxsenpai_${name}_${crypto.randomBytes(5).toString('hex')}`
+      const previewText = `Hello, I'm ${String(payload?.displayName || 'your assistant').replace(/[\r\n]/g, ' ').slice(0, 48)}. This is my cloned voice.`
+      await client.cloneVoice(fileId, voiceId, previewText)
+      return { success: true, voiceId, fileName: path.basename(sourcePath) }
+    } catch (err: any) {
+      const message = err instanceof Error ? err.message : String(err)
+      return {
+        success: false,
+        errorCode: message.toLowerCase().includes('timed out') ? 'INFERENCE_TIMEOUT' : 'INFERENCE_FAILED',
+        error: apiKey ? message.split(apiKey).join('[redacted]') : message,
+      }
+    }
+  })
+
   ipcMain.handle('tts:cancel', async (_e: any, requestId?: string) => {
     try {
       if (requestId && activeRequests.has(requestId)) {
@@ -303,6 +359,29 @@ export function registerTtsIpc() {
       const text = typeof payload?.text === 'string' ? payload.text.trim() : ''
       if (!text) {
         return { success: false, requestId, errorCode: 'CONFIG_ERROR', error: 'text is required' }
+      }
+
+      if (payload?.provider === 'minimax-clone') {
+        const voiceId = typeof payload?.voiceId === 'string' ? payload.voiceId.trim() : ''
+        if (!voiceId) return { success: false, requestId, errorCode: 'CONFIG_ERROR', error: 'A cloned MiniMax voice ID is required.' }
+        const apiKey = await getStoredApiKey('minimax-cn') || await getStoredApiKey('minimax-global') || ''
+        if (!apiKey) return { success: false, requestId, errorCode: 'CONFIG_ERROR', error: 'Save a MiniMax CN API key in Settings → AI providers first.' }
+
+        const controller = new AbortController()
+        activeRequests.set(requestId, controller)
+        const timeout = setTimeout(() => controller.abort(new Error('MiniMax voice synthesis timed out.')), 120_000)
+        try {
+          const client = createMiniMaxVoiceClient(apiKey)
+          const audio = await client.synthesize(text, voiceId, controller.signal)
+          ensureDir(ttsCacheDir())
+          const safeRequestId = requestId.replace(/[^a-z0-9_-]/gi, '_').slice(0, 100)
+          const outPath = path.join(ttsCacheDir(), `${safeRequestId}.mp3`)
+          fs.writeFileSync(outPath, audio)
+          return { success: true, requestId, audioPath: toUserdataUrl(outPath), durationMs: 0 }
+        } finally {
+          clearTimeout(timeout)
+          activeRequests.delete(requestId)
+        }
       }
 
       const referenceWavId = typeof payload?.referenceWavId === 'string' ? payload.referenceWavId.trim() : ''

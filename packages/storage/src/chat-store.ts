@@ -72,8 +72,9 @@ export class InMemoryChatStore implements IChatStore {
     }
   }
 
-  async getMessages(conversationId: string): Promise<Message[]> {
-    return this.messages.get(conversationId) || [];
+  async getMessages(conversationId: string, limit?: number): Promise<Message[]> {
+    const messages = this.messages.get(conversationId) || [];
+    return Number.isInteger(limit) && limit! > 0 ? messages.slice(-limit!) : messages;
   }
 
   async deleteMessages(conversationId: string, beforeDate?: string): Promise<void> {
@@ -274,8 +275,9 @@ export class DesktopSQLiteChatStore implements IChatStore {
     this.scheduleFlush();
   }
 
-  async getMessages(conversationId: string): Promise<Message[]> {
-    return this.data.messages[conversationId] || [];
+  async getMessages(conversationId: string, limit?: number): Promise<Message[]> {
+    const messages = this.data.messages[conversationId] || [];
+    return Number.isInteger(limit) && limit! > 0 ? messages.slice(-limit!) : messages;
   }
 
   async deleteMessages(conversationId: string, beforeDate?: string): Promise<void> {

@@ -34,6 +34,17 @@ describe("InMemoryChatStore", () => {
     expect(refreshed?.messageCount).toBe(2);
   });
 
+  it("can return only the newest messages for bounded history reads", async () => {
+    const store = new InMemoryChatStore();
+    const conv = await store.createConversation("aria");
+    await store.addMessage(conv.id, makeMsg("m1", "first"));
+    await store.addMessage(conv.id, makeMsg("m2", "second"));
+    await store.addMessage(conv.id, makeMsg("m3", "third"));
+
+    expect((await store.getMessages(conv.id, 2)).map((message) => message.id)).toEqual(["m2", "m3"]);
+    expect(await store.getMessages(conv.id)).toHaveLength(3);
+  });
+
   it("lists conversations filtered by waifuId", async () => {
     const store = new InMemoryChatStore();
     await store.createConversation("aria", "A");

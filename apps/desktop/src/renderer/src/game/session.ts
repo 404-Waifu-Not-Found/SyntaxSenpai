@@ -2,11 +2,12 @@ import { shallowReactive } from 'vue'
 import {
   createGameController,
   type GameController,
-  type GameDifficulty,
+  type GameOptions,
   type GameKind,
   type GameSide,
   type GameSnapshot,
 } from '@syntax-senpai/game-engine'
+import { browserStockfishAnalysisProvider } from './stockfish-browser'
 
 export interface GameSessionEvent {
   type: 'started' | 'move' | 'closed'
@@ -55,22 +56,34 @@ function updateSnapshot(snapshot: GameSnapshot, event: Omit<GameSessionEvent, 's
 
 export function startGameSession(
   kind: GameKind,
-  options: { difficulty?: GameDifficulty; humanSide?: string; humanStarts?: boolean } = {},
-): GameSnapshot {
-  const controller = createGameController(kind, options)
+  options: GameOptions = {},
+): Promise<GameSnapshot> {
+  // Tool and UI intent detection may both request the same game during one
+  // chat turn. Reuse the already-visible session instead of silently
+  // replacing the board the renderer is showing.
+  if (gameSession.open && gameSession.snapshot?.kind === kind) {
+    return Promise.resolve(gameSession.snapshot)
+  }
+
+  const controller = createGameController(kind, {
+    ...options,
+    ...(kind === 'chess' && !options.chessAnalysisProvider && !options.chessMoveProvider
+      ? { chessAnalysisProvider: browserStockfishAnalysisProvider }
+      : {}),
+  })
   const sessionId = `game-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   gameSession.open = true
   gameSession.sessionId = sessionId
   gameSession.controller = controller
   gameSession.snapshot = controller.snapshot()
-  gameSession.busy = false
+  gameSession.busy = gameSession.snapshot.turn === 'agent'
   publish({ type: 'started', sessionId, snapshot: gameSession.snapshot })
 
   // Let the engine make the opening move when the user chose to play second.
   if (gameSession.snapshot.turn === 'agent') {
-    return applyBestAgentMove()
+    return applyBestAgentMove().finally(() => { gameSession.busy = false })
   }
-  return gameSession.snapshot
+  return Promise.resolve(gameSession.snapshot)
 }
 
 export function applyGameSessionMove(move: string, actor: GameSide): GameSnapshot {
@@ -80,14 +93,24 @@ export function applyGameSessionMove(move: string, actor: GameSide): GameSnapsho
   return snapshot
 }
 
-export function applyBestAgentMove(): GameSnapshot {
+export async function applyBestAgentMove(): Promise<GameSnapshot> {
   const controller = requireController()
   if (gameSession.snapshot?.turn !== 'agent') {
     throw new Error(`It is ${gameSession.snapshot?.turn || 'game over'}'s turn.`)
   }
-  const move = controller.bestMove()
-  if (!move) throw new Error('The engine has no legal move in this position.')
-  return applyGameSessionMove(move, 'agent')
+  const sessionId = gameSession.sessionId
+  const wasBusy = gameSession.busy
+  gameSession.busy = true
+  try {
+    const move = await controller.bestMove()
+    if (sessionId !== gameSession.sessionId || controller !== gameSession.controller || !gameSession.open) {
+      throw new Error('The game session changed while the engine was thinking.')
+    }
+    if (!move) throw new Error('The engine has no legal move in this position.')
+    return applyGameSessionMove(move, 'agent')
+  } finally {
+    gameSession.busy = wasBusy
+  }
 }
 
 export function getGameSessionSnapshot(): GameSnapshot | null {

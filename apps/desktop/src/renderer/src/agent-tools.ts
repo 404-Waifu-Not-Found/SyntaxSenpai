@@ -16,6 +16,8 @@ import { renderContentToPng } from './services/render-to-image'
 import { sendWeChatImageWithFallback } from './services/wechat-image-send'
 import * as browserController from './browser/controller'
 import { useBrowserStore } from './stores/browser'
+import { useWorkspaceStore } from './stores/workspace'
+import { normalizeVoiceoverText } from './utils/assistant-output'
 import {
   applyBestAgentMove,
   applyGameSessionMove,
@@ -25,6 +27,38 @@ import {
 import type { GameDifficulty, GameKind } from '@syntax-senpai/game-engine'
 
 export type AgentMode = 'auto' | 'full'
+export const VOICE_OVER_TOOL_NAME = 'voice_over'
+export const VOICE_OVER_EVENT = 'syntax-senpai:voice-over'
+
+const workspaceControlTools: ToolDefinition[] = [
+  {
+    name: 'workspace_set_mode',
+    description: 'Change the chat workspace mode to auto, chat, or code. Code mode opens the workspace panel; coding-only tools still require an active coding repository. Chat mode closes the panel; auto opens it when coding work is relevant. Use only when it helps the user’s current request.',
+    parameters: {
+      type: 'object',
+      properties: { mode: { type: 'string', enum: ['auto', 'chat', 'code'] } },
+      required: ['mode'],
+    },
+  },
+  {
+    name: 'workspace_set_open',
+    description: 'Open or close the coding workspace panel in the desktop chat. This controls visibility without changing its current auto/chat/code mode.',
+    parameters: {
+      type: 'object',
+      properties: { open: { type: 'boolean', description: 'True to show the workspace panel, false to hide it.' } },
+      required: ['open'],
+    },
+  },
+  {
+    name: VOICE_OVER_TOOL_NAME,
+    description: 'Speak an AI-composed spoken summary using the selected waifu’s MiniMax cloned voice only. Never fall back to Web Speech, a system voice, or another provider. Use one or two natural sentences (35 words maximum) containing only words and punctuation a person would say aloud. Omit cards, tables, emoji, markdown, code, logs, tool output, stage directions, boards, diagrams, chess notation, and coordinates. For game commentary, use the authoritative state and describe the engine move that actually happened. Wait for this tool result before stop_response; the final written reply may be different but must stay within 50 words.',
+    parameters: {
+      type: 'object',
+      properties: { text: { type: 'string', description: 'An AI-written spoken summary, one or two natural sentences and no more than 35 words. Do not copy the full answer. Plain words and punctuation only; never include card contents, emoji, markdown, code, logs, board state, chess notation, or coordinates.' } },
+      required: ['text'],
+    },
+  },
+]
 
 // Keep the renderer on the browser-safe tool catalog. The package root also
 // exports filesystem-backed plugin and Live2D helpers, which must stay in the
@@ -152,7 +186,7 @@ export function getToolsForMode(
   // Plugin-contributed tools are appended unconditionally — per-plugin
   // enable/disable is handled on the main side, so anything reaching
   // pluginToolsCache is already opt-in.
-  return [...base, ...pluginToolsCache]
+  return [...base, ...workspaceControlTools, ...pluginToolsCache]
 }
 
 /**
@@ -351,6 +385,24 @@ async function executeBrowserTool(toolCall: ToolCall): Promise<string> {
  * so it should never reach the executor — but we handle it gracefully.
  */
 export async function executeToolCall(toolCall: ToolCall): Promise<string> {
+  if (toolCall.name === 'workspace_set_mode') {
+    const mode = String((toolCall.arguments as any)?.mode || '')
+    if (!['auto', 'chat', 'code'].includes(mode)) {
+      return 'Error: workspace_set_mode requires mode=auto, chat, or code.'
+    }
+    const workspace = useWorkspaceStore()
+    await workspace.setMode(mode as 'auto' | 'chat' | 'code')
+    return `Workspace mode set to ${mode}; the panel is ${workspace.open ? 'open' : 'closed'}.`
+  }
+
+  if (toolCall.name === 'workspace_set_open') {
+    const value = (toolCall.arguments as any)?.open
+    if (typeof value !== 'boolean') return 'Error: workspace_set_open requires a boolean open value.'
+    const workspace = useWorkspaceStore()
+    workspace.open = value
+    return `Workspace panel ${value ? 'opened' : 'closed'} in ${workspace.mode} mode.`
+  }
+
   if (toolCall.name === GAME_START_TOOL_NAME) {
     const args = (toolCall.arguments ?? {}) as Record<string, unknown>
     const allowedKinds: GameKind[] = ['tictactoe', 'connect4', 'chess']
@@ -360,7 +412,7 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
     if (!allowedKinds.includes(kind)) return 'Error: game_start requires kind=tictactoe, connect4, or chess.'
     if (!allowedDifficulties.includes(difficulty)) return 'Error: game_start difficulty must be casual, balanced, or strong.'
     try {
-      const snapshot = startGameSession(kind, {
+      const snapshot = await startGameSession(kind, {
         difficulty,
         humanSide: args.human_side === 'b' ? 'b' : 'w',
         humanStarts: args.human_starts !== false && String(args.human_starts) !== 'false',
@@ -376,8 +428,8 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
     const requestedMove = String(args.move || '').trim()
     if (!requestedMove) return 'Error: game_move requires a move.'
     try {
-      const snapshot = requestedMove.toLowerCase() === 'best'
-        ? applyBestAgentMove()
+      const snapshot = requestedMove.toLowerCase() === 'best' || getGameSessionSnapshot()?.kind === 'chess'
+        ? await applyBestAgentMove()
         : applyGameSessionMove(requestedMove, 'agent')
       return `Agent played ${snapshot.lastMove || requestedMove}. It is now ${snapshot.turn === 'human' ? 'the user' : snapshot.turn === 'agent' ? 'the agent' : 'game over'} turn.\nCurrent state:\n${JSON.stringify(snapshot)}`
     } catch (err: any) {
@@ -388,6 +440,28 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
   if (toolCall.name === GAME_STATE_TOOL_NAME) {
     const snapshot = getGameSessionSnapshot()
     return snapshot ? `Current state:\n${JSON.stringify(snapshot)}` : 'No minigame is currently open.'
+  }
+
+  if (toolCall.name === VOICE_OVER_TOOL_NAME) {
+    const text = normalizeVoiceoverText(String((toolCall.arguments as any)?.text || ''))
+    if (!text) return 'Error: voice_over needs a short spoken sentence; board diagrams and non-spoken content are not accepted.'
+    const response: {
+      handled: boolean
+      enabled: boolean
+      playback?: Promise<{ success: boolean; error?: string }>
+    } = { handled: false, enabled: false }
+    window.dispatchEvent(new CustomEvent(VOICE_OVER_EVENT, {
+      detail: {
+        text,
+        respond: (value: typeof response) => Object.assign(response, value),
+      },
+    }))
+    if (!response.handled) return 'Error: voice_over is unavailable in this desktop window.'
+    if (!response.enabled) return 'MiniMax voice output is disabled or no cloned MiniMax voice is configured. The line was not spoken; do not claim that it was.'
+    if (!response.playback) return 'Error: MiniMax voice playback did not start.'
+    const playback = await response.playback
+    if (!playback.success) return `Error: MiniMax voice playback failed: ${playback.error || 'no audio was played'}. Do not claim that it was spoken.`
+    return 'MiniMax voice-over playback started successfully. Reply with the same short spoken line; do not add a board or diagram.'
   }
 
   const ipc = (window as any).electron?.ipcRenderer
@@ -818,6 +892,10 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
 export function describeToolCall(toolCall: ToolCall): string {
   const args = (toolCall.arguments ?? {}) as Record<string, unknown>
   switch (toolCall.name) {
+    case 'workspace_set_mode':
+      return `workspace_set_mode(${String(args.mode ?? '')})`
+    case 'workspace_set_open':
+      return `workspace_set_open(${args.open === true || String(args.open) === 'true' ? 'open' : 'close'})`
     case 'terminal':
       return `$ ${args.command ?? ''}`
     case 'read_file':
@@ -888,6 +966,8 @@ export function describeToolCall(toolCall: ToolCall): string {
       return `game_move(${String((args as any).move ?? 'best')})`
     case GAME_STATE_TOOL_NAME:
       return 'game_state()'
+    case VOICE_OVER_TOOL_NAME:
+      return `voice_over(${String((args as any).text ?? '').slice(0, 48)})`
     case SET_EXPRESSION_TOOL_NAME:
       return `set_expression(${String((args as any).expression ?? 'neutral').slice(0, 30)})`
     case 'spotify_now_playing':

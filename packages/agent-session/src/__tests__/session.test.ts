@@ -156,4 +156,20 @@ describe('runAgentSession', () => {
     expect(history.slice(-2).map((message) => message.content)).toEqual(result.finalMessages)
     expect(result.events.at(-1)).toMatchObject({ type: 'turn_complete', result: { finalMessages: result.finalMessages } })
   })
+
+  it('caps the complete final response at 50 words', async () => {
+    const longMessage = Array.from({ length: 60 }, (_, index) => `word${index}`).join(' ')
+    const result = await runAgentSession({
+      model: 'fixture',
+      history: [],
+      tools: [],
+      systemPrompt: '',
+      maxIterations: 1,
+      callProvider: async () => ({ id: 'assistant-long', content: longMessage, toolCalls: [] }),
+      host: { executeTool: async () => 'unused' },
+    })
+
+    expect(result.finalContent.split(/\s+/)).toHaveLength(50)
+    expect(result.finalContent.endsWith('…')).toBe(true)
+  })
 })

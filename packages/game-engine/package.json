@@ -1,6 +1,7 @@
 {
   "name": "@syntax-senpai/game-engine",
   "version": "0.0.1",
+  "type": "module",
   "description": "Deterministic minigame rules and AI engines for SyntaxSenpai",
   "private": true,
   "main": "dist/index.js",

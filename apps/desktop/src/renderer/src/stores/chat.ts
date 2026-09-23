@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { builtInWaifus, detectMilestone, describeMilestone, formatSkillsForPrompt, rankMemories } from '@syntax-senpai/waifu-core'
 import type { SentimentResult, MilestoneEvent, Waifu, Skill } from '@syntax-senpai/waifu-core'
 import { AIChatRuntime, withRetry, classifyError, describeError, type ToolCall } from '@syntax-senpai/ai-core'
@@ -10,8 +10,15 @@ import { getToolsForMode, executeToolCall, describeToolCall, parseTodoList, STOP
 import { useBrowserStore } from './browser'
 import { buildAgentSessionPrompt, runAgentSession, type SideEffectResult } from '../agent/run-turn'
 import { detectGameLaunchIntent } from '../game/intent'
-import { startGameSession } from '../game/session'
+import { getGameSessionSnapshot, startGameSession } from '../game/session'
+import { stripBoardDiagrams } from '../utils/assistant-output'
 import { fallbackConversationTitle, needsAutomaticConversationTitle } from './conversation-title'
+import {
+  buildNewChatSuggestionContext,
+  fingerprintSuggestionContext,
+  parseNewChatSuggestions,
+  type NewChatSuggestion,
+} from '../composables/new-chat-suggestions'
 import {
   dispatchSubagents,
   type SubagentSnapshot,
@@ -243,6 +250,8 @@ const DEFAULT_PROACTIVE_CHAT_WORK_HOURS_START = '09:00'
 const DEFAULT_PROACTIVE_CHAT_WORK_HOURS_END = '18:00'
 const DEFAULT_PROACTIVE_CHAT_DO_NOT_DISTURB_START = '23:00'
 const DEFAULT_PROACTIVE_CHAT_DO_NOT_DISTURB_END = '08:00'
+const DEFAULT_PROVIDER = 'deepseek'
+const DEFAULT_PROVIDER_MIGRATION_KEY = 'syntax-senpai-default-provider-deepseek-v1'
 const PROACTIVE_CHAT_ONLINE_REENGAGE_MS = 30 * 60 * 1000
 const PROACTIVE_CHAT_ONLINE_DEDUP_MS = 2 * 60 * 1000
 const API_TELEMETRY_HISTORY_LIMIT = 48
@@ -421,7 +430,10 @@ function parseEmotionTag(content: string): { emotion: string | null; content: st
 }
 
 function createWaifuSystemPrompt(waifu: any, provider: string, model: string, affection: number) {
-  return buildAgentSessionPrompt({ waifu, provider, model, affection })
+  return `${buildAgentSessionPrompt({ waifu, provider, model, affection })}
+
+[In-chat game selection]
+When the user asks to play a game but does not name one, ask which game they want and offer Tic-Tac-Toe, Connect Four, or chess. Do not choose or launch a game until they name one or make an unambiguous choice from your list.`
 }
 
 /** Render the active todo checklist for the todoread tool result. */
@@ -436,18 +448,73 @@ function formatTodoList(items: TodoItem[]): string {
   return `Current todo list (${done}/${items.length} done):\n${lines.join('\n')}`
 }
 
-function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: string, isWebSearchEnabled: boolean): string {
+function describeRuntimePlatform(platform: string | undefined): string {
+  if (!platform) return 'Unavailable (do not assume Windows)'
+  const names: Record<string, string> = {
+    darwin: 'macOS', win32: 'Windows', linux: 'Linux', freebsd: 'FreeBSD',
+    openbsd: 'OpenBSD', android: 'Android', aix: 'AIX', sunos: 'Solaris',
+  }
+  return `${names[platform] || platform} (${platform})`
+}
+
+async function getAgentSystemInfo(invoke: any): Promise<Record<string, any>> {
+  const exposed = (window as any).systemInfo || {}
+  try {
+    // The main process is authoritative and also supplies the active shell/runtime.
+    return { ...exposed, ...await invoke('terminal:systemInfo') }
+  } catch {
+    return exposed
+  }
+}
+
+function buildSystemEnvironmentPrompt(systemInfo: Record<string, any>): string {
+  const lines = [
+    `Operating system: ${describeRuntimePlatform(typeof systemInfo.platform === 'string' ? systemInfo.platform : undefined)}`,
+    `Architecture: ${systemInfo.arch || 'unknown'}`,
+    `Shell: ${systemInfo.shell || 'unknown'}`,
+    `Username: ${systemInfo.username || 'unavailable'}`,
+    `Home directory: ${systemInfo.homedir || 'unavailable'}`,
+  ]
+  if (systemInfo.electronVersion || systemInfo.nodeVersion || systemInfo.chromiumVersion) {
+    lines.push(`Runtime: Electron ${systemInfo.electronVersion || 'unknown'}, Node.js ${systemInfo.nodeVersion || 'unknown'}, Chromium ${systemInfo.chromiumVersion || 'unknown'}`)
+  }
+  lines.push('These values come from the app host and are authoritative. Choose commands for this OS and shell; never assume Windows or use Windows-only commands on macOS/Linux.')
+  return `\n\n[System Environment]\n${lines.join('\n')}`
+}
+
+function isVoiceOutputEnabled(waifu: any): boolean {
+  const enabled = typeof waifu?.tts?.enabled === 'boolean'
+    ? waifu.tts.enabled
+    : (() => { try { return localStorage.getItem('syntax-senpai-voice-enabled') === 'true' } catch { return false } })()
+  return enabled && typeof waifu?.tts?.minimaxVoiceId === 'string' && !!waifu.tts.minimaxVoiceId.trim()
+}
+
+function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: string, isWebSearchEnabled: boolean, platform?: string, voiceEnabled = false): string {
   const shellLine = shell ? `\n- Shell: ${shell}. Each terminal call is a new process — \`cd\` does NOT persist between calls; use absolute paths or chain with \`&&\`.` : ''
   const webSearchLine = isWebSearchEnabled
     ? '- web_search → web result links/snippets (Tavily when a key is configured, otherwise DuckDuckGo). Use it to find sources for unfamiliar or possibly recent memes, slang, internet phrases, references, and named topics — including short out-of-context tokens (a bare number, a lone odd word, an emoji combo) that read as an inside joke rather than a literal value. It is NOT a realtime data source: never use it for weather, stocks, scores, prices, time, or other live facts.'
     : '- web_search is disabled by the user. Do not call it. If a lookup would help, say web search must be enabled in Settings.'
+  const isWindows = platform === 'win32'
+  const curl = isWindows ? 'curl.exe' : 'curl'
+  const timeCommand = isWindows ? 'Get-Date' : 'date'
+  const networkCommand = isWindows ? 'Test-NetConnection example.com -Port 443' : 'nc -vz example.com 443'
+  const voiceOutputLine = voiceEnabled
+    ? 'Voice is enabled through the configured MiniMax cloned voice only. Before stop_response, call voice_over once with a separate, AI-selected spoken summary: one or two natural sentences, no more than 35 words. Never use a browser/system voice or another provider as fallback. Never copy the whole written answer; omit cards, tables, emoji, Markdown, code, logs, tool output, stage directions, game notation, and diagrams. Wait for voice_over to confirm playback before claiming the line was spoken. The final written reply is also capped at 50 words.'
+    : 'Voice output is disabled for this waifu. Do not call voice_over.'
   // 这段提示词专门约束 agent 如何选工具、何时停止重试以及何时必须先验证结果。
   return `\n\n[Agent Behavior]
 You can act on the user's machine through tools. Your goal is to actually finish the task, verified, not to sound like you finished it.
 
 Game UI rule:
-- When the user asks to play Tic-Tac-Toe, Connect Four, or chess, call game_start immediately before replying. This opens an interactive game panel inside the chat window. Never replace it with an ASCII board or instructions to type a square number. After game_start, briefly acknowledge that the board is ready and let the user play by clicking it.
+- Never print a board, grid, diagram, ASCII position, FEN, or Markdown table representing a game board in any user-facing message. The embedded game panel is the only board display. Never tell the user to type a square number; they play by clicking the panel.
+- When the user asks to play Tic-Tac-Toe, Connect Four, or chess, the app executes the real game_start tool before contacting the model, which opens the interactive embedded panel. Treat its returned state as authoritative; briefly acknowledge it, then wait for the user to click.
+- When the user asks to play a game without naming one, the app opens Tic-Tac-Toe by default before contacting the model. Acknowledge the visible board and wait for their click. They can choose Connect Four or chess instead at any time.
 - The built-in engine replies automatically to each human click. Make a brief remark using the authoritative game state from the minigame event; do not call game_move again for that turn. Never invent a board or move.
+- Chess snapshots include Stockfish analysis: evaluation is White-perspective (cp means centipawns; signed mate means which side can force mate), and MultiPV lines are SAN. Use that evaluation when commenting, but do not claim a forced win unless the engine reports mate. When forcedMateWithinThree is true, Stockfish selects and plays its mating move immediately before the agent is asked to comment; never make a duplicate move or wait for another tool call.
+- After a human game move, distinguish the human move from the engine's reply. The final lastMove in the authoritative snapshot is the move the engine just played; if you describe your own move, refer to that move, not the human's preceding move. Keep game analysis grounded in the provided side-to-move, result, and evaluation.
+- For game-turn voice output, call voice_over once with only the concise natural-language sentence to speak. Use words and punctuation only—no boards, diagrams, SAN strings, coordinates, emoji, code, Markdown, or tool/state data. Speak about the engine's actual reply, then use the same short sentence as the final message. If voice output is unavailable, still keep the final message board-free.
+- ${voiceOutputLine}
+- Every final user-facing response must be 50 words or fewer, including stop_response.final_message. Be direct and omit unnecessary recap.
 
 Tool selection — use the dedicated tool, not a shell workaround:
 - terminal → running programs, git, installs, diagnostics, network checks, realtime data via public APIs, command-line verification. NOT for reading, editing, searching, or listing files.
@@ -480,25 +547,25 @@ Unfamiliar memes, slang, and internet references:
 5. If search is disabled, results are empty, or the evidence is weak or conflicting, say plainly and in character that you don't get the reference and ask what they mean. Do NOT invent a meaning and do NOT pretend a bare number is a technical value.
 6. When a search resolves the reference, answer the user's actual message naturally and in character. Do not turn every casual phrase into a research report.
 
-Terminal recipes for realtime data:
-- Weather: \`curl.exe -s "https://wttr.in/Tokyo?format=3"\` (one-liner) or \`curl.exe -s "https://wttr.in/Tokyo?format=j1"\` (JSON; read \`current_condition[0]\` for now, \`weather[1]\` for tomorrow). On macOS/Linux use \`curl\` instead of \`curl.exe\`.
-- If the user asks for weather with no location: ask them once, OR infer via \`curl.exe -s "https://ipinfo.io/json"\` and use the \`city\` field. Do not guess.
-- Time/IP/network: \`Get-Date\`, \`curl.exe -s "https://worldtimeapi.org/api/ip"\`, \`curl.exe -s "https://api.ipify.org"\`, \`Test-NetConnection example.com -Port 443\`.
+Terminal recipes for realtime data (${describeRuntimePlatform(platform)}; ${shell || 'shell unavailable'}):
+- Weather: \`${curl} -fsS "https://wttr.in/Tokyo?format=3"\` (one-liner) or \`${curl} -fsS "https://wttr.in/Tokyo?format=j1"\` (JSON; read \`current_condition[0]\` for now, \`weather[1]\` for tomorrow).
+- If the user asks for weather with no location: ask them once, OR infer via \`${curl} -fsS "https://ipinfo.io/json"\` and use the \`city\` field. Do not guess.
+- Time/IP/network: \`${timeCommand}\`, \`${curl} -fsS "https://worldtimeapi.org/api/ip"\`, \`${curl} -fsS "https://api.ipify.org"\`, \`${networkCommand}\`.
 - Package versions: \`npm view <pkg> version\`, \`pnpm view <pkg> version\`, \`python -m pip index versions <pkg>\`.
 - More examples in \`docs/agent-skills/common-commands.skill\`.
 
 Anti-loop rules (CRITICAL — violating these wastes the user's tokens):
 - Repeating a failed action without new evidence is wasteful. Re-read changed files and poll running processes when their state may have changed.
-- If web_search returns an empty summary, "No instant answer", or only unrelated links: STOP. Do not retry with a different query. State the limitation and ask for context or explain which capability must be enabled.
+- If web_search returns an empty summary, "No instant answer", or unrelated links, do not spam rephrased searches. Treat that route as a failed attempt, then use materially different available sources or tools when reasonable; stop only after three distinct safe approaches fail or a genuine blocker is reached.
 - Diagnose failures by action. Revise stale inputs, retry transient failures, and continue independent work. Stop repeating an unchanged failed action; report unresolved blockers accurately.
-- Do not call web_search to "double-check" something you already know. One search, tops, and only if it can resolve uncertainty or add useful sources.
+- Do not call web_search to "double-check" something you already know. Use at most one search for the same query; if it fails, change the source or method rather than repeating it.
 
 Workflow for non-trivial tasks:
 1. If the task has more than ~2 steps, write a one-line plan in your thinking before calling any tool. Revise it if a step fails.
 2. Gather before you act. Read files / list dirs / check versions before editing or installing.
 3. Parallelize independent work. When several terminal commands, reads, searches, or fetches do not depend on each other's results, emit all of those tool calls in the SAME reply; the runtime executes up to 8 at once. For example, opening the same requested URL in 10 tabs should be requested as 10 terminal calls in one reply, not one call per model round-trip. Keep dependent actions sequential, and don't hide unrelated commands in one \`&&\` chain.
-4. Read the tool result. If stderr is non-empty or the exit code is non-zero, DIAGNOSE before retrying. Never rerun the exact same failed command hoping it works.
-5. On failure: try once with a real fix. If it still fails, explain the blocker instead of looping.
+4. Read the tool result. If stderr is non-empty or the exit code is non-zero, diagnose the actual cause before retrying. Never rerun the exact same failed command hoping it works.
+5. For a recoverable failure, try at least three materially different, safe approaches before giving up; change the method based on evidence rather than repeating unchanged inputs. Stop sooner only for a genuine hard blocker or safety boundary, and explain it accurately.
 6. Verify before stopping. Confirm the file reads back correctly, the test passes, the process is up, etc. Only then call stop_response.
 
 Efficiency rules:
@@ -625,7 +692,7 @@ Reading and finding things:
 - browser_scroll reveals off-screen elements (snapshots mark them [offscreen]).
 - browser_wait pauses for content that loads after navigation (spinners, async results, lazy lists). Prefer until_text so you stop as soon as the expected text appears instead of over-waiting. You can also use a wait step inside browser_act.
 - If an element you expect isn't in the snapshot, scroll, wait, or re-snapshot — don't guess refs.
-- After 2 failed attempts at the same interaction, tell the user what's blocking instead of retrying.
+- Do not repeat an unchanged failed interaction. Try up to three distinct, safe interaction approaches when the page state allows; if three materially different approaches fail, report the observed blocker.
 ${visionCapable ? '- browser_screenshot is a LAST RESORT for canvas/map/image-heavy pages where the text snapshot is useless.' : ''}
 Safety (non-negotiable):
 - NEVER type passwords, payment details, or 2FA codes — the field will refuse anyway; ask the user to type them directly in the panel.
@@ -975,8 +1042,8 @@ export const useChatStore = defineStore('chat', () => {
   // overrides (e.g. assigning a Live2D model to a built-in waifu) become
   // visible — the on-disk shadow file only carries the patched fields.
   const allWaifus = computed<Waifu[]>(() => mergeWaifus(builtInWaifus, customWaifus.value))
-  const selectedProvider = ref('anthropic')
-  const selectedModel = ref(DEFAULT_MODEL_BY_PROVIDER.anthropic)
+  const selectedProvider = ref(DEFAULT_PROVIDER)
+  const selectedModel = ref(DEFAULT_MODEL_BY_PROVIDER[DEFAULT_PROVIDER])
   const apiKey = ref('')
   const messages = ref<Message[]>([])
   const inputValue = ref('')
@@ -990,6 +1057,9 @@ export const useChatStore = defineStore('chat', () => {
   const conversationId = ref<string | null>(null)
   const conversations = ref<any[]>([])
   const autoNamingConversationIds = new Set<string>()
+  const newChatSuggestions = ref<NewChatSuggestion[]>([])
+  const newChatSuggestionRequests = new Map<string, Promise<void>>()
+  let openingNewChat = false
   const recentMessageId = ref<string | null>(null)
   const pendingClearVerification = ref(false)
   const activeCodingRepo = ref<ActiveCodingRepo | null>(null)
@@ -1849,15 +1919,10 @@ Write one cohesive reply of 2-4 sentences. Prefer emotional presence and charact
       const hasTools = tools.length > 0
 
       if (hasTools) {
-        let sys = (window as any).systemInfo
-        if (!sys || !sys.homedir) {
-          try { sys = await invoke('terminal:systemInfo') } catch {}
-        }
-        if (sys && sys.homedir) {
-          cachedSystemPrompt += `\n\n[System Environment]\nOS: ${sys.platform}\nUsername: ${sys.username}\nHome directory: ${sys.homedir}\nShell: ${sys.shell ?? 'unknown'}`
-        }
+        const sys = await getAgentSystemInfo(invoke)
+        cachedSystemPrompt += buildSystemEnvironmentPrompt(sys)
         cachedSystemPrompt += buildAgentAccessPrompt(agentMode.value)
-        cachedSystemPrompt += buildAgentBehaviorPrompt(sys?.shell, waifu?.displayName || 'your waifu persona', webSearchEnabled.value)
+        cachedSystemPrompt += buildAgentBehaviorPrompt(sys.shell, waifu?.displayName || 'your waifu persona', webSearchEnabled.value, sys.platform, isVoiceOutputEnabled(waifu))
         if (browserStore.aiControlEnabled) cachedSystemPrompt += buildBrowserSessionPromptBlock(visionCapable)
       }
 
@@ -2365,8 +2430,25 @@ Write one cohesive reply of 2-4 sentences. Prefer emotional presence and charact
     void invoke('policy:get').then((p: any) => { agentMode.value = p.autoDecideActions ? 'auto' : 'full' })
     const saved = localStorage.getItem('syntax-senpai-setup')
     if (saved) {
-      const { waifuId, provider, model, hasSetup } = JSON.parse(saved)
+      const { waifuId, provider: savedProvider, model: savedModel, hasSetup } = JSON.parse(saved)
       if (hasSetup) {
+        let provider = savedProvider || DEFAULT_PROVIDER
+        let model = savedModel
+        // Move existing installations to the requested DeepSeek default once;
+        // after that, any provider the user selects is respected on restart.
+        if (localStorage.getItem(DEFAULT_PROVIDER_MIGRATION_KEY) !== 'true') {
+          provider = DEFAULT_PROVIDER
+          model = readProviderPreferences()[provider]?.model || DEFAULT_MODEL_BY_PROVIDER[provider]
+          saveProviderPreferences(provider, { model })
+          localStorage.setItem(DEFAULT_PROVIDER_MIGRATION_KEY, 'true')
+          localStorage.setItem('syntax-senpai-setup', JSON.stringify({
+            waifuId,
+            provider,
+            model,
+            hasSetup: true,
+            demo: false,
+          }))
+        }
         selectedWaifuId.value = waifuId
         selectedProvider.value = provider
         selectedModel.value = model || DEFAULT_MODEL_BY_PROVIDER[provider] || 'gpt-4o'
@@ -2407,6 +2489,7 @@ Write one cohesive reply of 2-4 sentences. Prefer emotional presence and charact
 
     selectedModel.value = modelValue || selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
     saveProviderPreferences(selectedProvider.value, { model: selectedModel.value })
+    localStorage.setItem(DEFAULT_PROVIDER_MIGRATION_KEY, 'true')
 
     localStorage.setItem('syntax-senpai-setup', JSON.stringify({
       waifuId: selectedWaifuId.value,
@@ -2450,18 +2533,25 @@ Write one cohesive reply of 2-4 sentences. Prefer emotional presence and charact
   }
 
   async function newChat() {
+    openingNewChat = true
     messages.value = []
+    newChatSuggestions.value = []
     conversationId.value = null
     resetUsageTotals()
     activeTodoList.value = []
     activeCodingRepo.value = null
 
     // Eagerly create a new conversation so it appears in the sidebar immediately.
-    const newId = await createConversation()
-    if (newId) {
-      conversationId.value = newId
+    try {
+      const newId = await createConversation()
+      if (newId) {
+        conversationId.value = newId
+      }
+      await loadConversations()
+    } finally {
+      openingNewChat = false
+      void ensureNewChatSuggestions()
     }
-    await loadConversations()
   }
 
   /**
@@ -2715,6 +2805,124 @@ Write one cohesive reply of 2-4 sentences. Prefer emotional presence and charact
     }
   }
 
+  /** Generate personalized quick starts once per unchanged history/memory context. */
+  async function ensureNewChatSuggestions(): Promise<void> {
+    const targetConversationId = conversationId.value
+    const targetWaifuId = selectedWaifuId.value
+    if (openingNewChat || !isSetup.value || messages.value.length > 0) return
+
+    const requestId = `${targetWaifuId}:${targetConversationId || 'new-chat'}`
+    const existingRequest = newChatSuggestionRequests.get(requestId)
+    if (existingRequest) return existingRequest
+
+    newChatSuggestions.value = []
+    const request = (async () => {
+      try {
+        await Promise.all([loadConversations(), loadMemories()])
+        if (
+          selectedWaifuId.value !== targetWaifuId ||
+          conversationId.value !== targetConversationId ||
+          messages.value.length > 0
+        ) return
+
+        const activeConversation = targetConversationId
+          ? conversations.value.find((item) => item.id === targetConversationId)
+          : undefined
+        // Selecting an existing conversation clears the view while its saved
+        // messages load. Don't mistake that brief gap for a new chat.
+        if (activeConversation && Number(activeConversation.messageCount) > 0) return
+
+        const recentConversations = [...conversations.value]
+          .filter((item) => item.id !== targetConversationId && Number(item.messageCount) > 0)
+          .sort((left, right) => Date.parse(right.updatedAt || '') - Date.parse(left.updatedAt || ''))
+          .slice(0, 5)
+
+        const recentContext = await Promise.all(recentConversations.map(async (item) => {
+          const result = await invoke('store:getMessages', item.id, 8)
+          return {
+            title: item.title,
+            summary: item.summary,
+            messages: result?.success && Array.isArray(result.messages) ? result.messages : [],
+          }
+        }))
+        if (
+          selectedWaifuId.value !== targetWaifuId ||
+          conversationId.value !== targetConversationId ||
+          messages.value.length > 0
+        ) return
+
+        const context = buildNewChatSuggestionContext(userMemories.value, recentContext)
+        const fingerprint = fingerprintSuggestionContext(context)
+        const provider = selectedProvider.value
+        const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[provider] || 'gpt-4o'
+        const cacheKey = `syntax-senpai-new-chat-suggestions-v2:${targetWaifuId}`
+        const characterName = selectedWaifu.value?.displayName || 'your character'
+
+        try {
+          const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null')
+          if (
+            cached?.fingerprint === fingerprint &&
+            cached?.provider === provider &&
+            cached?.model === model
+          ) {
+            const cachedSuggestions = parseNewChatSuggestions(JSON.stringify(cached.suggestions), characterName)
+            if (cachedSuggestions.length === 3) {
+              newChatSuggestions.value = cachedSuggestions
+              return
+            }
+          }
+        } catch {
+          // Ignore a stale or malformed local cache and regenerate below.
+        }
+
+        const key = await keyManager.getKey(provider)
+        const providerConfig = getProviderConfig(provider, key)
+        if (providerRequiresApiKey(provider) && !providerConfig.apiKey) return
+
+        const runtime = new AIChatRuntime({
+          provider: providerConfig,
+          model,
+          maxTokens: 500,
+          systemPrompt: [
+            `Create exactly three personalized quick-start prompts, using recent-chat excerpts and saved memories as context. Keep these three action types in order: news, weather, game. The news prompt must ask for today's news; the weather prompt must ask for today's weather forecast; the game prompt must invite the user to play an in-chat game with ${characterName}.`,
+            'Use memories to tailor news topics or forecast location only when clearly supported. Never invent current conditions, project status, or personal facts. The game prompt must include the character name exactly as supplied.',
+            'Each item must have kind (news, weather, or game), a short label (up to 36 characters), and a direct user prompt (up to 180 characters). Make each prompt suitable to send verbatim when clicked.',
+            'Use the language the user primarily used in the supplied context, defaulting to English. Avoid sensitive specifics and do not repeat the same idea.',
+            'Return only a JSON array of three objects shaped like {"kind":"project","label":"...","prompt":"..."}.',
+          ].join('\n'),
+        })
+        let response = ''
+        for await (const chunk of runtime.streamMessage({ text: context, history: [] })) {
+          if (chunk.type === 'text_delta' && chunk.delta) response += chunk.delta
+        }
+
+        const suggestions = parseNewChatSuggestions(response, characterName)
+        if (suggestions.length !== 3) return
+        if (
+          selectedWaifuId.value !== targetWaifuId ||
+          conversationId.value !== targetConversationId ||
+          messages.value.length > 0
+        ) return
+
+        newChatSuggestions.value = suggestions
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify({ fingerprint, provider, model, suggestions }))
+        } catch {
+          // Quota/private-mode failures should not prevent suggestions from showing.
+        }
+      } catch (err) {
+        console.warn('Personalized new-chat suggestions failed:', err)
+      }
+    })()
+
+    newChatSuggestionRequests.set(requestId, request)
+    try {
+      await request
+    } finally {
+      newChatSuggestionRequests.delete(requestId)
+    }
+  }
+
   async function setMemory(key: string, value: string, category = 'general') {
     try {
       const res = await invoke('memory:set', key, value, category)
@@ -2927,13 +3135,10 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
       const groupVisionCapable = modelSupportsVision(model)
       const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value, browserEnabled: groupBrowserStore.aiControlEnabled, visionCapable: groupVisionCapable })
       const hasTools = tools.length > 0
-      let systemInfo: any = null
+      let systemInfo: Record<string, any> = {}
 
       if (hasTools) {
-        systemInfo = (window as any).systemInfo
-        if (!systemInfo || !systemInfo.homedir) {
-          try { systemInfo = await invoke('terminal:systemInfo') } catch {}
-        }
+        systemInfo = await getAgentSystemInfo(invoke)
       }
 
       const sharedHistory: any[] = messages.value
@@ -2984,11 +3189,9 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           cachedSystemPrompt += formatSkillsForPrompt(availableSkills.value)
           cachedSystemPrompt += buildWeChatSessionPromptBlock(currentWeChatBinding.value)
           if (hasTools) {
-            if (systemInfo && systemInfo.homedir) {
-              cachedSystemPrompt += `\n\n[System Environment]\nOS: ${systemInfo.platform}\nUsername: ${systemInfo.username}\nHome directory: ${systemInfo.homedir}\nShell: ${systemInfo.shell ?? 'unknown'}`
-            }
+            cachedSystemPrompt += buildSystemEnvironmentPrompt(systemInfo)
             cachedSystemPrompt += buildAgentAccessPrompt(agentMode.value)
-            cachedSystemPrompt += buildAgentBehaviorPrompt(systemInfo?.shell, waifu.displayName || 'your waifu persona', webSearchEnabled.value)
+            cachedSystemPrompt += buildAgentBehaviorPrompt(systemInfo.shell, waifu.displayName || 'your waifu persona', webSearchEnabled.value, systemInfo.platform, isVoiceOutputEnabled(waifu))
             if (groupBrowserStore.aiControlEnabled) cachedSystemPrompt += buildBrowserSessionPromptBlock(groupVisionCapable)
           }
 
@@ -3049,7 +3252,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
               if (!liveBubbleAdded) return
               const m = messages.value.find((x) => x.id === turnLiveAssistantId)
               if (!m) return
-              m.content = liveText
+              m.content = stripBoardDiagrams(liveText)
             }
 
             const turnResult = await runAgentSession({
@@ -3240,7 +3443,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
             let flushScheduled = false
             const flushContent = () => {
               flushScheduled = false
-              if (liveMsgRef) liveMsgRef.content = finalContent
+              if (liveMsgRef) liveMsgRef.content = stripBoardDiagrams(finalContent)
             }
             const scheduleFlush = () => {
               if (flushScheduled) return
@@ -3262,7 +3465,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
             }
             // Final synchronous write so the bubble reflects the complete
             // response before downstream code reads it.
-            if (liveMsgRef) liveMsgRef.content = finalContent
+            if (liveMsgRef) liveMsgRef.content = stripBoardDiagrams(finalContent)
             apiRoundTrips.push(performance.now() - streamStartedAt)
           }
 
@@ -3615,24 +3818,57 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
       if (isNewConversation) await loadConversations()
       if (convId) void autoNameConversation(convId, trimmedText)
 
-      // A clear game request should always produce the playable in-chat GUI,
-      // even when a provider chooses to answer conversationally instead of
-      // emitting game_start. Game-originated events are excluded so a human
-      // click does not restart the session that is already open.
-      const gameIntent = opts.source === 'game' ? null : detectGameLaunchIntent(trimmedText)
-      let launchedGame: ReturnType<typeof startGameSession> | null = null
+      // Resolve direct game requests and ordinal replies to an offered game.
+      // Run the very same game_start tool executor exposed to the model before
+      // the provider call, so the real embedded panel opens even if a model
+      // ignores its tool instructions or claims a board exists in plain text.
+      const previousAssistantContext = [...messages.value.slice(0, -1)].reverse().find((message) =>
+        message.role === 'assistant' && !message.isProcessStep && !message.id.startsWith('tool-'),
+      )?.content || ''
+      const isMinigameTurnEvent = opts.source === 'game' && opts.sourceLabel === 'Minigame'
+      const gameIntent = isMinigameTurnEvent ? null : detectGameLaunchIntent(trimmedText, previousAssistantContext)
+      let launchedGame: ReturnType<typeof getGameSessionSnapshot> | null = null
       if (gameIntent) {
+        const gameOptions = {
+          difficulty: gameIntent.difficulty,
+          humanSide: gameIntent.humanSide,
+          humanStarts: gameIntent.humanStarts,
+        }
         try {
-          launchedGame = startGameSession(gameIntent.kind, {
-            difficulty: gameIntent.difficulty,
-            humanSide: gameIntent.humanSide,
-            humanStarts: gameIntent.humanStarts,
+          const toolResult = await executeToolCall({
+            id: `intent-game-start-${Date.now()}`,
+            name: GAME_START_TOOL_NAME,
+            arguments: {
+              kind: gameIntent.kind,
+              difficulty: gameIntent.difficulty,
+              human_side: gameIntent.humanSide,
+              human_starts: gameIntent.humanStarts,
+            },
           })
+          const activeSnapshot = getGameSessionSnapshot()
+          if (activeSnapshot?.kind === gameIntent.kind) {
+            launchedGame = activeSnapshot
+          } else {
+            chatLog.warn('game_start tool could not open requested panel', { kind: gameIntent.kind, result: toolResult })
+            // Keep the GUI launch independent from provider/tool-response wording.
+            launchedGame = await startGameSession(gameIntent.kind, gameOptions)
+          }
+          // Render the embedded panel before waiting on the model response.
+          await nextTick()
         } catch (err) {
           chatLog.warn('failed to open requested game panel', {
             kind: gameIntent.kind,
             message: err instanceof Error ? err.message : String(err),
           })
+          try {
+            launchedGame = await startGameSession(gameIntent.kind, gameOptions)
+            await nextTick()
+          } catch (fallbackError) {
+            chatLog.error('game panel fallback failed', {
+              kind: gameIntent.kind,
+              message: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+            })
+          }
         }
       }
 
@@ -3667,7 +3903,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(trimmedText)
       if (launchedGame) {
-        systemPrompt += `\n\n[Game UI already open]\nThe app has already opened the playable ${launchedGame.kind} panel inside this chat window for this request. Do not call game_start again and do not render an ASCII board. Briefly tell the user the board is ready, then wait for their click. The authoritative opening state is ${JSON.stringify(launchedGame)}.`
+        systemPrompt += `\n\n[game_start completed before the provider call]\nThe app invoked the real game_start tool and opened the playable ${launchedGame.kind} panel inside this chat window. Do not restart it or render any board in text. Briefly acknowledge that the panel is ready, then wait for the user's click. The authoritative opening state is ${JSON.stringify(launchedGame)}.`
       }
 
       const browserStore = useBrowserStore()
@@ -3677,15 +3913,10 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
 
       // Inject system context so the AI knows the user's environment
       if (hasTools) {
-        let sys = (window as any).systemInfo
-        if (!sys || !sys.homedir) {
-          try { sys = await invoke('terminal:systemInfo') } catch {}
-        }
-        if (sys && sys.homedir) {
-          cachedSystemPrompt += `\n\n[System Environment]\nOS: ${sys.platform}\nUsername: ${sys.username}\nHome directory: ${sys.homedir}\nShell: ${sys.shell ?? 'unknown'}`
-        }
+        const sys = await getAgentSystemInfo(invoke)
+        cachedSystemPrompt += buildSystemEnvironmentPrompt(sys)
         cachedSystemPrompt += buildAgentAccessPrompt(agentMode.value)
-        cachedSystemPrompt += buildAgentBehaviorPrompt(sys?.shell, waifu?.displayName || 'your waifu persona', webSearchEnabled.value)
+        cachedSystemPrompt += buildAgentBehaviorPrompt(sys.shell, waifu?.displayName || 'your waifu persona', webSearchEnabled.value, sys.platform, isVoiceOutputEnabled(waifu))
         if (browserStore.aiControlEnabled) cachedSystemPrompt += buildBrowserSessionPromptBlock(visionCapable)
       }
 
@@ -3785,7 +4016,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           // Once the turn settles, the post-turn cleanContent write owns the
           // bubble — drop any in-flight rAF callback so we don't clobber it.
           if (liveStreamSettled) return
-          if (liveMsgRef) liveMsgRef.content = computeLiveContent()
+          if (liveMsgRef) liveMsgRef.content = stripBoardDiagrams(computeLiveContent())
         }
 
         const ensureLiveBubble = () => {
@@ -3808,7 +4039,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
           if (!liveBubbleAdded || !liveMsgRef) return
           const content = computeLiveContent().trim()
           if (!content) return
-          liveMsgRef.content = content
+          liveMsgRef.content = stripBoardDiagrams(content)
           queueLiveBubbleSave(liveMsgRef)
         }
 
@@ -4248,13 +4479,13 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     }
 
     // Strip all memory tags from the displayed content
-    return responseText
+    return stripBoardDiagrams(responseText
       .replace(/<memory\s+category="[^"]*"\s+key="[^"]*">[^<]*<\/memory>/gi, '')
       .replace(/<memory-delete\s+key="[^"]*"\s*\/?>/gi, '')
       .replace(/<set_?affection\b[^>]*>([\s\S]*?)<\/set_?affection>/gi, '')
       .replace(/<set_?affection\b[^>]*\/?>/gi, '')
       .replace(/\n{3,}/g, '\n\n')
-      .trimEnd()
+      .trimEnd())
   }
 
   function extractAndSaveMemory(userText: string) {
@@ -4502,6 +4733,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     activeTodoList,
     pendingAttachments,
     userMemories,
+    newChatSuggestions,
     sidebarFilter,
     isGroupChat,
     groupWaifuIds,
@@ -4547,6 +4779,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     toggleFavorite,
     compactContext,
     loadMemories,
+    ensureNewChatSuggestions,
     setMemory,
     deleteMemory,
     clearMemories,

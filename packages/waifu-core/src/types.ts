@@ -77,7 +77,7 @@ export interface WaifuCapabilities {
   remoteDesktopControl: boolean; // only true if desktop agent connected
 }
 
-export type WaifuTtsProvider = "web-speech" | "indextts";
+export type WaifuTtsProvider = "web-speech" | "indextts" | "minimax-clone";
 export type WaifuTtsFallback = "web-speech" | "silent";
 export type WaifuTtsEmotion = "neutral" | "cheerful" | "excited" | "calm" | "hesitant" | "shy" | "firm" | "sad";
 
@@ -91,6 +91,8 @@ export interface WaifuTtsConfig {
   enabled?: boolean;
   voicePresetId?: string;
   referenceWavId?: string;
+  /** MiniMax CN voice ID created from the selected waifu's uploaded sample. */
+  minimaxVoiceId?: string;
   emotion?: WaifuTtsEmotionConfig;
   fallback?: WaifuTtsFallback;
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import CardRenderer from './cards/CardRenderer.vue'
 import { summarizeGameEvent } from '../game/message-display'
 
@@ -8,13 +8,10 @@ const props = withDefaults(defineProps<{
   content?: string
   displayContent?: string
   source?: 'wechat' | 'game'
-  timestamp?: string
   recent?: boolean
-  showCopy?: boolean
 }>(), {
   role: 'assistant',
   recent: false,
-  showCopy: true,
 })
 
 const CARD_FENCE = 'syntax-senpai-card'
@@ -23,9 +20,6 @@ type RenderedPart =
   | { kind: 'html'; html: string }
   | { kind: 'card'; cardType: string; data: Record<string, unknown> }
   | { kind: 'card-error'; message: string }
-
-const copied = ref(false)
-const containerRef = ref<HTMLDivElement>()
 
 function sanitizeForBubble(value: string): string {
   return String(value || '').replace(/\[emotion:\s*[a-z]+\]/gi, '').replace(/\s{2,}/g, ' ').trim()
@@ -169,18 +163,6 @@ function renderMarkdown(value: string): string {
   return blocks.join('')
 }
 
-async function handleCopy() {
-  try {
-    const text = displayContent.value || containerRef.value?.innerText || ''
-    if (!text) return
-    await navigator.clipboard.writeText(text)
-    copied.value = true
-    setTimeout(() => { copied.value = false }, 1600)
-  } catch {
-    // ignore
-  }
-}
-
 const hasCard = computed(() => renderedParts.value.some((p) => p.kind === 'card'))
 const displayContent = computed(() => sanitizeForBubble(
   props.displayContent ?? (props.source === 'game' ? summarizeGameEvent(props.content ?? '') : props.content ?? ''),
@@ -238,7 +220,7 @@ const renderedParts = computed<RenderedPart[]>(() => {
 
 <template>
   <div :class="['chat-bubble-shell', ...bubbleClasses]">
-    <div ref="containerRef">
+    <div>
       <div class="chat-bubble-content break-words text-sm">
         <template v-if="role === 'assistant'">
           <template v-for="(part, index) in renderedParts" :key="index">
@@ -257,31 +239,6 @@ const renderedParts = computed<RenderedPart[]>(() => {
           </slot>
         </template>
       </div>
-    </div>
-    <div
-      v-if="timestamp || (showCopy && content)"
-      class="chat-bubble-meta flex items-center gap-2 mt-1"
-    >
-      <p
-        v-if="timestamp"
-        :class="[
-          'text-xs',
-          role === 'user' ? 'text-primary-200' : 'text-neutral-500',
-        ]"
-      >
-        {{ timestamp }}
-      </p>
-      <button
-        v-if="showCopy && content"
-        :class="[
-          'text-xs px-2 py-0.5 rounded',
-          'bg-neutral-800/80 hover:bg-neutral-700 backdrop-blur-sm',
-          'transition-all duration-200',
-        ]"
-        @click="handleCopy"
-      >
-        {{ copied ? 'Copied' : 'Copy' }}
-      </button>
     </div>
   </div>
 </template>

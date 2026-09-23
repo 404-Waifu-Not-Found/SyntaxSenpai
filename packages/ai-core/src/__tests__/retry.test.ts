@@ -118,6 +118,15 @@ describe("hints", () => {
     expect(p.hint).toMatch(/Anthropic/);
   });
 
+  it("adds provider context to an error already classified by the retry layer", () => {
+    const upstream = classifyError({ status: 401, message: "invalid key" });
+    const contextual = classifyError(upstream, { provider: "DeepSeek" });
+    expect(contextual.kind).toBe("auth");
+    expect(contextual.status).toBe(401);
+    expect(describeError(contextual)).toContain("DeepSeek");
+    expect(describeError(contextual)).toContain("Settings → AI");
+  });
+
   it("describeError prefers the hint over the message", () => {
     const p = classifyError({ status: 401, message: "bad key" });
     expect(describeError(p)).toBe(p.hint);

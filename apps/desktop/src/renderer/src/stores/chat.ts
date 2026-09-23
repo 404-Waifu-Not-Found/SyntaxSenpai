@@ -3285,7 +3285,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
       messages.value.push({
         id: `error-${Date.now()}`,
         role: 'assistant',
-        content: `Error: ${describeError(err)}`,
+        content: `Error: ${describeError(classified)}`,
         timestamp: now(),
       })
     } finally {
@@ -4005,7 +4005,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
       messages.value.push({
         id: `error-${Date.now()}`,
         role: 'assistant',
-        content: `Error: ${describeError(err)}`,
+        content: `Error: ${describeError(classified)}`,
         timestamp: now(),
       })
     } finally {

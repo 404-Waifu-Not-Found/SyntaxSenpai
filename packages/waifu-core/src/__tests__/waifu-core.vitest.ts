@@ -1,4 +1,4 @@
-import { test } from 'vitest'
+import { expect, test } from 'vitest'
 import { builtInWaifus } from "../index";
 import { buildSystemPrompt } from "../personality";
 
@@ -39,5 +39,42 @@ test("system prompt uses configured nickname for Chinese address", () => {
   const prompt = buildSystemPrompt(w as any, rel, { userId: "test" } as any);
   if (!prompt.includes("When chatting in Chinese, address the user as: 老公")) {
     throw new Error("Prompt did not use configured nickname for Chinese address");
+  }
+});
+
+test("persona prompt renders with CSP-style dynamic code generation disabled", () => {
+  const waifu = {
+    ...builtInWaifus[0],
+    systemPromptTemplate: "Hi {{ displayName }}! {{backstory}} Warmth: {{personalityTraits.warmth}}. Missing: {{unknown}}",
+  };
+  const originalFunction = Object.getOwnPropertyDescriptor(globalThis, "Function")!;
+  Object.defineProperty(globalThis, "Function", {
+    configurable: true,
+    writable: true,
+    value: () => { throw new EvalError("unsafe-eval is disabled"); },
+  });
+  try {
+    const prompt = buildSystemPrompt(waifu, {
+      waifuId: waifu.id,
+      userId: "test",
+      affectionLevel: 85,
+    } as any, { userId: "test" } as any);
+    expect(prompt).toContain(`Hi ${waifu.displayName}! ${waifu.backstory} Warmth: 85. Missing: `);
+    expect(prompt).not.toContain("{{");
+  } finally {
+    Object.defineProperty(globalThis, "Function", originalFunction);
+  }
+});
+
+test("every built-in persona template resolves without runtime compilation", () => {
+  for (const waifu of builtInWaifus) {
+    const prompt = buildSystemPrompt(waifu, {
+      waifuId: waifu.id,
+      userId: "test",
+      affectionLevel: 50,
+    } as any, { userId: "test" } as any);
+    expect(prompt).toContain(`## Character Brief\nYou are ${waifu.displayName}`);
+    expect(prompt).toContain(waifu.backstory);
+    expect(prompt).not.toContain("{{");
   }
 });

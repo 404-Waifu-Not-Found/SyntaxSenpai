@@ -1,3 +1,4 @@
+import { activateUserPlugins } from './plugins'
 import { registerHostHandler, resolveWorkspacePath, hostContext } from '../agent/host'
 /**
  * AI-authored tool bundles are staged under pending-plugins, then activated

@@ -100,6 +100,8 @@ export class RunService {
     check.exitCode = session.exitCode
     check.status = session.status === 'cancelled' || session.status === 'timed_out' ? 'cancelled' : session.exitCode === 0 ? 'passed' : 'failed'
     check.freshness = check.revision === run.journal.revision() ? 'current' : 'stale'
+    if (check.status === 'failed' || check.status === 'cancelled') run.failures.set('check:' + check.command, check.status)
+    else run.failures.delete('check:' + check.command)
     this.emit(run, 'checks', run.checks)
   }
   refreshChecks(run: LiveRun) {
@@ -224,8 +226,16 @@ export class RunService {
         onApiRoundTrip: (durationMs, response) => this.emit(run, 'usage', { durationMs, usage: response.usage }),
       }))
       await run.journal.scan()
+      // Process-exit notifications refresh checks asynchronously; settle any
+      // completed check before deciding the run's final status.
+      for (const check of run.checks) {
+        const session = this.processes.read(check.id)
+        if (session.endedAt) await this.finishCheck(run, session)
+      }
       this.refreshChecks(run)
-      state.status = run.controller.signal.aborted ? 'cancelled' : result.reachedMaxIterations || run.failures.size ? 'incomplete' : run.checks.length && run.checks.every(c => c.status === 'passed' && c.freshness === 'current') ? 'verified' : 'incomplete'
+      const checksPassed = run.checks.length > 0 && run.checks.every(c => c.status === 'passed' && c.freshness === 'current')
+      const exhaustedWithUnexecutedTools = result.reachedMaxIterations && !!run.history.at(-1)?.toolCalls?.length
+      state.status = run.controller.signal.aborted ? 'cancelled' : run.failures.size || exhaustedWithUnexecutedTools ? 'incomplete' : checksPassed ? 'verified' : 'incomplete'
       state.finalContent = result.finalContent; state.endedAt = Date.now(); run.result = result
     } catch (error) {
       state.status = run.controller.signal.aborted ? 'cancelled' : 'blocked'; state.endedAt = Date.now(); state.finalContent = error instanceof Error ? error.message : String(error)

@@ -173,7 +173,14 @@ export async function runAgentTurn(opts: RunAgentTurnOptions): Promise<RunAgentT
       if (stopped || opts.abortSignal?.aborted) { await flush(); append(tc, 'Cancelled before execution.'); stopped = true; continue }
       if (!stateTools.has(tc.name)) { batch.push(tc); continue }
       await flush()
-      const effect = await opts.handleSideEffect?.(tc)
+      let effect: SideEffectResult | null | undefined
+      try { effect = await opts.handleSideEffect?.(tc) }
+      catch (error) {
+        const result = `${opts.abortSignal?.aborted ? 'Cancelled' : 'Error'}: ${error instanceof Error ? error.message : String(error)}`
+        append(tc, result)
+        opts.onToolResult?.(tc, result, undefined)
+        continue
+      }
       if (!effect) { batch.push(tc); continue }
       append(tc, effect.resultContent)
       if (effect.stop) {

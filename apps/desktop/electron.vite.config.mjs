@@ -6,7 +6,6 @@ import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const workspaceAlias = {
-  '@syntax-senpai/agent-tools/catalog': path.resolve(__dirname, '../../packages/agent-tools/src/catalog.ts'),
   '@syntax-senpai/game-engine': path.resolve(__dirname, '../../packages/game-engine/src/index.ts'),
   '@syntax-senpai/ai-core': path.resolve(__dirname, '../../packages/ai-core/src/index.ts'),
   '@syntax-senpai/agent-tools/catalog': path.resolve(__dirname, '../../packages/agent-tools/src/catalog.ts'),

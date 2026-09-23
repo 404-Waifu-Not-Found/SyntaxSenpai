@@ -10,6 +10,7 @@
  * which runs commands via child_process.exec with the user's login shell.
  */
 
+import { getAllProviderMetadata } from '@syntax-senpai/ai-core'
 import type { ToolDefinition, ToolCall } from '@syntax-senpai/ai-core'
 import { renderContentToPng } from './services/render-to-image'
 import * as browserController from './browser/controller'
@@ -64,7 +65,7 @@ import { parseTodoList, agentTools, STOP_TOOL_NAME, SET_AFFECTION_TOOL_NAME, SET
  * Gates browser_screenshot — text-only models simply never see the tool.
  */
 export function modelSupportsVision(model: string): boolean {
-  return /claude|gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-5|gemini|grok-(vision|2|3|4)|pixtral|llava|qwen[.-]?vl|minicpm-v|gemma-3|internvl|phi-4-multimodal/i.test(String(model || ''))
+  return getAllProviderMetadata().some(p => p.supportsToolCalling && p.models.some(m => m.id === model && m.supportsVision))
 }
 
 // browser_screenshot results are images; string tool results can't carry them,
@@ -124,7 +125,6 @@ function isPluginTool(name: string): boolean {
 
 /**
  * Returns tools available for a given agent mode.
- * - ask:  all eligible tools; caller must request user approval before executing actions
  * - auto: all tools; caller should run AI approval before executing actions
  * - full: all tools; caller may execute directly
  *
@@ -778,7 +778,8 @@ export async function executeToolCall(toolCall: ToolCall): Promise<string> {
       try {
         window.dispatchEvent(new CustomEvent('app:tool-proposed', { detail: { slug: res.slug, name: args.name } }))
       } catch { /* non-browser test env */ }
-      return `Proposed tool "${args.slug}" for user review. They must approve it in Settings → Plugins → Pending and restart before it becomes available. Do NOT attempt to call this tool this turn.`
+      const activated = await ipc.invoke('pending-plugins:activate', args.slug)
+      return activated.success ? `Activated plugin ${args.slug}.` : `Error: ${activated.error}`
     }
 
     case STOP_TOOL_NAME:

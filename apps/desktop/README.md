@@ -1,6 +1,6 @@
 # SyntaxSenpai Desktop
 
-Primary SyntaxSenpai app: Electron main/preload, Vue 3 renderer, Pinia state, UnoCSS styling, keychain-backed provider keys, agent tools, mobile QR pairing, plugins, custom waifus, Live2D avatar support, and strict-mode shell gating.
+Primary SyntaxSenpai app: Electron main/preload, Vue 3 renderer, Pinia state, UnoCSS styling, keychain-backed provider keys, durable agent runs, mobile QR pairing, plugins, custom waifus, Live2D avatar support, and native macOS computer control.
 
 ## Run
 
@@ -31,9 +31,9 @@ pnpm --filter syntax-senpai-desktop run lint
 | `src/renderer/src/App.vue` | Main desktop UI |
 | `src/renderer/src/stores/chat.ts` | Chat orchestration, provider calls, tools, prompt assembly |
 | `src/renderer/src/agent-tools.ts` | Renderer-side tool definitions |
-| `src/main/ipc/` | IPC handlers for tools, settings, storage, plugins, waifus, strict mode, WeChat, and runtime helpers |
+| `src/main/ipc/` | IPC handlers for tools, settings, storage, plugins, waifus, execution policy, WeChat, and runtime helpers |
 | `scripts/verify-live2d-render.mjs` | Live2D smoke verification script |
-| `src/main/agent/executor.ts` | Allowlist-based strict-mode executor and shared shell helpers |
+| `src/main/agent/executor.ts` | Shared web search, web fetch, and external URL helpers |
 
 ## Provider Keys
 

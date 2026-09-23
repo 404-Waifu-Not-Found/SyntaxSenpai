@@ -31,6 +31,7 @@ function buildPluginExecContext(): ToolExecutionContext {
     platform: 'desktop',
     userId: 'local-user',
     waifuId: '',
+    workingDirectory: hostContext.getStore()?.workspace,
     permissions: {
       fileRead: true,
       fileWrite: true,
@@ -157,6 +158,9 @@ async function initPluginRegistry() {
   }
 }
 
+export async function activateUserPlugins() {
+  return loadToolPlugins({ directory: path.join(app.getPath('userData'), 'plugins'), registry: pluginRegistry, isDisabled: name => readDisabledList().includes(name) })
+}
 export function registerPluginsIpc() {
   if (registered) return
   registered = true
@@ -165,7 +169,7 @@ export function registerPluginsIpc() {
   // call plugins:list (which only reads manifests) before tools are
   // ready, and plugins:listTools will simply return [] until the load
   // promise resolves. First sendMessage happens well after activation.
-  initPluginRegistry()
+  void initPluginRegistry().then(() => activateUserPlugins())
 
   registerHostHandler('plugins:list', () => {
     try {

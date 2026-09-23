@@ -14,6 +14,7 @@
     "build": "node scripts/build-native.mjs && electron-vite build",
     "typecheck": "vue-tsc --noEmit",
     "test:unit": "vitest run --environment node",
+    "test:evaluation": "vitest run --config vitest.evaluation.config.ts --reporter verbose",
     "lint": "eslint . --ext .ts,.vue",
     "postinstall": "electron-builder install-app-deps",
     "build:native": "node scripts/build-native.mjs"

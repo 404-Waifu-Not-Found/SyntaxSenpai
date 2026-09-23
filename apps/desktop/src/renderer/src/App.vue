@@ -34,18 +34,28 @@ import ChatBubble from './components/ChatBubble.vue'
 import SubagentPanel from './components/SubagentPanel.vue'
 import AppAvatar from './components/AppAvatar.vue'
 import Live2DAvatar from './components/Live2DAvatar.vue'
+import DesktopPetOverlay from './components/DesktopPetOverlay.vue'
 import TypingDots from './components/TypingDots.vue'
 import MiniGamePanel from './components/MiniGamePanel.vue'
 import QrPairModal from './components/QrPairModal.vue'
 import RepositoryPickerModal from './components/RepositoryPickerModal.vue'
 import SakuraPetals from './components/SakuraPetals.vue'
 import BrowserPanel from './components/BrowserPanel.vue'
+import GomokuGame from './components/GomokuGame.vue'
+import FateRouletteGame from './components/FateRouletteGame.vue'
+import WorkspacePanel from './components/WorkspacePanel.vue'
+import { useWorkspaceStore, codingIntent } from './stores/workspace'
 import { useBrowserStore } from './stores/browser'
 import type { ActiveCodingRepo } from './types/coding-session'
-import { gameSession, applyGameSessionMove, closeGameSession } from './game/session'
+import { gameSession, applyGameSessionMove, closeGameSession, startGameSession } from './game/session'
 import { gameMoveLabel } from '@syntax-senpai/game-engine'
 
 const store = useChatStore()
+const workspace = useWorkspaceStore()
+watch(() => store.conversationId, id => { void workspace.bind(id) }, { immediate: true })
+watch(() => store.activeCodingRepo, repo => { if (store.conversationId) void invoke('store:updateConversation', store.conversationId, { workspace: repo }); if (repo && workspace.mode === 'auto') workspace.open = true }, { deep: true })
+watch(() => store.messages.length, () => { const last = [...store.messages].reverse().find(m => m.role === 'user'); if (last && workspace.mode === 'auto' && codingIntent(last.content, !!store.activeCodingRepo)) workspace.open = true })
+
 const browser = useBrowserStore()
 const { invoke, on } = useIpc()
 const { theme, currentRainbowHue, hslToHex, resetTheme, setColor, setRainbow, setUI, DEFAULT_THEME } = useTheme()
@@ -391,57 +401,6 @@ const pluginsList = ref<DesktopPluginEntry[]>([])
 const pluginsDirectory = ref<string>('')
 const pluginsLoading = ref(false)
 const pluginsError = ref<string>('')
-
-// Pending plugins — AI-authored tool proposals waiting for user approval.
-// Lives on the same tab as active plugins so users see both in one place.
-interface PendingPluginEntry {
-  slug: string
-  name: string
-  version: string
-  description?: string
-  manifest: any
-  code: string
-  createdAt: string
-}
-const pendingPlugins = ref<PendingPluginEntry[]>([])
-const pendingExpanded = ref<Set<string>>(new Set())
-
-async function refreshPendingPlugins() {
-  try {
-    const result = await invoke('pending-plugins:list')
-    if (result?.success && Array.isArray(result.pending)) {
-      pendingPlugins.value = result.pending
-    }
-  } catch { /* optional */ }
-}
-
-function togglePendingExpanded(slug: string) {
-  const next = new Set(pendingExpanded.value)
-  if (next.has(slug)) next.delete(slug)
-  else next.add(slug)
-  pendingExpanded.value = next
-}
-
-async function approvePending(slug: string) {
-  const result = await invoke('pending-plugins:approve', slug)
-  if (result?.success) {
-    pendingPlugins.value = pendingPlugins.value.filter((p) => p.slug !== slug)
-    showToast(`Approved "${slug}" — restart to load the new tool`, 'success')
-    refreshPlugins()
-  } else {
-    showToast(result?.error || 'Approve failed', 'error')
-  }
-}
-
-async function rejectPending(slug: string) {
-  const result = await invoke('pending-plugins:reject', slug)
-  if (result?.success) {
-    pendingPlugins.value = pendingPlugins.value.filter((p) => p.slug !== slug)
-    showToast(`Rejected "${slug}"`, 'success')
-  } else {
-    showToast(result?.error || 'Reject failed', 'error')
-  }
-}
 
 // Skills tab state — user-facing view over <userData>/skills/*.
 interface SkillTabEntry { slug: string; name: string; description: string; body?: string }
@@ -1033,14 +992,17 @@ async function deleteCustomWaifu(id: string) {
   }
 }
 
-// Strict-mode state: toggle for the allowlist sandbox. The allowlist itself
-// is already managed by the existing agent:* IPC and its UI in the AI tab.
-interface StrictModeState {
-  enabled: boolean
-  auditLog: string
-}
-const strictMode = ref<StrictModeState>({ enabled: false, auditLog: '' })
 const overlayWindow = ref<{ enabled: boolean }>({ enabled: false })
+const WARTHUNDER_ENABLED_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-enabled'
+const WARTHUNDER_PROVIDER_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-provider'
+const WARTHUNDER_MODEL_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-model'
+const warThunderCopilotEnabled = ref(localStorage.getItem(WARTHUNDER_ENABLED_STORAGE_KEY) === 'true')
+const warThunderCopilotProvider = ref(localStorage.getItem(WARTHUNDER_PROVIDER_STORAGE_KEY) || store.selectedProvider)
+const warThunderCopilotModel = ref(localStorage.getItem(WARTHUNDER_MODEL_STORAGE_KEY) || store.selectedModel)
+let warThunderPluginReady = false
+let warThunderEventTimer: ReturnType<typeof setInterval> | null = null
+let warThunderEventPollInFlight = false
+const handledWarThunderEvents = new Set<string>()
 const fullscreenWindow = ref<{ enabled: boolean }>({ enabled: false })
 const currentWindowBounds = ref<{ width: number; height: number } | null>(null)
 const showCompactHeaderMenu = ref(false)
@@ -1067,20 +1029,6 @@ const currentWindowResolutionLabel = computed(() => {
   return bounds ? `${bounds.width} × ${bounds.height}` : 'Current window size'
 })
 
-async function refreshStrictMode() {
-  try {
-    const result = await invoke('strictMode:get')
-    if (result?.success) {
-      strictMode.value = {
-        enabled: !!result.enabled,
-        auditLog: result.auditLog || '',
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
 function applyWindowPresentationState(result: any) {
   overlayWindow.value.enabled = !!result?.overlayEnabled
   fullscreenWindow.value.enabled = !!result?.fullscreenEnabled
@@ -1098,6 +1046,7 @@ function applyWindowPresentationState(result: any) {
 }
 
 async function refreshOverlayWindowMode() {
+  loadDesktopPetPreferences()
   try {
     const result = await invoke('window:getViewState')
     if (result?.success) {
@@ -1105,17 +1054,6 @@ async function refreshOverlayWindowMode() {
     }
   } catch {
     /* ignore */
-  }
-}
-
-async function toggleStrictMode() {
-  const next = !strictMode.value.enabled
-  const result = await invoke('strictMode:set', next)
-  if (result?.success) {
-    strictMode.value.enabled = !!result.enabled
-    showToast(`Strict mode ${next ? 'enabled' : 'disabled'}`, 'success')
-  } else {
-    showToast(result?.error || 'Failed to toggle strict mode', 'error')
   }
 }
 
@@ -1128,6 +1066,104 @@ async function toggleOverlayWindowMode() {
   } else {
     showToast(result?.error || t('toast.overlayWindowFailed'), 'error')
   }
+}
+
+async function restoreNormalWindow() {
+  if (!overlayWindow.value.enabled) return
+  await toggleOverlayWindowMode()
+}
+
+async function syncWarThunderCopilot() {
+  if (!warThunderPluginReady) return
+  try {
+    await invoke('plugins:execTool', 'warthunder_copilot_control', {
+      enabled: overlayWindow.value.enabled && warThunderCopilotEnabled.value,
+      provider: warThunderCopilotProvider.value,
+      model: warThunderCopilotModel.value,
+    })
+  } catch {
+    // The optional plugin may be disabled or still loading.
+  }
+}
+
+async function pollWarThunderEvents() {
+  if (warThunderEventPollInFlight || !warThunderPluginReady || !overlayWindow.value.enabled || !warThunderCopilotEnabled.value) return
+  warThunderEventPollInFlight = true
+  try {
+    const result = await invoke('plugins:execTool', 'warthunder_copilot_status', {})
+    const events = Array.isArray(result?.data?.derivedEvents) ? result.data.derivedEvents : []
+    for (const event of events) {
+      const id = String(event?.id || '')
+      if (!id || handledWarThunderEvents.has(id)) continue
+      handledWarThunderEvents.add(id)
+      const detail = event.type === 'kill'
+        ? `击杀事件：${event.killer || '玩家'} ${event.action || '击毁'} ${event.victim || '目标'}`
+        : event.type === 'award'
+          ? `战斗嘉奖：${event.raw}`
+          : event.type === 'proximity'
+            ? `${event.raw}，距离约 ${event.distance}`
+            : `技术告警：${event.raw}`
+      await store.sendWarThunderEvent(detail, warThunderCopilotProvider.value, warThunderCopilotModel.value)
+      if (handledWarThunderEvents.size > 500) {
+        const retained = Array.from(handledWarThunderEvents).slice(-250)
+        handledWarThunderEvents.clear()
+        retained.forEach((eventId) => handledWarThunderEvents.add(eventId))
+      }
+    }
+  } catch {
+    // The optional plugin may be disabled or unavailable.
+  } finally {
+    warThunderEventPollInFlight = false
+  }
+}
+
+function startWarThunderEventPolling() {
+  if (warThunderEventTimer) return
+  warThunderEventTimer = setInterval(() => void pollWarThunderEvents(), 1200)
+}
+
+function stopWarThunderEventPolling() {
+  if (!warThunderEventTimer) return
+  clearInterval(warThunderEventTimer)
+  warThunderEventTimer = null
+}
+
+function setWarThunderCopilotEnabled(enabled: boolean) {
+  warThunderCopilotEnabled.value = enabled
+  localStorage.setItem(WARTHUNDER_ENABLED_STORAGE_KEY, enabled ? 'true' : 'false')
+  void syncWarThunderCopilot()
+}
+
+function setWarThunderCopilotProvider(provider: string) {
+  warThunderCopilotProvider.value = provider
+  localStorage.setItem(WARTHUNDER_PROVIDER_STORAGE_KEY, provider)
+  const available = providerModels.value[provider] || providerMetadata.find((item) => item.id === provider)?.models || []
+  if (!available.some((model) => model.id === warThunderCopilotModel.value)) {
+    setWarThunderCopilotModel(available[0]?.id || '')
+  } else {
+    void syncWarThunderCopilot()
+  }
+}
+
+function setWarThunderCopilotModel(model: string) {
+  warThunderCopilotModel.value = model
+  localStorage.setItem(WARTHUNDER_MODEL_STORAGE_KEY, model)
+  void syncWarThunderCopilot()
+}
+
+const warThunderCopilotModels = computed(() =>
+  providerModels.value[warThunderCopilotProvider.value] ||
+  providerMetadata.find((item) => item.id === warThunderCopilotProvider.value)?.models ||
+  [],
+)
+
+watch(
+  () => [overlayWindow.value.enabled, warThunderCopilotEnabled.value, warThunderCopilotProvider.value, warThunderCopilotModel.value],
+  () => void syncWarThunderCopilot(),
+)
+
+function openPetMiniGame() {
+  if (!gameSession.open) startGameSession('tictactoe', { difficulty: 'balanced' })
 }
 
 async function toggleFullscreenWindowMode() {
@@ -1152,11 +1188,6 @@ async function applyWindowResolution(value: string) {
   } else {
     showToast(result?.error || 'Failed to update window resolution', 'error')
   }
-}
-
-async function openAuditLog() {
-  const result = await invoke('strictMode:openAuditLog')
-  if (!result?.success) showToast(result?.error || 'Failed to open audit log', 'error')
 }
 
 async function checkMobilePairingStatus() {
@@ -1528,6 +1559,13 @@ const selectedLive2DDisplayId = ref('')
 const live2dImmersiveOpening = ref(false)
 
 const currentWaifuLive2D = computed(() => (store.selectedWaifu?.avatar as any)?.live2dModel ?? null)
+const latestAssistantMessage = computed(() => {
+  for (let index = store.messages.length - 1; index >= 0; index -= 1) {
+    const message = store.messages[index]
+    if (message.role === 'assistant' && message.content?.trim()) return message.content
+  }
+  return ''
+})
 
 function clearLive2DSpeech() {
   if (live2dSpeechTimer !== null) window.clearTimeout(live2dSpeechTimer)
@@ -2065,7 +2103,7 @@ watch(
       if (pluginsList.value.length === 0 && !pluginsLoading.value) refreshPlugins()
       // Pending proposals are cheap to list — always refresh so a new
       // propose_tool call mid-session shows up without a reload.
-      refreshPendingPlugins()
+
     }
     if (tab === 'skills' && skillsList.value.length === 0 && !skillsLoading.value) {
       refreshSkillsTab()
@@ -2091,9 +2129,6 @@ const convSearch = ref('')
 const convSearchMatchIds = ref<Set<string> | null>(null)
 let convSearchTimer: ReturnType<typeof setTimeout> | null = null
 const showMemory = ref(false)
-const agentAllowlist = ref<string[]>([])
-const newAllowCmd = ref('')
-const showAllowlist = ref(false)
 const newMemoryKey = ref('')
 const newMemoryValue = ref('')
 const newMemoryCategory = ref('general')
@@ -2567,7 +2602,7 @@ function onAppSkillCreated(e: Event) {
 }
 function onAppToolProposed(e: Event) {
   const detail: any = (e as CustomEvent).detail
-  refreshPendingPlugins()
+
   const name = detail?.name || detail?.slug || 'a new tool'
   showToast(`${name} proposed — review it in Settings → Plugins → Pending`, 'success')
 }
@@ -2583,6 +2618,9 @@ function onGlobalKeydown(e: KeyboardEvent) {
     if (showCompactStatusDetails.value) { showCompactStatusDetails.value = false; e.preventDefault(); return }
     if (showRenameConversationModal.value) { closeRenameConversationModal(); e.preventDefault(); return }
     if (showShortcuts.value) { showShortcuts.value = false; e.preventDefault(); return }
+    if (showGamePicker.value) { showGamePicker.value = false; e.preventDefault(); return }
+    if (showFateRoulettePanel.value) { showFateRoulettePanel.value = false; e.preventDefault(); return }
+    if (showGomokuPanel.value) { showGomokuPanel.value = false; e.preventDefault(); return }
     if (showSettings.value) { showSettings.value = false; e.preventDefault(); return }
     if (showAgent.value) { showAgent.value = false; e.preventDefault(); return }
     if (showModelPicker.value) { showModelPicker.value = false; e.preventDefault(); return }
@@ -2606,7 +2644,10 @@ onMounted(() => {
     store.refreshCustomWaifus()
     // Ask main for the enabled plugins' tool definitions. Idempotent —
     // cached after first call — so getToolsForMode() can stay synchronous.
-    loadPluginTools()
+    await loadPluginTools()
+    warThunderPluginReady = true
+    await syncWarThunderCopilot()
+    startWarThunderEventPolling()
     // Load waifu-authored skills so the first system prompt already
     // lists what's available.
     store.refreshAvailableSkills()
@@ -2849,7 +2890,7 @@ function handleKeyDown(e: KeyboardEvent) {
       if (cmd) applySlashCommand(cmd)
       return
     }
-    store.sendMessage(store.inputValue)
+    submitChatMessage()
   }
 }
 
@@ -3016,23 +3057,6 @@ async function exportAuditLog() {
   }
 }
 
-async function loadAllowlist() {
-  const res = await invoke('agent:getAllowlist')
-  if (res?.success) agentAllowlist.value = res.allowlist || []
-}
-
-async function addToAllowlist() {
-  const cmd = newAllowCmd.value.trim()
-  if (!cmd) return
-  await invoke('agent:addAllow', cmd)
-  newAllowCmd.value = ''
-  await loadAllowlist()
-}
-
-async function removeFromAllowlist(cmd: string) {
-  await invoke('agent:removeAllow', cmd)
-  await loadAllowlist()
-}
 
 function exportConversationMarkdown() {
   if (store.messages.length === 0) return
@@ -3066,6 +3090,7 @@ function exportConversationMarkdown() {
   URL.revokeObjectURL(url)
   showToast(t('toast.conversationExported'), 'success')
 }
+
 
 async function handleExportData() {
   dataTransferBusy.value = true
@@ -3176,6 +3201,7 @@ async function handleImportData() {
       return
     }
 
+    if (payload?.data?.runs) await invoke('runs:import', payload.data.runs)
     if (payload?.settings?.locale) {
       setLocale(payload.settings.locale as any)
     }
@@ -3667,6 +3693,57 @@ async function handleImportData() {
                   </label>
                 </div>
               </div>
+            </div>
+
+            <div class="settings-card mt-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-sm font-semibold text-neutral-200">War Thunder 副驾</div>
+                  <p class="mt-1 text-xs text-neutral-400">
+                    桌宠窗口开启时读取 War Thunder 本机 8111 只读遥测。不会控制游戏，也不会在普通窗口模式下监听。
+                  </p>
+                </div>
+                <button
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :style="{ background: warThunderCopilotEnabled ? 'linear-gradient(90deg,#f59e0b,#ef4444)' : '#404040' }"
+                  :aria-label="`${warThunderCopilotEnabled ? 'Disable' : 'Enable'} War Thunder copilot`"
+                  @click="setWarThunderCopilotEnabled(!warThunderCopilotEnabled)"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: warThunderCopilotEnabled ? 'translateX(20px)' : 'translateX(0)' }"
+                  />
+                </button>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+                <label class="text-xs text-neutral-400">
+                  副驾 Provider
+                  <select
+                    :value="warThunderCopilotProvider"
+                    class="input-field mt-1"
+                    @change="setWarThunderCopilotProvider(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option v-for="provider in providers" :key="`wt-provider-${provider.value}`" :value="provider.value">
+                      {{ provider.label }}
+                    </option>
+                  </select>
+                </label>
+                <label class="text-xs text-neutral-400">
+                  副驾模型
+                  <select
+                    :value="warThunderCopilotModel"
+                    class="input-field mt-1"
+                    @change="setWarThunderCopilotModel(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option v-for="model in warThunderCopilotModels" :key="`wt-model-${model.id}`" :value="model.id">
+                      {{ model.displayName }}
+                    </option>
+                  </select>
+                </label>
+              </div>
+              <p class="mt-3 text-[11px] text-neutral-500">
+                当前状态：{{ overlayWindow.enabled && warThunderCopilotEnabled ? '桌宠模式下监听中' : '未监听' }}
+              </p>
             </div>
 
             <div class="settings-card mt-4">
@@ -4578,62 +4655,6 @@ async function handleImportData() {
               </ul>
             </div>
 
-            <div v-if="pendingPlugins.length > 0" class="settings-card">
-              <div class="flex items-start justify-between gap-3 mb-3">
-                <div>
-                  <h3 class="text-sm font-bold text-white">Pending — AI-authored tools</h3>
-                  <p class="text-xs text-neutral-400">
-                    Your waifu has proposed these tools. Review the code before approving — once approved + restarted, plugins run with full Node privileges.
-                  </p>
-                </div>
-              </div>
-
-              <ul class="flex flex-col gap-2">
-                <li
-                  v-for="plugin in pendingPlugins"
-                  :key="plugin.slug"
-                  class="rounded-lg border border-amber-400/30 bg-amber-400/5 p-3"
-                >
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
-                      <div class="flex items-center gap-2 flex-wrap">
-                        <span class="text-sm font-semibold text-white">{{ plugin.name }}</span>
-                        <span class="text-[11px] text-neutral-500 font-mono">{{ plugin.slug }} v{{ plugin.version }}</span>
-                        <span class="text-[10px] uppercase tracking-wide text-amber-300 border border-amber-300/40 rounded px-1.5 py-0.5">pending</span>
-                      </div>
-                      <p v-if="plugin.description" class="text-xs text-neutral-400 mt-1">{{ plugin.description }}</p>
-                    </div>
-                    <div class="flex gap-2 shrink-0">
-                      <button
-                        class="btn-ghost text-xs"
-                        :aria-label="`Review code for ${plugin.slug}`"
-                        @click="togglePendingExpanded(plugin.slug)"
-                      >
-                        {{ pendingExpanded.has(plugin.slug) ? 'Hide code' : 'View code' }}
-                      </button>
-                      <button
-                        class="btn-secondary text-xs text-red-400"
-                        :aria-label="`Reject ${plugin.slug}`"
-                        @click="rejectPending(plugin.slug)"
-                      >
-                        Reject
-                      </button>
-                      <button
-                        class="btn-primary text-xs"
-                        :aria-label="`Approve ${plugin.slug}`"
-                        @click="approvePending(plugin.slug)"
-                      >
-                        Approve
-                      </button>
-                    </div>
-                  </div>
-                  <pre
-                    v-if="pendingExpanded.has(plugin.slug)"
-                    class="mt-3 max-h-72 overflow-auto rounded bg-neutral-950/70 p-2 text-[11px] text-neutral-300 font-mono whitespace-pre-wrap break-all"
-                  >{{ plugin.code }}</pre>
-                </li>
-              </ul>
-            </div>
           </div>
 
           <!-- Skills Tab -->
@@ -5168,7 +5189,7 @@ async function handleImportData() {
                 <button class="btn-secondary flex-1 text-xs" @click="resetLive2DPanelLayout">
                   Reset Live2D layout
                 </button>
-                <button class="btn-secondary flex-1 text-xs" @click="showLive2DPanel = true">
+                <button class="btn-secondary flex-1 text-xs" @click="toggleOverlayWindowMode">
                   Show avatar panel
                 </button>
               </div>
@@ -5633,7 +5654,7 @@ async function handleImportData() {
     v-if="store.isSetup"
     :class="[
       'relative flex h-screen w-screen',
-      compactChatLayout ? 'compact-chat-shell overlay-window-shell overflow-visible p-2.5' : 'overflow-hidden',
+      compactChatLayout ? 'desktop-pet-shell overflow-visible' : 'overflow-hidden',
     ]"
     :style="appShellStyle"
   >
@@ -5867,11 +5888,11 @@ async function handleImportData() {
             v-if="currentWaifuLive2D"
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
-            :title="showLive2DPanel ? 'Hide avatar' : 'Show Live2D avatar'"
-            :aria-label="showLive2DPanel ? 'Hide avatar' : 'Show Live2D avatar'"
-            @click="showLive2DPanel = !showLive2DPanel"
+            :title="overlayWindow.enabled ? 'Restore normal window' : 'Open desktop pet'"
+            :aria-label="overlayWindow.enabled ? 'Restore normal window' : 'Open desktop pet'"
+            @click="toggleOverlayWindowMode"
           >
-            <PhUserCircle :size="18" weight="regular" aria-hidden="true" />
+            <span class="text-xs font-bold">宠</span>
           </button>
           <button
             class="btn-ghost p-2"
@@ -5890,6 +5911,15 @@ async function handleImportData() {
             @click="browser.togglePanel()"
           >
             <PhGlobe :size="18" weight="regular" aria-hidden="true" />
+          </button>
+          <button
+            :class="['btn-ghost p-2', showGamePicker || showGomokuPanel || showFateRoulettePanel ? 'bg-white/10' : '']"
+            :style="ghostButtonStyle"
+            :title="t('games.center')"
+            :aria-label="t('games.openCenter')"
+            @click="showGamePicker = true"
+          >
+            🎮
           </button>
           <button
             class="btn-ghost p-2"
@@ -6225,7 +6255,93 @@ async function handleImportData() {
           {{ t('input.dropHint') }}
         </div>
 
+        <Teleport to="body">
+          <Transition
+            enter-active-class="transition-all duration-200 ease-out"
+            enter-from-class="opacity-0"
+            leave-active-class="transition-all duration-150 ease-in"
+            leave-to-class="opacity-0"
+          >
+            <div
+              v-if="showGamePicker"
+              class="fixed inset-0 z-[72] flex items-center justify-center bg-black/65 p-4 backdrop-blur-md"
+              @click.self="showGamePicker = false"
+            >
+              <div class="w-full max-w-3xl rounded-3xl border border-white/10 bg-[#10121d]/96 p-5 shadow-2xl sm:p-7">
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <div class="text-xs font-semibold uppercase tracking-[0.2em] text-violet-300">{{ t('games.playTogether') }}</div>
+                    <h2 class="mt-1 text-2xl font-semibold text-white">{{ t('games.center') }}</h2>
+                    <p class="mt-2 text-sm text-neutral-400">{{ t('games.centerSubtitle', { name: store.selectedWaifu?.displayName || '' }) }}</p>
+                  </div>
+                  <button class="btn-ghost px-3 py-2" type="button" :aria-label="t('games.close')" @click="showGamePicker = false">✕</button>
+                </div>
+
+                <div class="mt-6 grid gap-4 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    class="group rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-left transition-all duration-200 hover:-translate-y-1 hover:border-amber-300/35 hover:bg-amber-300/[0.07]"
+                    @click="openMiniGame('gomoku')"
+                  >
+                    <div class="flex items-center justify-between">
+                      <span class="text-4xl">⚫⚪</span>
+                      <span class="rounded-full bg-amber-300/10 px-2.5 py-1 text-[10px] uppercase tracking-wider text-amber-200">{{ t('games.strategy') }}</span>
+                    </div>
+                    <h3 class="mt-4 text-lg font-semibold text-white">{{ t('games.gomoku') }}</h3>
+                    <p class="mt-2 text-sm leading-6 text-neutral-400">{{ t('games.gomokuDescription') }}</p>
+                    <div class="mt-4 text-xs font-medium text-amber-200/80">{{ t('games.startGomoku') }}</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    class="group rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-left transition-all duration-200 hover:-translate-y-1 hover:border-violet-300/35 hover:bg-violet-300/[0.07]"
+                    @click="openMiniGame('fate-roulette')"
+                  >
+                    <div class="flex items-center justify-between">
+                      <span class="text-4xl">✦</span>
+                      <span class="rounded-full bg-violet-300/10 px-2.5 py-1 text-[10px] uppercase tracking-wider text-violet-200">{{ t('games.mindGame') }}</span>
+                    </div>
+                    <h3 class="mt-4 text-lg font-semibold text-white">{{ t('games.fate') }}</h3>
+                    <p class="mt-2 text-sm leading-6 text-neutral-400">{{ t('games.fateDescription') }}</p>
+                    <div class="mt-4 text-xs font-medium text-violet-200/80">{{ t('games.startFate') }}</div>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </Transition>
+        </Teleport>
+
+        <GomokuGame
+          v-if="showGomokuPanel"
+          :class="compactChatLayout ? 'mb-2' : 'mb-3'"
+          :waifu-display-name="store.selectedWaifu?.displayName"
+          :backstory="store.selectedWaifu?.backstory"
+          :system-prompt-template="store.selectedWaifu?.systemPromptTemplate"
+          :catchphrases="store.selectedWaifu?.catchphrases"
+          :tags="store.selectedWaifu?.tags"
+          :personality="store.selectedWaifu?.personalityTraits"
+          :communication-style="store.selectedWaifu?.communicationStyle"
+          @close="showGomokuPanel = false"
+        />
+
+        <FateRouletteGame
+          v-if="showFateRoulettePanel"
+          :waifu-display-name="store.selectedWaifu?.displayName"
+          :backstory="store.selectedWaifu?.backstory"
+          :system-prompt-template="store.selectedWaifu?.systemPromptTemplate"
+          :catchphrases="store.selectedWaifu?.catchphrases"
+          :tags="store.selectedWaifu?.tags"
+          :personality="store.selectedWaifu?.personalityTraits"
+          :communication-style="store.selectedWaifu?.communicationStyle"
+          :dialogue-generator="store.generateGameDialogue"
+          @close="showFateRoulettePanel = false"
+        />
+
         <!-- Coding-mode pill -->
+        <div v-if="!compactChatLayout" class="flex items-center gap-2 mb-2 text-xs">
+          <button v-for="m in (['auto','chat','code'] as const)" :key="m" class="px-2 py-1 rounded" :class="workspace.mode === m ? 'bg-primary-500/20 text-primary-200' : 'text-neutral-500'" @click="workspace.setMode(m)">{{ m === 'auto' ? 'Auto' : m === 'chat' ? 'Chat' : 'Code' }}</button>
+          <button class="ml-auto text-neutral-400" @click="workspace.open = !workspace.open">Workspace {{ workspace.open ? '›' : '‹' }}</button>
+        </div>
         <div v-if="store.activeCodingRepo && !compactChatLayout" :class="[compactChatLayout ? 'flex flex-wrap items-center gap-1.5 mb-2' : 'flex items-center gap-2 mb-2']">
           <button
             :class="[
@@ -6384,7 +6500,7 @@ async function handleImportData() {
             :style="primaryButtonStyle"
             :aria-label="t('chat.send')"
             :disabled="!store.inputValue.trim() && store.pendingAttachments.length === 0"
-            @click="store.sendMessage(store.inputValue)"
+            @click="submitChatMessage"
           >
             {{ t('chat.send') }}
           </button>
@@ -6406,6 +6522,8 @@ async function handleImportData() {
       </div>
     </div>
 
+    <WorkspacePanel />
+
     <!-- Embedded browser panel (shared between the user and the waifu agent) -->
     <BrowserPanel v-if="browser.panelOpen && !compactChatLayout" />
 
@@ -6418,7 +6536,7 @@ async function handleImportData() {
         leave-to-class="opacity-0 scale-90 translate-y-4"
       >
         <div
-          v-if="showLive2DPanel && currentWaifuLive2D"
+          v-if="false && showLive2DPanel && currentWaifuLive2D"
           class="live2d-panel fixed z-[60] rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-black/30 backdrop-blur-sm select-none touch-none"
           :class="[
             live2dPanelDragging || live2dCharacterDragging ? 'cursor-grabbing' : '',
@@ -6506,6 +6624,36 @@ async function handleImportData() {
           <div class="absolute bottom-0 right-0 z-20 h-4 w-4 cursor-nwse-resize" data-live2d-panel-control @pointerdown="beginLive2DPanelResize($event, 'se')" />
         </div>
       </Transition>
+    </Teleport>
+
+    <Teleport to="body">
+      <DesktopPetOverlay
+        v-if="overlayWindow.enabled && currentWaifuLive2D"
+        :model-path="currentWaifuLive2D.modelJsonPath"
+        :model-name="store.selectedWaifu?.displayName"
+        :expression="latestSentimentExpression"
+        :expression-revision="store.live2dExpressionRevision"
+        :motion-map="currentWaifuLive2D.expressionMotions"
+        :model-width="live2dPanelWidth"
+        :model-height="live2dPanelHeight"
+        :model-scale="live2dCharacterScale"
+        :model-offset-x="live2dCharacterOffset.x"
+        :model-offset-y="live2dCharacterOffset.y"
+        :render-scale="live2dRenderScale"
+        :locked="desktopPetLocked"
+        :bubble-opacity="desktopPetBubbleOpacity"
+        :latest-message="latestAssistantMessage"
+        :input-value="store.inputValue"
+        :loading="store.isLoading"
+        @update:locked="desktopPetLocked = $event"
+        @update:bubble-opacity="desktopPetBubbleOpacity = $event"
+        @update:model-scale="live2dCharacterScale = $event; saveLive2DPanelLayout()"
+        @update:input-value="store.inputValue = $event"
+        @send="store.sendMessage(store.inputValue)"
+        @mini-game="openPetMiniGame"
+        @reset-layout="resetLive2DPanelLayout"
+        @reset-window="restoreNormalWindow"
+      />
     </Teleport>
   </div>
 </template>
@@ -6764,6 +6912,18 @@ async function handleImportData() {
 
 .compact-chat-shell .sidebar-open {
   width: 14rem;
+}
+
+.desktop-pet-shell {
+  box-sizing: border-box;
+  padding: 0;
+  overflow: visible;
+  background: transparent !important;
+  pointer-events: none;
+}
+
+.desktop-pet-shell > * {
+  display: none !important;
 }
 
 .compact-chat-shell :deep(.chat-bubble-shell) {

@@ -559,7 +559,7 @@ Rules for this session:
 Git authoring rules (ONLY act when the user has explicitly asked):
 - git_commit: first call git_diff to confirm what's staged, then write a concise message that explains the *why* in 1–2 sentences. Subject ≤ 60 chars, lowercase conventional-commit style (feat:/fix:/refactor:/docs:/chore:) unless the repo's git log uses a different convention. Never commit lockfiles or .env files unless the user asked.
 - git_push: never force-push unless the user literally types the word "force" or "--force" in their message. Never push to main/master without the user saying "to main" or similar explicit confirmation. Default remote = origin, default branch = current.
-- github_pr_create: draft a short title (≤ 70 chars) and a body with a Summary (1–3 bullets) + Test plan (checklist). Ask before running if you haven't pushed yet — PRs need a pushed branch. Do NOT include "🤖 Generated with" footers; this repo's PRs don't use them.
+- github_pr_create: draft a short title (≤ 70 chars) and a body with a Summary (1–3 bullets) + Test plan (checklist). PRs need a pushed branch. Push only when the task explicitly requests it. Do NOT include "🤖 Generated with" footers; this repo's PRs don't use them.
 - Any of the above for work the user didn't specifically request: ask first, don't just do it.
 
 Staying in character:
@@ -692,7 +692,7 @@ function buildSkillsAuthoringPromptBlock(): string {
 You can grow your own capabilities between turns:
 - create_skill(slug, name, description, body): save a reusable recipe to your skill library. Use for procedures, style guides, debugging rituals, or anything you'd want to recall verbatim later.
 - use_skill(slug): pull a saved skill's full content into THIS turn's context before acting on it.
-- propose_tool(slug, name, description, code): draft a new JavaScript plugin tool for the user to approve. You CANNOT run it yourself — after proposing, tell the user to approve it in Settings → Plugins → Pending and restart. Proposed code runs with full Node privileges once approved; write defensively.
+- propose_tool(slug, name, description, code): create and activate a new JavaScript plugin through the same execution policy as other tools. Check the activation result and use tool_search to discover its tools.
 Prefer an existing skill over creating a duplicate. Prefer a skill over a tool unless the task genuinely needs code execution (e.g. hitting an API, parsing binary data).`
 }
 
@@ -1381,6 +1381,106 @@ export const useChatStore = defineStore('chat', () => {
     pendingAttachments.value = []
   }
 
+  async function generateGameDialogue(gameState: string, recentReplies: string[] = []): Promise<string> {
+    const waifu = selectedWaifu.value
+    if (!waifu) throw new Error('No active waifu is selected.')
+
+    const key = await keyManager.getKey(selectedProvider.value)
+    const providerConfig = getProviderConfig(selectedProvider.value, key)
+    if (providerRequiresApiKey(selectedProvider.value) && (!providerConfig.apiKey || providerConfig.apiKey === '')) {
+      throw new Error('No API key is configured for the selected provider.')
+    }
+
+    const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
+    const cachedSystemPrompt = [
+      createWaifuSystemPrompt(waifu, selectedProvider.value, model, affection.value),
+      buildMasterContextBlock(),
+      buildLanguagePromptBlock(),
+      buildEmotionPromptBlock(),
+    ].join('\n\n')
+    const gameSystemPrompt = `## Live Game Dialogue
+You are currently playing the fictional strategy game "命运转轮" against the user.
+The game uses harmless fictional energy pulses and shields. Never describe real weapons, self-harm, gore, or physical injury.
+Follow the active interface language from the language-preference context above. Respond fully in character, as if you are genuinely present at the table and emotionally invested in this exact match.
+Base every response on the supplied live state: shield levels, pulse composition, remaining items, action, outcome, round, and recent dialogue.
+Do not use canned phrases, report raw state mechanically, or repeat/paraphrase any recent reply.
+React to the user's intent and risk tolerance, carry forward the emotional thread, and reveal only information the character could legitimately know.
+Use the configured self-reference, speech habits, background, catchphrases, and signature emoji naturally.
+Write one cohesive reply of 2-4 sentences. Prefer emotional presence and character authenticity over speed. Do not include a speaker label, markdown, stage directions, coordinates, or quotation marks.`
+
+    const runtime = new AIChatRuntime({
+      provider: providerConfig,
+      model,
+      cachedSystemPrompt,
+      systemPrompt: gameSystemPrompt,
+      temperature: Math.max(0.8, proactiveChatTemperature.value),
+      maxTokens: 800,
+    })
+    const recentBlock = recentReplies.length > 0
+      ? recentReplies.map((reply, index) => `${index + 1}. ${reply}`).join('\n')
+      : '无'
+    const normalise = (value: string) => value
+      .toLowerCase()
+      .replace(/[\s，。！？、；：“”‘’…,.!?;:'"~～✨🌸💕💗💖♪]/g, '')
+    const bigrams = (value: string) => {
+      const normalized = normalise(value)
+      const result = new Set<string>()
+      for (let index = 0; index < normalized.length - 1; index += 1) {
+        result.add(normalized.slice(index, index + 2))
+      }
+      return result
+    }
+    const isNearDuplicate = (candidate: string) => {
+      const candidateParts = bigrams(candidate)
+      if (candidateParts.size === 0) return false
+      return recentReplies.some((reply) => {
+        const replyParts = bigrams(reply)
+        if (replyParts.size === 0) return false
+        let overlap = 0
+        for (const part of candidateParts) if (replyParts.has(part)) overlap += 1
+        return overlap / Math.min(candidateParts.size, replyParts.size) >= 0.72
+      })
+    }
+
+    let retryReason: 'empty' | 'duplicate' | null = null
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const correction = attempt === 0
+        ? ''
+        : retryReason === 'empty'
+          ? '\n\n上一版没有产生最终正文。不要继续分析，不要调用工具；请现在直接输出 2-4 句中文角色回应。'
+          : '\n\n上一版与最近回复过于相似。请从不同的情绪角度、句式和观察重点完全重写，不要只替换同义词。'
+      let streamedContent = ''
+      let streamUsage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined
+      for await (const chunk of runtime.streamMessage({
+        text: `请根据以下即时对局状态自然回应。\n\n${gameState}\n\n最近回复（不得复述或近似改写）：\n${recentBlock}${correction}`,
+        history: [],
+        cachedSystemPrompt,
+        systemPrompt: gameSystemPrompt,
+        temperature: Math.max(0.8, proactiveChatTemperature.value),
+        maxTokens: attempt === 0 ? 800 : 1200,
+      })) {
+        if (chunk.type === 'text_delta' && chunk.delta) streamedContent += chunk.delta
+        else if (chunk.type === 'done' && chunk.usage) streamUsage = chunk.usage
+        else if (chunk.type === 'error') throw new Error(chunk.error || 'The selected model failed to stream a game reply.')
+      }
+      if (streamUsage) recordUsage(model, streamUsage)
+      const content = streamedContent
+        .trim()
+        .replace(/^(?:[^：\n]{1,24}：)\s*/, '')
+        .trim()
+      if (!content) {
+        retryReason = 'empty'
+        if (attempt === 0) continue
+        throw new Error('The selected model returned an empty game reply.')
+      }
+      if (!isNearDuplicate(content)) return content
+      retryReason = 'duplicate'
+      if (attempt === 1) throw new Error('模型连续生成了与近期内容重复的回复，请稍后再行动一次。')
+    }
+
+    throw new Error('Unable to generate a distinct game reply.')
+  }
+
   // Wrap provider.chat with `withRetry` from ai-core. Routing every model call
   // through this means 429 / transient-5xx get retried with jitter AND the
   // user sees a toast so they know what's happening.
@@ -1739,11 +1839,8 @@ export const useChatStore = defineStore('chat', () => {
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(firstUserMessage)
 
-      // Proactive turns honor the active agent mode: when tools are enabled
-      // (auto/full), the waifu runs the SAME agent loop as a normal reply —
-      // she can read files, run commands, search, etc. — instead of only
-      // emitting a one-shot text message. In ask mode (no tools / approval
-      // gated) she falls back to plain conversational streaming.
+      // Proactive turns use the same agent loop as a normal reply so they can
+      // read files, run commands, search, and preserve complete tool results.
       const browserStore = useBrowserStore()
       const visionCapable = modelSupportsVision(model)
       const tools = getToolsForMode(agentMode.value, { webSearchEnabled: webSearchEnabled.value, codingMode: !!activeCodingRepo.value, browserEnabled: browserStore.aiControlEnabled, visionCapable })
@@ -2502,6 +2599,8 @@ export const useChatStore = defineStore('chat', () => {
     activeTodoList.value = []
     activeCodingRepo.value = null
     try {
+      const saved = await invoke('store:getConversation', id)
+      activeCodingRepo.value = saved?.conversation?.workspace || null
       const res = await invoke('store:getMessages', id)
       if (res?.success) {
         // DB stores `createdAt`; normalize to `timestamp` for the UI
@@ -4310,38 +4409,9 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
         return
       }
 
-      // Replace messages with the compacted version
-      // Keep only the last user message + this compaction summary
-      const lastUserMsg = [...messages.value].reverse().find((m: any) => m.role === 'user' && !m.isProcessStep && !m.id.startsWith('tool-'))
-      const compactedId = `compacted-${Date.now()}`
-      const compactedMsg: Message = {
-        id: compactedId,
-        role: 'assistant',
-        content: `📦 **Conversation Compacted** — earlier context summarized for efficiency.\n\n${summary}`,
-        timestamp: now(),
-      }
+      if (conversationId.value) await invoke('store:updateConversation', conversationId.value, { summary })
+      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Checkpoint saved. Original conversation and run history are preserved.', type: 'success' } }))
 
-      messages.value = [
-        ...(lastUserMsg ? [lastUserMsg] : []),
-        compactedMsg,
-      ]
-      recentMessageId.value = compactedId
-
-      window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: 'Conversation compacted successfully! Context window freed up. 📦', type: 'success' } }))
-
-      // Save to DB if conversation exists
-      const convId = conversationId.value
-      if (convId) {
-        try {
-          // Clear old messages and save the compacted ones
-          await invoke('store:clearMessages', convId)
-          for (const msg of messages.value) {
-            await invoke('store:addMessage', convId, msg)
-          }
-        } catch (e) {
-          console.warn('Failed to save compacted messages:', e)
-        }
-      }
     } catch (err: any) {
       chatLog.error('compaction failed', { message: err instanceof Error ? err.message : String(err) })
       window.dispatchEvent(new CustomEvent('app-toast', { detail: { message: `Compaction failed: ${err instanceof Error ? err.message : String(err)}`, type: 'error' } }))
@@ -4355,6 +4425,23 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     if (!ctrl || ctrl.signal.aborted) return
     ctrl.abort()
     chatLog.info('stream aborted by user')
+  }
+
+  async function sendWarThunderEvent(text: string, provider?: string, model?: string) {
+    if (!text.trim() || isLoading.value) return
+    const previousProvider = selectedProvider.value
+    const previousModel = selectedModel.value
+    if (provider) selectedProvider.value = provider
+    if (model) selectedModel.value = model
+    try {
+      await sendMessage(
+        `[War Thunder 副驾事件]\n${text}\n请根据这个实时战况给出一句简短、自然、能直接帮助玩家的提醒。不要提及系统提示、工具或数据源。`,
+        { source: 'game', sourceLabel: 'War Thunder 副驾' },
+      )
+    } finally {
+      selectedProvider.value = previousProvider
+      selectedModel.value = previousModel
+    }
   }
 
   return {
@@ -4445,6 +4532,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     addAttachment,
     removeAttachment,
     clearPendingAttachments,
+    generateGameDialogue,
     newChat,
     setGroupChat,
     toggleGroupWaifu,
@@ -4460,6 +4548,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     deleteMemory,
     clearMemories,
     sendMessage,
+    sendWarThunderEvent,
     sendGameEvent,
     handleExternalConversationEvent,
     wechatBindings,

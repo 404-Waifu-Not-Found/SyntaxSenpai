@@ -6,6 +6,8 @@ import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const workspaceAlias = {
+  '@syntax-senpai/agent-tools/catalog': path.resolve(__dirname, '../../packages/agent-tools/src/catalog.ts'),
+  '@syntax-senpai/game-engine': path.resolve(__dirname, '../../packages/game-engine/src/index.ts'),
   '@syntax-senpai/ai-core': path.resolve(__dirname, '../../packages/ai-core/src/index.ts'),
   '@syntax-senpai/agent-tools/catalog': path.resolve(__dirname, '../../packages/agent-tools/src/catalog.ts'),
   '@syntax-senpai/agent-tools': path.resolve(__dirname, '../../packages/agent-tools/src/index.ts'),
@@ -20,6 +22,7 @@ export default defineConfig({
     entry: 'src/main/index.ts',
     plugins: [externalizeDepsPlugin({
       exclude: [
+        '@syntax-senpai/game-engine',
         '@syntax-senpai/ai-core',
         '@syntax-senpai/agent-tools',
         '@syntax-senpai/storage',
@@ -46,6 +49,7 @@ export default defineConfig({
     entry: 'src/preload/index.ts',
     plugins: [externalizeDepsPlugin({
       exclude: [
+        '@syntax-senpai/game-engine',
         '@syntax-senpai/ai-core',
         '@syntax-senpai/agent-tools',
         '@syntax-senpai/storage',
@@ -85,7 +89,8 @@ export default defineConfig({
       UnoCSS()
     ],
     optimizeDeps: {
-      exclude: ['expo-secure-store', 'expo', 'keytar', 'better-sqlite3']
+      exclude: [
+        '@syntax-senpai/game-engine','expo-secure-store', 'expo', 'keytar', 'better-sqlite3']
     },
     build: {
       // Electron 31 ships Chromium ~126 — skip transpiling to older targets.

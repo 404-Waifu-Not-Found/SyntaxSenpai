@@ -15,7 +15,14 @@ const emit = defineEmits<{
 
 type ConnectBoard = Array<Array<'empty' | 'human' | 'agent'>>
 type ChessPiece = { type: string; color: 'w' | 'b' } | null
-type ChessBoard = { cells: ChessPiece[][]; check: boolean; fen: string }
+type ChessSquareMove = { from: string; to: string }
+type ChessBoard = {
+  cells: ChessPiece[][]
+  check: boolean
+  fen: string
+  legalMoves?: ChessSquareMove[]
+  lastMove?: ChessSquareMove | null
+}
 
 const selectedSquare = ref<string | null>(null)
 
@@ -49,11 +56,33 @@ const chessCells = computed(() => {
       square: `${file}${rank}`,
       piece: board.cells[sourceRow]?.[sourceColumn] ?? null,
       dark: (displayRow + displayColumn) % 2 === 1,
+      displayRow,
+      displayColumn,
+      file,
+      rank,
+      last: board.lastMove?.from === `${file}${rank}` || board.lastMove?.to === `${file}${rank}`,
     }
   })
 })
 
 const chessPieceLabel = (piece: ChessPiece) => piece ? piece.type.toUpperCase() : ''
+
+const chessLegalTargets = computed(() => {
+  const board = props.snapshot?.board as ChessBoard | undefined
+  const selected = selectedSquare.value
+  if (!selected) return new Set<string>()
+  return new Set((board?.legalMoves ?? [])
+    .filter((move) => move.from === selected)
+    .map((move) => move.to))
+})
+
+function connectColumnOpen(column: number) {
+  return connectBoard.value[0]?.[column] === 'empty'
+}
+
+function emitConnectMove(column: number) {
+  if (connectColumnOpen(column)) emitMove(String(column))
+}
 
 function canMove() {
   return !!props.snapshot && props.snapshot.status === 'playing' && props.snapshot.turn === 'human' && !props.busy
@@ -65,10 +94,24 @@ function emitMove(move: string) {
 
 function chooseChessSquare(square: string) {
   if (!canMove()) return
+  const cell = chessCells.value.find((candidate) => candidate.square === square)
+  const humanSide = props.snapshot?.humanSide
+
   if (!selectedSquare.value) {
-    selectedSquare.value = square
+    if (cell?.piece?.color === humanSide) selectedSquare.value = square
     return
   }
+
+  if (cell?.piece?.color === humanSide) {
+    selectedSquare.value = selectedSquare.value === square ? null : square
+    return
+  }
+
+  if (!chessLegalTargets.value.has(square)) {
+    selectedSquare.value = null
+    return
+  }
+
   if (selectedSquare.value === square) {
     selectedSquare.value = null
     return

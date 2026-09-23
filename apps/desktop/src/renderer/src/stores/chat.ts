@@ -1396,6 +1396,106 @@ export const useChatStore = defineStore('chat', () => {
     pendingAttachments.value = []
   }
 
+  async function generateGameDialogue(gameState: string, recentReplies: string[] = []): Promise<string> {
+    const waifu = selectedWaifu.value
+    if (!waifu) throw new Error('No active waifu is selected.')
+
+    const key = await keyManager.getKey(selectedProvider.value)
+    const providerConfig = getProviderConfig(selectedProvider.value, key)
+    if (providerRequiresApiKey(selectedProvider.value) && (!providerConfig.apiKey || providerConfig.apiKey === '')) {
+      throw new Error('No API key is configured for the selected provider.')
+    }
+
+    const model = selectedModel.value || DEFAULT_MODEL_BY_PROVIDER[selectedProvider.value] || 'gpt-4o'
+    const cachedSystemPrompt = [
+      createWaifuSystemPrompt(waifu, selectedProvider.value, model, affection.value),
+      buildMasterContextBlock(),
+      buildLanguagePromptBlock(),
+      buildEmotionPromptBlock(),
+    ].join('\n\n')
+    const gameSystemPrompt = `## Live Game Dialogue
+You are currently playing the fictional strategy game "命运转轮" against the user.
+The game uses harmless fictional energy pulses and shields. Never describe real weapons, self-harm, gore, or physical injury.
+Follow the active interface language from the language-preference context above. Respond fully in character, as if you are genuinely present at the table and emotionally invested in this exact match.
+Base every response on the supplied live state: shield levels, pulse composition, remaining items, action, outcome, round, and recent dialogue.
+Do not use canned phrases, report raw state mechanically, or repeat/paraphrase any recent reply.
+React to the user's intent and risk tolerance, carry forward the emotional thread, and reveal only information the character could legitimately know.
+Use the configured self-reference, speech habits, background, catchphrases, and signature emoji naturally.
+Write one cohesive reply of 2-4 sentences. Prefer emotional presence and character authenticity over speed. Do not include a speaker label, markdown, stage directions, coordinates, or quotation marks.`
+
+    const runtime = new AIChatRuntime({
+      provider: providerConfig,
+      model,
+      cachedSystemPrompt,
+      systemPrompt: gameSystemPrompt,
+      temperature: Math.max(0.8, proactiveChatTemperature.value),
+      maxTokens: 800,
+    })
+    const recentBlock = recentReplies.length > 0
+      ? recentReplies.map((reply, index) => `${index + 1}. ${reply}`).join('\n')
+      : '无'
+    const normalise = (value: string) => value
+      .toLowerCase()
+      .replace(/[\s，。！？、；：“”‘’…,.!?;:'"~～✨🌸💕💗💖♪]/g, '')
+    const bigrams = (value: string) => {
+      const normalized = normalise(value)
+      const result = new Set<string>()
+      for (let index = 0; index < normalized.length - 1; index += 1) {
+        result.add(normalized.slice(index, index + 2))
+      }
+      return result
+    }
+    const isNearDuplicate = (candidate: string) => {
+      const candidateParts = bigrams(candidate)
+      if (candidateParts.size === 0) return false
+      return recentReplies.some((reply) => {
+        const replyParts = bigrams(reply)
+        if (replyParts.size === 0) return false
+        let overlap = 0
+        for (const part of candidateParts) if (replyParts.has(part)) overlap += 1
+        return overlap / Math.min(candidateParts.size, replyParts.size) >= 0.72
+      })
+    }
+
+    let retryReason: 'empty' | 'duplicate' | null = null
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const correction = attempt === 0
+        ? ''
+        : retryReason === 'empty'
+          ? '\n\n上一版没有产生最终正文。不要继续分析，不要调用工具；请现在直接输出 2-4 句中文角色回应。'
+          : '\n\n上一版与最近回复过于相似。请从不同的情绪角度、句式和观察重点完全重写，不要只替换同义词。'
+      let streamedContent = ''
+      let streamUsage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined
+      for await (const chunk of runtime.streamMessage({
+        text: `请根据以下即时对局状态自然回应。\n\n${gameState}\n\n最近回复（不得复述或近似改写）：\n${recentBlock}${correction}`,
+        history: [],
+        cachedSystemPrompt,
+        systemPrompt: gameSystemPrompt,
+        temperature: Math.max(0.8, proactiveChatTemperature.value),
+        maxTokens: attempt === 0 ? 800 : 1200,
+      })) {
+        if (chunk.type === 'text_delta' && chunk.delta) streamedContent += chunk.delta
+        else if (chunk.type === 'done' && chunk.usage) streamUsage = chunk.usage
+        else if (chunk.type === 'error') throw new Error(chunk.error || 'The selected model failed to stream a game reply.')
+      }
+      if (streamUsage) recordUsage(model, streamUsage)
+      const content = streamedContent
+        .trim()
+        .replace(/^(?:[^：\n]{1,24}：)\s*/, '')
+        .trim()
+      if (!content) {
+        retryReason = 'empty'
+        if (attempt === 0) continue
+        throw new Error('The selected model returned an empty game reply.')
+      }
+      if (!isNearDuplicate(content)) return content
+      retryReason = 'duplicate'
+      if (attempt === 1) throw new Error('模型连续生成了与近期内容重复的回复，请稍后再行动一次。')
+    }
+
+    throw new Error('Unable to generate a distinct game reply.')
+  }
+
   // Wrap provider.chat with `withRetry` from ai-core. Routing every model call
   // through this means 429 / transient-5xx get retried with jitter AND the
   // user sees a toast so they know what's happening.
@@ -4374,6 +4474,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     addAttachment,
     removeAttachment,
     clearPendingAttachments,
+    generateGameDialogue,
     newChat,
     setGroupChat,
     toggleGroupWaifu,

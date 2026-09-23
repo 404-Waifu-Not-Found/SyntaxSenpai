@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import ChatBubble from './ChatBubble.vue'
 import Live2DAvatar from './Live2DAvatar.vue'
 
@@ -52,6 +52,8 @@ const menuRef = ref<HTMLElement | null>(null)
 const modelPosition = ref<{ x: number; y: number } | null>(null)
 const dragStart = ref<{ pointerId: number; x: number; y: number; modelX: number; modelY: number } | null>(null)
 const opacityOptions = [35, 55, 75, 92, 100]
+let mouseMoveHandler: ((event: MouseEvent) => void) | null = null
+let ignoreRequestInFlight = false
 
 const bubbleStyle = computed(() => ({
   '--pet-bubble-opacity': String(Math.min(Math.max(props.bubbleOpacity, 0), 100) / 100),
@@ -119,12 +121,41 @@ function handleKeydown(event: KeyboardEvent) {
 function changeScale(delta: number) {
   emit('update:modelScale', Math.min(Math.max(props.modelScale + delta, 0.35), 2.8))
 }
+
+async function setMouseClickThrough(ignore: boolean) {
+  if (ignoreRequestInFlight) return
+  ignoreRequestInFlight = true
+  try {
+    await (window as any).electron?.ipcRenderer?.invoke('window:setIgnoreMouseEvents', ignore)
+  } finally {
+    ignoreRequestInFlight = false
+  }
+}
+
+function isInteractivePoint(x: number, y: number) {
+  const element = document.elementFromPoint(x, y)
+  return element instanceof HTMLElement && Boolean(element.closest('.desktop-pet-interactive'))
+}
+
+onMounted(() => {
+  void setMouseClickThrough(true)
+  mouseMoveHandler = (event) => {
+    void setMouseClickThrough(!isInteractivePoint(event.clientX, event.clientY))
+  }
+  window.addEventListener('mousemove', mouseMoveHandler)
+})
+
+onBeforeUnmount(() => {
+  if (mouseMoveHandler) window.removeEventListener('mousemove', mouseMoveHandler)
+  mouseMoveHandler = null
+  void setMouseClickThrough(false)
+})
 </script>
 
 <template>
   <div class="desktop-pet-root fixed inset-0 z-[80] pointer-events-none select-none" @click="closeContextMenu" @pointermove="moveModel" @pointerup="endModelDrag">
     <section
-      class="desktop-pet-model pointer-events-auto"
+      class="desktop-pet-model desktop-pet-interactive pointer-events-auto"
       :class="[locked ? 'desktop-pet-locked' : 'desktop-pet-draggable']"
       :style="modelStyle"
       @contextmenu="openContextMenu"
@@ -144,10 +175,9 @@ function changeScale(delta: number) {
       />
     </section>
 
-    <section v-if="latestMessage || !locked" class="desktop-pet-bubble pointer-events-auto" :style="bubbleStyle" @click.stop>
+    <section v-if="latestMessage || !locked" class="desktop-pet-bubble desktop-pet-interactive pointer-events-auto" :style="bubbleStyle" @click.stop>
       <div class="desktop-pet-bubble-header">
         <span>{{ modelName }}</span>
-        <button type="button" title="Desktop pet menu" aria-label="Desktop pet menu" @click="menuOpen = !menuOpen">•••</button>
       </div>
       <ChatBubble v-if="latestMessage" :content="latestMessage" :show-copy="false" />
       <div class="desktop-pet-composer">
@@ -167,7 +197,7 @@ function changeScale(delta: number) {
     <nav
       v-if="menuOpen"
       ref="menuRef"
-      class="desktop-pet-menu pointer-events-auto"
+      class="desktop-pet-menu desktop-pet-interactive pointer-events-auto"
       :style="{ left: `${menuX}px`, top: `${menuY}px` }"
       aria-label="Desktop pet menu"
       @click.stop

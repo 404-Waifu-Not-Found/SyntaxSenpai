@@ -460,6 +460,7 @@ function createWindow(forcedMode?: WindowMode): void {
     transparent: shouldUseTransparentWindow(mode),
     backgroundColor: shouldUseTransparentWindow(mode) ? '#00000000' : '#10131c',
     frame: !shouldUseFramelessWindow(mode),
+    hasShadow: mode !== 'overlay',
     maximizable: mode !== 'overlay',
     fullscreenable: mode !== 'overlay',
     minWidth: mode === 'overlay' ? OVERLAY_WINDOW_MIN_WIDTH : NORMAL_WINDOW_MIN_WIDTH,
@@ -480,6 +481,12 @@ function createWindow(forcedMode?: WindowMode): void {
     }
   })
   mainWindow = createdWindow
+
+  createdWindow.on('minimize', (event: any) => {
+    if (mode !== 'overlay') return
+    event.preventDefault()
+    createdWindow.showInactive()
+  })
 
   // Lock down every <webview> the renderer attaches: sandboxed guest, no
   // node, no preload, http(s) only, and only our persistent browser session.
@@ -650,9 +657,24 @@ ipcMain.handle('window:setOverlayMode', (_e: any, enabled: boolean) => {
   try {
     if (!mainWindow) createWindow()
     applyWindowMode(enabled ? 'overlay' : 'normal')
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setIgnoreMouseEvents(false)
+    }
     return { success: true, mode: windowState.mode, enabled: windowState.mode === 'overlay' }
   } catch (err: any) {
     return { success: false, error: err?.message || String(err) }
+  }
+})
+
+ipcMain.handle('window:setIgnoreMouseEvents', (_e: any, ignore: boolean) => {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed() || windowState.mode !== 'overlay') {
+      return { success: false, ignored: false }
+    }
+    mainWindow.setIgnoreMouseEvents(Boolean(ignore), { forward: true })
+    return { success: true, ignored: Boolean(ignore) }
+  } catch (err: any) {
+    return { success: false, ignored: false, error: err?.message || String(err) }
   }
 })
 

@@ -32,21 +32,6 @@ export const gameSession = shallowReactive<{
 
 const listeners = new Set<(event: GameSessionEvent) => void>()
 
-function gameIpc() {
-  return typeof window === 'undefined' ? null : (window as any).electron?.ipcRenderer
-}
-
-function syncGameWindow(snapshot: GameSnapshot | null) {
-  if (!snapshot) return
-  gameIpc()?.send('game:session:update', snapshot)
-}
-
-function openGameWindow(snapshot: GameSnapshot) {
-  void gameIpc()?.invoke('game:openWindow', snapshot).catch((error: unknown) => {
-    console.warn('[game] failed to open dedicated game window', error)
-  })
-}
-
 function publish(event: GameSessionEvent) {
   for (const listener of listeners) listener(event)
 }
@@ -65,7 +50,6 @@ function requireController(): GameController {
 
 function updateSnapshot(snapshot: GameSnapshot, event: Omit<GameSessionEvent, 'sessionId' | 'snapshot'>) {
   gameSession.snapshot = snapshot
-  syncGameWindow(snapshot)
   publish({ ...event, sessionId: gameSession.sessionId!, snapshot })
 }
 
@@ -84,11 +68,8 @@ export function startGameSession(
 
   // Let the engine make the opening move when the user chose to play second.
   if (gameSession.snapshot.turn === 'agent') {
-    const snapshot = applyBestAgentMove()
-    openGameWindow(snapshot)
-    return snapshot
+    return applyBestAgentMove()
   }
-  openGameWindow(gameSession.snapshot)
   return gameSession.snapshot
 }
 
@@ -116,7 +97,6 @@ export function getGameSessionSnapshot(): GameSnapshot | null {
 export function closeGameSession() {
   const sessionId = gameSession.sessionId
   if (!sessionId) return
-  void gameIpc()?.invoke('game:closeWindow').catch(() => { /* already closed */ })
   gameSession.open = false
   gameSession.sessionId = null
   gameSession.controller = null

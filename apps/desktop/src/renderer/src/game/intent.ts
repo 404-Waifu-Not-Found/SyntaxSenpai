@@ -8,7 +8,7 @@ export interface GameLaunchIntent {
 }
 
 /**
- * Recognise an explicit request to open one of the playable game windows.
+ * Recognise an explicit request to open one of the playable in-chat games.
  *
  * This is intentionally narrow: the model still owns game commentary and
  * moves, but a clear game request must not depend on a provider deciding to

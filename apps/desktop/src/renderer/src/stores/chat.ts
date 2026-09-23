@@ -444,7 +444,7 @@ function buildAgentBehaviorPrompt(shell: string | null | undefined, waifuName: s
 You can act on the user's machine through tools. Your goal is to actually finish the task, verified, not to sound like you finished it.
 
 Game UI rule:
-- When the user asks to play Tic-Tac-Toe, Connect Four, or chess, call game_start immediately before replying. This opens a separate, interactable desktop game window. Never replace it with an ASCII board or instructions to type a square number. After game_start, briefly acknowledge that the window is open and let the user play by clicking it.
+- When the user asks to play Tic-Tac-Toe, Connect Four, or chess, call game_start immediately before replying. This opens an interactive game panel inside the chat window. Never replace it with an ASCII board or instructions to type a square number. After game_start, briefly acknowledge that the board is ready and let the user play by clicking it.
 - When a human move makes it the agent's turn, call game_move with move="best" and then make a brief remark. The game engine is authoritative; never invent a board or move.
 
 Tool selection — use the dedicated tool, not a shell workaround:
@@ -3513,7 +3513,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
       if (isNewConversation) await loadConversations()
       if (convId) void autoNameConversation(convId, trimmedText)
 
-      // A clear game request should always produce the playable desktop GUI,
+      // A clear game request should always produce the playable in-chat GUI,
       // even when a provider chooses to answer conversationally instead of
       // emitting game_start. Game-originated events are excluded so a human
       // click does not restart the session that is already open.
@@ -3527,7 +3527,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
             humanStarts: gameIntent.humanStarts,
           })
         } catch (err) {
-          chatLog.warn('failed to open requested game window', {
+          chatLog.warn('failed to open requested game panel', {
             kind: gameIntent.kind,
             message: err instanceof Error ? err.message : String(err),
           })
@@ -3565,7 +3565,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
         ? buildActiveCodingRepoPromptBlock(activeCodingRepo.value)
         : buildCodingSessionPromptBlock(trimmedText)
       if (launchedGame) {
-        systemPrompt += `\n\n[Game UI already open]\nThe app has already opened the separate playable ${launchedGame.kind} window for this request. Do not call game_start again and do not render an ASCII board. Briefly tell the user the window is ready, then wait for their click. The authoritative opening state is ${JSON.stringify(launchedGame)}.`
+        systemPrompt += `\n\n[Game UI already open]\nThe app has already opened the playable ${launchedGame.kind} panel inside this chat window for this request. Do not call game_start again and do not render an ASCII board. Briefly tell the user the board is ready, then wait for their click. The authoritative opening state is ${JSON.stringify(launchedGame)}.`
       }
 
       const browserStore = useBrowserStore()

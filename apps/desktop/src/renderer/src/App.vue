@@ -35,6 +35,7 @@ import SubagentPanel from './components/SubagentPanel.vue'
 import AppAvatar from './components/AppAvatar.vue'
 import Live2DAvatar from './components/Live2DAvatar.vue'
 import TypingDots from './components/TypingDots.vue'
+import MiniGamePanel from './components/MiniGamePanel.vue'
 import QrPairModal from './components/QrPairModal.vue'
 import RepositoryPickerModal from './components/RepositoryPickerModal.vue'
 import SakuraPetals from './components/SakuraPetals.vue'
@@ -2106,8 +2107,6 @@ let removeMobileChatListener: (() => void) | null = null
 let removeWechatInboundListener: (() => void) | null = null
 let removeWechatStatusListener: (() => void) | null = null
 let removeTrayNewChatListener: (() => void) | null = null
-let removeGameMoveListener: (() => void) | null = null
-let removeGameWindowClosedListener: (() => void) | null = null
 const wechatStatus = ref<{ connected: boolean; account: { userId: string; displayName: string | null } | null; lastError: string | null; pairing?: boolean }>({ connected: false, account: null, lastError: null })
 const THEME_STORAGE_KEY = 'syntax-senpai-theme'
 const API_TELEMETRY_HISTORY_STORAGE_KEY = 'syntax-senpai-api-telemetry-history'
@@ -2673,13 +2672,6 @@ onMounted(() => {
     store.newChat()
   })
 
-  removeGameMoveListener = on('game:move', (move: string) => {
-    void handleGameUserMove(move)
-  })
-  removeGameWindowClosedListener = on('game:window-closed', () => {
-    if (gameSession.open) closeGameSession()
-  })
-
   window.addEventListener('app:error', onAppError as EventListener)
   window.addEventListener('app:retry', onAppRetry as EventListener)
   window.addEventListener('app:milestone', onAppMilestone as EventListener)
@@ -2711,8 +2703,6 @@ onUnmounted(() => {
   removeWechatInboundListener?.()
   removeWechatStatusListener?.()
   removeTrayNewChatListener?.()
-  removeGameMoveListener?.()
-  removeGameWindowClosedListener?.()
   window.removeEventListener('app:error', onAppError as EventListener)
   window.removeEventListener('app:retry', onAppRetry as EventListener)
   window.removeEventListener('app:milestone', onAppMilestone as EventListener)
@@ -6000,6 +5990,11 @@ async function handleImportData() {
         </template>
       </div>
 
+      <div
+        class="game-chat-layout flex-1 min-h-0"
+        :class="{ 'game-chat-layout-active': gameSession.open, 'game-chat-layout-compact': compactChatLayout }"
+      >
+        <div class="game-chat-column flex min-h-0 min-w-0 flex-col">
       <!-- Messages -->
       <div :class="[
         'flex-1 overflow-y-auto',
@@ -6398,6 +6393,17 @@ async function handleImportData() {
           {{ t('chat.inputHint') }}
         </p>
       </div>
+        </div>
+        <aside v-if="gameSession.open && gameSession.snapshot" class="game-chat-aside" aria-label="Active minigame">
+          <MiniGamePanel
+            :key="gameSession.sessionId"
+            :snapshot="gameSession.snapshot"
+            :busy="gameSession.busy"
+            @move="handleGameUserMove"
+            @close="closeGameSession"
+          />
+        </aside>
+      </div>
     </div>
 
     <!-- Embedded browser panel (shared between the user and the waifu agent) -->
@@ -6505,6 +6511,59 @@ async function handleImportData() {
 </template>
 
 <style scoped>
+.game-chat-layout {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.game-chat-column {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+.game-chat-aside {
+  flex: 0 0 clamp(21rem, 39%, 32rem);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
+  background: var(--surface);
+}
+
+@media (max-width: 1199px) {
+  .game-chat-layout-active {
+    flex-direction: column-reverse;
+  }
+
+  .game-chat-layout-active .game-chat-aside {
+    flex: 0 0 min(52%, 29rem);
+    width: 100%;
+    border-left: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
+  }
+
+  .game-chat-layout-active .game-chat-column {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+}
+
+.game-chat-layout-compact.game-chat-layout-active {
+  flex-direction: column-reverse;
+}
+
+.game-chat-layout-compact.game-chat-layout-active .game-chat-aside {
+  flex: 0 0 52%;
+  width: 100%;
+  border-left: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
+.game-chat-layout-compact.game-chat-layout-active .game-chat-column {
+  flex: 1 1 auto;
+  min-height: 0;
+}
 /* Collapsible "show thinking & process" panel above each assistant reply.
    The header chevron rotates on expand for a ChatGPT-style affordance.
    The nested ChatBubble inside `.process-panel-step` shrinks to a more

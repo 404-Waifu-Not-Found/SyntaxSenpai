@@ -97,7 +97,6 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: path.resolve(__dirname, 'src/renderer/index.html'),
-          game: path.resolve(__dirname, 'src/renderer/game.html'),
           live2d: path.resolve(__dirname, 'src/renderer/live2d.html'),
         },
         external: ['expo-secure-store', 'expo', 'keytar', 'better-sqlite3']

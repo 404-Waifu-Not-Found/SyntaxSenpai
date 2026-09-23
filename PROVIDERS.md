@@ -6,7 +6,7 @@ This file is the provider catalog. For the broader project status, see [STATE.md
 
 `packages/ai-core/src/providers/index.ts` registers 21 provider IDs.
 
-- **18 live providers**: `anthropic`, `openai`, `openai-codex`, `gemini`, `mistral`, `cohere`, `groq`, `deepseek`, `perplexity`, `together`, `xai`, `huggingface`, `github-models`, `minimax-global`, `minimax-cn`, `nvidia`, `ollama`, `lmstudio`.
+- **18 implemented provider adapters**: `anthropic`, `openai`, `openai-codex`, `gemini`, `mistral`, `cohere`, `groq`, `deepseek`, `perplexity`, `together`, `xai`, `huggingface`, `github-models`, `minimax-global`, `minimax-cn`, `nvidia`, `ollama`, `lmstudio`. Live availability still depends on credentials, model access, and the provider service.
 - **3 registered stubs**: `azure-openai`, `fireworks`, `xai-grok`.
 - **Removed**: Replicate and AWS Bedrock are not in the registry.
 
@@ -37,6 +37,8 @@ The desktop picker should avoid registered stubs until their `chat()` and `strea
 | `azure-openai` | Azure OpenAI | Stub | Yes | Registered, not implemented |
 | `fireworks` | Fireworks AI | Stub | Yes | Registered, not implemented |
 | `xai-grok` | xAI Grok | Stub | Yes | Registered, not implemented |
+
+“Live” in this table means the adapter has chat/stream implementations, not that every model/account has been exercised against its external API.
 
 ## Provider Notes
 

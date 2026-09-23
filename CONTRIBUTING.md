@@ -82,15 +82,21 @@ If `eas` is not installed globally, use `npx eas ...` instead of `eas ...`.
 This is a **pnpm monorepo** managed with [Turborepo](https://turbo.build/repo). Key directories:
 
 - `apps/desktop/` — Electron + Vue 3 desktop app
+- `apps/headless/` — Node JSONL adapter for the shared agent session
 - `apps/mobile/` — Expo / React Native companion app
 - `apps/runtime/` — Node runtime service for health, metrics, backups, and plugins
-- `packages/` — Shared libraries (AI core, waifu definitions, storage, UI, etc.)
+- `packages/agent-session/` — shared desktop/headless session loop and events
+- `packages/agent-tools/` — browser-safe tool catalog and plugin registry
+- `packages/game-engine/` — authoritative Tic-Tac-Toe, Connect Four, and chess engines
+- `packages/` — other shared libraries (AI core, waifu definitions, storage, UI, etc.)
 
 ## Useful scripts
 
 | Command | Description |
 |---|---|
 | `pnpm dev:desktop` | Start the desktop app in dev mode |
+| `pnpm dev:headless` | Start the JSONL headless runner |
+| `pnpm test:headless` | Run deterministic headless tests |
 | `pnpm dev:mobile` | Start the mobile app in dev mode |
 | `pnpm dev:runtime` | Start the runtime service |
 | `pnpm build` | Build all workspaces |
@@ -105,6 +111,8 @@ This is a **pnpm monorepo** managed with [Turborepo](https://turbo.build/repo). 
 - Write clear, descriptive commit messages.
 - Keep PRs focused — one feature or fix per PR.
 - Add tests for new functionality when possible.
+- For agent/tool behavior, keep desktop and headless hosts aligned and cover both with scripted provider fixtures.
+- Desktop full backups include API keys in plaintext; never attach them to an issue or commit them.
 - Follow the existing code style (TypeScript, Vue 3 Composition API, UnoCSS).
 
 ## Pull request process

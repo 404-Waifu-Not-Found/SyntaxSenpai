@@ -7,6 +7,17 @@ Format roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## Unreleased
 
 ### Added
+- A shared `agent-session` runtime and JSONL headless adapter with scripted provider fixtures.
+- Interactive Tic-Tac-Toe, Connect Four, and chess boards inside the existing chat window, backed by `game-engine`; additional in-window Gomoku and Fate Wheel components.
+- Desktop full backup/import for chats, settings, skills, waifus, provider keys, and Live2D files.
+
+### Fixed
+- WeChat image upload now handles full URLs and opaque upload parameters, reports structured upload failures, and can fall back to chunked text when image delivery fails. Live peer delivery still needs verification.
+
+### Documentation
+- Replaced stale agent architecture notes, updated maintained READMEs, and removed superseded milestone documents from `docs/archive/` (recoverable from Git history).
+
+### Earlier unreleased work
 - Parallel agent tool execution for independent terminal commands, file reads, searches, and fetches, capped at eight concurrent calls. Ask mode remains serial so approval prompts cannot deadlock the command queue.
 - Batched duplicate browser-tab opening via `browser_tabs` `count`, avoiding repeated YouTube page waits and snapshots. Legacy flat plugin tool definitions are normalized during loading.
 - Visible rounded AI browser cursor with smooth target tracking, click pulses, typing feedback, navigation state, and reduced-motion support.
@@ -35,7 +46,7 @@ Format roughly follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Stub providers Replicate and AWS Bedrock (always threw on invocation).
 
 ### Documentation
-- Frozen status docs moved to `docs/archive/`; root kept only the living docs.
+- Frozen status docs were archived at the time; the archive was later retired in favor of maintained root and package READMEs. The old versions remain in Git history.
 
 ## PR #11 — Round 1 features & reliability
 

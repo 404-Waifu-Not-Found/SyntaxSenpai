@@ -40,6 +40,10 @@ export const Endpoint = {
 
 export interface ApiOptions {
   baseUrl?: string;
+  /** CDN fallback for opaque upload_param responses. */
+  cdnBaseUrl?: string;
+  /** Per-attempt CDN POST timeout. Primarily configurable for deterministic tests. */
+  cdnUploadTimeoutMs?: number;
   /** Test/DI seam — defaults to `globalThis.fetch`. */
   fetchImpl?: typeof fetch;
   /** AbortSignal forwarded to fetch (used for long-poll cancellation). */
@@ -122,7 +126,7 @@ export async function ilinkPost<TRes>(
       errcode,
     );
   }
-  if (typeof ret === "number" && ret !== 0 && !(typeof errcode === "number")) {
+  if (typeof ret === "number" && ret !== 0) {
     throw new IlinkProtocolError(`iLink ${endpoint} ret=${ret}`, ret);
   }
   return json;

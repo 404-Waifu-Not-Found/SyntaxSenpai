@@ -1,147 +1,43 @@
 # SyntaxSenpai — Current State
 
-_Single source of truth for current project state. The previous status files (NEXT_STEPS, PROJECT_STATUS, STATUS_CHECKLIST, PHASE_1_COMPLETE, IMPLEMENTATION_PLAN, IMPLEMENTATION_COMPLETE, TODAY_COMPLETED, SESSION_SUMMARY, QUICK_START, MODERN_UI_GUIDE) have been moved to `docs/archive/` for historical reference — don't trust them for current facts._
+This is a code-oriented snapshot, not a claim that every integration has been verified against a live third-party service. The package READMEs and source code remain authoritative for their respective interfaces.
 
-## Product
+## Product surfaces
 
-SyntaxSenpai is an Electron desktop app ("waifu"-themed AI chatbot) with:
+- `apps/desktop`: Electron main/preload plus Vue 3 renderer. Chat, settings, skills, custom waifus, Live2D, browser control, WeChat pairing, mobile pairing, and agent tools live here.
+- `apps/headless`: Node JSONL runner for the shared agent session. It preserves conversation history in memory and emits ordered events; see [its README](./apps/headless/README.md).
+- `apps/mobile`: Expo companion paired to the desktop over the shared WebSocket protocol.
+- `apps/runtime`: optional Node operations service for health, metrics, plugins, and runtime backups. Its backup API is separate from the desktop full-backup feature.
 
-- Multi-provider chat with tool calling and streaming
-- An agent tier (ask / auto / full modes) with file + shell + web-search tools
-- 17 theme presets including a live hue-cycling Rainbow mode and a Sakura petals overlay
-- Near-fullscreen Claude-Mac-style settings window (sidebar nav)
-- QR-pair mobile companion (scan a QR to use your phone as a remote)
-- Memory system, group chat with multiple waifus, per-waifu affection meter
+## Agent and game architecture
 
-## Apps & packages
+- `packages/ai-core` owns providers and the lower-level agent turn loop.
+- `packages/agent-session` owns the shared session loop and events used by desktop and headless. Desktop adapts events and side effects to Electron/Vue; headless emits them as JSONL. The desktop also has a separate durable coding-run service in `apps/desktop/src/main/agent/run-service.ts`.
+- `packages/agent-tools/src/catalog.ts` is the browser-safe tool definition catalog. `apps/desktop/src/renderer/src/agent-tools.ts` imports that catalog and implements desktop tool execution through IPC and renderer services. Headless implements its own host in `apps/headless/src/host.ts`.
+- `packages/game-engine` supplies authoritative Tic-Tac-Toe, Connect Four, and chess state/AI. Those games render in the existing desktop chat window through `MiniGamePanel.vue`; Gomoku and Fate Wheel also have in-window components. A game board is not a separate Electron window.
+- Destructive shell patterns still require native confirmation. Strict mode additionally uses the allowlist executor. Agent mode and tool availability are filtered in the desktop adapter.
 
-- `apps/desktop` — Electron + Vue 3 + UnoCSS (primary product)
-- `apps/mobile` — Expo / React Native client (pairs via QR to desktop)
-- `packages/ai-core` — provider abstraction, runtime, retry, trace, planner
-- `packages/storage` — JSON-backed chat store + memory store
-- `packages/agent-tools` — shared agent-tool built-ins (currently unused by the desktop renderer, which re-implements its own in `apps/desktop/src/renderer/src/agent-tools.ts`)
-- `packages/ui`, `packages/ui-loading-screens`, `packages/ui-transitions` — shared Vue UI
-- `packages/waifu-core` — waifu personas + prompt builders
-- `packages/ws-protocol` — shared WS types for mobile pairing
-- `packages/wechat-ilink` — Tencent OpenClaw iLink (personal WeChat) protocol client: QR-login, long-poll bot, text/image send, AES-128-ECB media encryption
+## Data and integrations
+
+- Settings → Data supports a full desktop backup/import covering app settings, chats and memories, skills, custom waifus, provider configuration and API keys, and Live2D files. The resulting backup contains plaintext secrets and must be protected. Import replaces existing local data.
+- Desktop API keys normally use the OS keychain. The headless runner instead uses provider environment variables or scripted provider fixtures.
+- WeChat iLink supports text and image send. The image path resolves both full upload URLs and opaque upload parameters, encrypts/uploads the PNG, and reports structured failures. Desktop image-send failure can fall back to chunked text. Automated tests cover these paths; a live image-delivery check still requires a paired WeChat account and a verified message ID.
+- Mobile QR pairing, Live2D rendering, browser actions, plugin loading, and third-party provider calls depend on the local environment and are not proven by a build alone.
 
 ## Providers
 
-The registry in `packages/ai-core/src/providers/index.ts` exposes 21 IDs.
+The registry has 21 IDs: 18 implemented adapters and three registered placeholders (`azure-openai`, `fireworks`, `xai-grok`) whose chat/stream methods throw. See [PROVIDERS.md](./PROVIDERS.md) for the exact catalog and [PROVIDER_SETUP.md](./PROVIDER_SETUP.md) for configuration. An implemented adapter does not guarantee live account/model availability.
 
-### Fully implemented (work end-to-end)
-
-| ID | File |
-|---|---|
-| `anthropic` | providers/anthropic.ts |
-| `openai` | providers/openai.ts |
-| `openai-codex` | providers/openai-codex.ts |
-| `gemini` | providers/google-gemini.ts |
-| `mistral` | providers/mistral.ts |
-| `cohere` | providers/cohere.ts |
-| `groq` | providers/groq.ts |
-| `deepseek` | providers/deepseek.ts |
-| `perplexity` | providers/perplexity.ts |
-| `together` | providers/together-ai.ts |
-| `xai` | providers/xai.ts |
-| `huggingface` | providers/huggingface.ts |
-| `github-models` | providers/github-models.ts |
-| `minimax-global` | providers/minimax-global.ts |
-| `minimax-cn` | providers/minimax-cn.ts |
-| `nvidia` | providers/nvidia.ts |
-| `ollama` (keyless) | providers/ollama.ts |
-| `lmstudio` (keyless) | providers/lmstudio.ts |
-
-### Stubs (chat/stream throw "not yet fully implemented")
-
-- `azure-openai` — providers/azure-openai.ts (`chat()` / `stream()` throw)
-- `fireworks` — providers/fireworks-ai.ts (`chat()` / `stream()` throw)
-- `xai-grok` — providers/xai-grok.ts (`chat()` / `stream()` throw)
-
-Hide these from the desktop provider picker unless/until implemented.
-
-### Removed (no longer in the registry, per PR #12)
-
-- Replicate — file deleted
-- AWS Bedrock — file deleted
-
-Do not reintroduce either without a real implementation. Earlier drafts of this document listed `cohere`, `replicate`, and `aws-bedrock` as the stubs — that list is wrong: `cohere` has a full implementation (its `throw` sites are response-error paths, not "not implemented"), and the other two no longer exist.
-
-## Agent tools (renderer-side)
-
-Defined in `apps/desktop/src/renderer/src/agent-tools.ts`. All routed through Electron IPC.
-
-- `terminal` — shell command runner with native-dialog confirmation for destructive patterns (`rm -rf`, `sudo`, `dd of=/dev/…`, `git reset --hard`, fork bombs, etc.)
-- `read_file` / `write_file` / `edit_file` — precise file I/O with line-numbered reads and unique-match edits
-- `web_search` — DuckDuckGo HTML scrape via `agent:webSearch`
-- `clipboard_read` / `clipboard_write` — system clipboard through `clipboard:read` / `clipboard:write`
-- `git_status` / `git_diff` — convenience wrappers
-- `todo_write` — first-class structured checklist rendered in the chat UI
-- `spotify_now_playing` / `spotify_control` — Spotify desktop control
-- `wechat_list_peers` / `wechat_send` — outbound to a paired WeChat account via Tencent OpenClaw iLink (`@syntax-senpai/wechat-ilink`); `wechat_send` supports `as_image: true` to render content to a PNG via `html-to-image` for tables/code/etc.
-- `set_affection` — internal affection meter update
-- `stop_response` — terminates the agent loop with a final in-character message
-
-## Agent prompt
-
-System prompt is composed in `stores/chat.ts` from:
-
-1. `createWaifuSystemPrompt` (from `packages/waifu-core`)
-2. `buildMemoryContext` — persistent memory
-3. `buildAffectionPrompt` — affection meter rules
-4. `buildApiTelemetryPrompt` — last-turn latency feedback
-5. `buildGroupChatPromptBlock` (group chat only)
-6. `buildAgentBehaviorPrompt` — plan → gather → do-one-thing → diagnose → retry-once → verify rules (appended when tools are enabled)
-7. `buildCodingSessionPromptBlock` — auto-injected when the user's message looks like a coding task (code fence, file path, tool name, coding verb, error stack, etc.)
-8. `buildWeChatSessionPromptBlock` — auto-injected when the active conversation is bound to a WeChat peer (no tables/cards, top-level final_message auto-relayed to WeChat)
-
-Iteration budget feedback is appended to every tool result (`annotateToolResult`) so the model knows how many iterations remain.
-
-## Settings UI
-
-Left sidebar with 12 tabs:
-
-- **General** — language, waifu, group chat
-- **AI** — provider, API key, Refresh models button
-- **Data** — full JSON export/import, Markdown export of current conversation
-- **Metrics** — max tool iterations, response-time spike threshold, live telemetry (latest / avg / p95 / alert count, bar chart, per-sample list) with auto-selected time units
-- **Theme** — 17 presets including Rainbow (live hue cycle via `mix-blend-mode: color` overlay) and Sakura Dark + falling petals overlay
-- **Interface** — UI density (cozy / compact), corner-radius scale, backdrop-blur slider, sakura-petals toggle
-- **Plugins** — installed plugins and pending AI-authored tool proposals
-- **Skills** — user-authored `SKILL.md` entries surfaced to the prompt
-- **Waifus** — built-in/custom waifu management
-- **Live2D** — Cubism/Live2D status and avatar rendering controls
-- **Mobile** — QR pairing + connection status
-- **WeChat** — QR pairing for Tencent OpenClaw iLink; status, unpair, last error. Credentials in keytar (`syntax-senpai-wechat`).
-
-## Chat UX niceties
-
-- Token + cost counter above the messages (cumulative per conversation, rough USD)
-- Per-message Regenerate / Delete on hover
-- Active todo-list strip above the messages
-- Image attachments: paperclip button, clipboard paste, drag-drop overlay, inline thumbnails
-- 429 / transient errors retry with a toast ("Rate limited — retrying in 3s")
-- Keyboard shortcuts: Cmd/Ctrl-K new chat, Cmd/Ctrl-, settings, Esc close, `?` overlay
-- Global tray icon + `Cmd/Ctrl-Shift-Space` toggle window
-
-## Crash handling
-
-- Main: `process.on('uncaughtException' | 'unhandledRejection')` → appends to `<userData>/crash.log`
-- Renderer: `window.onerror` + `window.onunhandledrejection` → dispatches `app:error` → toast
-
-## Dev
+## Development and verification
 
 ```sh
 pnpm install
-cd apps/desktop
-pnpm dev      # electron-vite, with DevTools
-pnpm build    # dist/{main,preload,renderer}
-pnpm start    # runs dist/main/index.js via electron
-pnpm typecheck
+pnpm dev:desktop
+pnpm dev:headless
+pnpm test:headless
+pnpm --filter syntax-senpai-desktop run typecheck
+pnpm --filter syntax-senpai-desktop run test:unit
+pnpm build
 ```
 
-## Known gaps / intentional dormant code
-
-- `apps/desktop/src/main/agent/executor.ts` — **is wired** (correcting an earlier note that said it wasn't). It exports `webSearch` (consumed by `ws-server.ts`) and an allowlist-based `runCommand` that `ipc/terminal.ts` delegates to when strict-mode is on; the full surface is imported by `ipc/agent.ts` and `ipc/strict-mode.ts`. Destructive-pattern gating (native dialog) is a separate layer in `ipc/terminal.ts`. Strict-mode toggle lives in Settings → General.
-- `packages/agent-tools/src/builtin/*` (clipboard, fs-read, notify, web-search) are shared built-ins that the desktop renderer does not import — it re-implements its own tool defs in `apps/desktop/src/renderer/src/agent-tools.ts`. Desktop still depends on `@syntax-senpai/agent-tools` for `ToolRegistry` + `loadToolPlugins` (used by `ipc/plugins.ts`). The built-ins are kept because mobile + future non-Electron clients may use them.
-- Stub providers: `azure-openai` and `fireworks` both throw "... provider not yet fully implemented" from `chat()` / `stream()`. Hide from the picker.
+Run only the commands relevant to a change. A passing test, build, or headless fixture is not proof that a live AI provider, WeChat peer, mobile device, or Live2D display worked on physical hardware.

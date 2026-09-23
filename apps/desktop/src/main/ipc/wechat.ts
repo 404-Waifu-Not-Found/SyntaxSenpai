@@ -20,6 +20,7 @@ import {
   type WeixinMessage,
 } from '@syntax-senpai/wechat-ilink'
 import { mainLogger } from '../logger'
+import { deliverImageWithTextFallback } from './wechat-image-delivery'
 
 let keytar: any
 try {
@@ -42,6 +43,7 @@ const WECHAT_MAX_CHUNKS = 12
 const WECHAT_MAX_MULTI_MESSAGES = 10
 const WECHAT_RECONNECT_DELAY_MS = 3_000
 const WECHAT_INBOUND_DEDUP_MAX_ENTRIES = 2_048
+const WECHAT_MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
 interface Peer {
   userId: string
@@ -385,6 +387,7 @@ export function registerWechatIpc() {
         kind: 'text' | 'image'
         content?: string
         imageBase64?: string
+        fallbackText?: string
         contextToken?: string | null
       },
     ) => {
@@ -436,11 +439,38 @@ export function registerWechatIpc() {
             recordDeliveryFailure(error)
             return { success: false, error }
           }
-          const buf = Buffer.from(stripDataUrlPrefix(payload.imageBase64), 'base64')
-          const res = await bot.sendImage(payload.toUserId, buf, ctx)
-          state.lastError = null
-          emitStatus()
-          return { success: true, messageId: res.message_id ?? null }
+          const encoded = stripDataUrlPrefix(payload.imageBase64)
+          if (encoded.length > Math.ceil(WECHAT_MAX_IMAGE_BYTES * 4 / 3) + 4) {
+            const error = 'Image exceeds the 10 MiB WeChat upload limit'
+            recordDeliveryFailure(error)
+            return { success: false, error, imageError: { stage: 'validation', code: 'IMAGE_TOO_LARGE' } }
+          }
+          if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
+            const error = 'imageBase64 is not valid base64'
+            recordDeliveryFailure(error)
+            return { success: false, error, imageError: { stage: 'validation', code: 'INVALID_IMAGE' } }
+          }
+          const buf = Buffer.from(encoded, 'base64')
+          if (!buf.length || buf.length > WECHAT_MAX_IMAGE_BYTES) {
+            const error = 'Image is empty or exceeds the 10 MiB WeChat upload limit'
+            recordDeliveryFailure(error)
+            return { success: false, error, imageError: { stage: 'validation', code: 'INVALID_IMAGE' } }
+          }
+          const fallbackText = (payload.fallbackText ?? '').trim()
+          const result = await deliverImageWithTextFallback({
+            sendImage: () => bot.sendImage(payload.toUserId, buf, ctx),
+            sendTextFallback: () => sendTextChunked(bot, payload.toUserId, fallbackText, ctx),
+            fallbackText,
+          })
+          if ('imageError' in result) {
+            mainLogger.warn({ imageError: result.imageError }, 'wechat image upload failed before sendmessage')
+          }
+          if (!result.success) recordDeliveryFailure(result.error)
+          else {
+            state.lastError = null
+            emitStatus()
+          }
+          return result
         }
         const error = `Unknown kind: ${payload.kind}`
         recordDeliveryFailure(error)

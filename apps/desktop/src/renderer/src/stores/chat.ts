@@ -1453,7 +1453,11 @@ export const useChatStore = defineStore('chat', () => {
     pendingAttachments.value = []
   }
 
-  async function generateGameDialogue(gameState: string, recentReplies: string[] = []): Promise<string> {
+  async function generateGameDialogue(
+    gameState: string,
+    recentReplies: string[] = [],
+    game: 'fate-wheel' | 'gomoku' = 'fate-wheel',
+  ): Promise<string> {
     const waifu = selectedWaifu.value
     if (!waifu) throw new Error('No active waifu is selected.')
 
@@ -1470,13 +1474,19 @@ export const useChatStore = defineStore('chat', () => {
       buildLanguagePromptBlock(),
       buildEmotionPromptBlock(),
     ].join('\n\n')
-    const gameSystemPrompt = `## Live Game Dialogue
-You are currently playing the fictional strategy game "命运转轮" against the user.
+    const gameRules = game === 'gomoku'
+      ? `You are currently playing Gomoku as White against the user, who plays Black.
+The supplied state intentionally contains strategic summaries but no stone coordinates. Base your reaction on the event, move count, relative pattern strength, threats, and result.
+Never invent, request, enumerate, or mention board coordinates or claim to see a specific location that is not supplied.`
+      : `You are currently playing the fictional strategy game "Fate Wheel" against the user.
 The game uses harmless fictional energy pulses and shields. Never describe real weapons, self-harm, gore, or physical injury.
-Follow the active interface language from the language-preference context above. Respond fully in character, as if you are genuinely present at the table and emotionally invested in this exact match.
 Base every response on the supplied live state: shield levels, pulse composition, remaining items, action, outcome, round, and recent dialogue.
+Reveal only information the character could legitimately know, including no hidden pulse order.`
+    const gameSystemPrompt = `## Live Game Dialogue
+${gameRules}
+Follow the active interface language from the language-preference context above. Respond fully in character, as if you are genuinely present at the table and emotionally invested in this exact match.
 Do not use canned phrases, report raw state mechanically, or repeat/paraphrase any recent reply.
-React to the user's intent and risk tolerance, carry forward the emotional thread, and reveal only information the character could legitimately know.
+React to the user's choices and apparent intent, and carry forward the emotional thread.
 Use the configured self-reference, speech habits, background, catchphrases, and signature emoji naturally.
 Write one cohesive reply of 2-4 sentences. Prefer emotional presence and character authenticity over speed. Do not include a speaker label, markdown, stage directions, coordinates, or quotation marks.`
 
@@ -1490,7 +1500,7 @@ Write one cohesive reply of 2-4 sentences. Prefer emotional presence and charact
     })
     const recentBlock = recentReplies.length > 0
       ? recentReplies.map((reply, index) => `${index + 1}. ${reply}`).join('\n')
-      : '无'
+      : '(none)'
     const normalise = (value: string) => value
       .toLowerCase()
       .replace(/[\s，。！？、；：“”‘’…,.!?;:'"~～✨🌸💕💗💖♪]/g, '')
@@ -1519,12 +1529,12 @@ Write one cohesive reply of 2-4 sentences. Prefer emotional presence and charact
       const correction = attempt === 0
         ? ''
         : retryReason === 'empty'
-          ? '\n\n上一版没有产生最终正文。不要继续分析，不要调用工具；请现在直接输出 2-4 句中文角色回应。'
-          : '\n\n上一版与最近回复过于相似。请从不同的情绪角度、句式和观察重点完全重写，不要只替换同义词。'
+          ? '\n\nThe previous attempt produced no final prose. Do not continue analyzing or call tools; directly provide the 2-4 sentence in-character reply now, in the active interface language.'
+          : '\n\nThe previous attempt was too similar to recent replies. Rewrite it from a different emotional angle, sentence structure, and strategic observation instead of swapping synonyms.'
       let streamedContent = ''
       let streamUsage: { promptTokens?: number; completionTokens?: number; totalTokens?: number } | undefined
       for await (const chunk of runtime.streamMessage({
-        text: `请根据以下即时对局状态自然回应。\n\n${gameState}\n\n最近回复（不得复述或近似改写）：\n${recentBlock}${correction}`,
+        text: `Respond naturally to this live game state.\n\n${gameState}\n\nRecent replies (do not repeat or closely paraphrase them):\n${recentBlock}${correction}`,
         history: [],
         cachedSystemPrompt,
         systemPrompt: gameSystemPrompt,
@@ -1547,10 +1557,14 @@ Write one cohesive reply of 2-4 sentences. Prefer emotional presence and charact
       }
       if (!isNearDuplicate(content)) return content
       retryReason = 'duplicate'
-      if (attempt === 1) throw new Error('模型连续生成了与近期内容重复的回复，请稍后再行动一次。')
+      if (attempt === 1) throw new Error('The model repeatedly generated a reply too similar to recent dialogue. Please try the action again.')
     }
 
     throw new Error('Unable to generate a distinct game reply.')
+  }
+
+  function generateGomokuDialogue(gameState: string, recentReplies: string[]): Promise<string> {
+    return generateGameDialogue(gameState, recentReplies, 'gomoku')
   }
 
   // Wrap provider.chat with `withRetry` from ai-core. Routing every model call
@@ -4768,6 +4782,7 @@ Use this for any time-aware reasoning (greetings, "today", scheduling, how long 
     removeAttachment,
     clearPendingAttachments,
     generateGameDialogue,
+    generateGomokuDialogue,
     newChat,
     setGroupChat,
     toggleGroupWaifu,

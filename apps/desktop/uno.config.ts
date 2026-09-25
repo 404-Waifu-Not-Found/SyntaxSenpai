@@ -333,6 +333,80 @@ export default defineConfig({
           flex: 0 0 auto;
         }
 
+        /* The pet window is intentionally narrow; keep Settings inside it and
+           move its tabs above the scrollable panel instead of overflowing the
+           window with the desktop-only fixed-width sidebar layout. */
+        .desktop-pet-settings-backdrop {
+          overflow-x: hidden;
+          padding: 8px;
+        }
+        .desktop-pet-settings {
+          box-sizing: border-box;
+          width: 100%;
+          max-width: 1100px;
+          height: min(700px, calc(100dvh - 16px));
+          max-height: calc(100dvh - 16px);
+          min-width: 0;
+          min-height: 0;
+          flex: 1 1 auto;
+          flex-direction: column;
+        }
+        .desktop-pet-settings > aside {
+          box-sizing: border-box;
+          width: 100%;
+          min-width: 0;
+          flex: none;
+          border-right: 0;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .desktop-pet-settings > aside > div {
+          padding: 0.65rem 1rem 0.55rem;
+        }
+        .desktop-pet-settings > aside > nav {
+          display: grid;
+          flex: none;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.25rem;
+          overflow-x: hidden;
+          overflow-y: visible;
+          padding: 0.5rem;
+        }
+        .desktop-pet-settings .settings-nav-indicator {
+          display: none;
+        }
+        .desktop-pet-settings .settings-nav-btn {
+          box-sizing: border-box;
+          min-width: 0;
+          padding: 0.4rem 0.55rem;
+          gap: 0.4rem;
+        }
+        .desktop-pet-settings .settings-nav-btn-active {
+          background: rgba(var(--primary-rgb), 0.2) !important;
+        }
+        .desktop-pet-settings > main {
+          box-sizing: border-box;
+          width: 100%;
+          min-width: 0;
+          min-height: 0;
+          overflow-x: hidden;
+          overflow-y: auto;
+        }
+        .desktop-pet-settings > main > div {
+          box-sizing: border-box;
+          width: 100%;
+          min-width: 0;
+          padding: 1rem;
+        }
+        .desktop-pet-settings .tab-wrapper {
+          width: 100%;
+          min-width: 0;
+          max-width: 100%;
+        }
+        .desktop-pet-settings main :is(input, select, textarea) {
+          box-sizing: border-box;
+          max-width: 100%;
+        }
+
         /* One shared selection surface slides between the fixed-height nav rows,
            keeping the active state spatially continuous as tabs change. */
         .settings-nav-indicator {

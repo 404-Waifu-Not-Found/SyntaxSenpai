@@ -76,6 +76,9 @@ const isDev = process.env.NODE_ENV === 'development'
 
 let mainWindow: any = null
 let live2dWindow: any = null
+let desktopPetWindow: any = null
+let desktopPetModeActive = false
+let applicationIsQuitting = false
 let pendingLive2DSession: any = null
 let pendingLive2DSpeech: any = null
 let tray: any = null
@@ -196,6 +199,12 @@ function registerWindowStateTracking() {
 }
 
 function toggleMainWindow() {
+  if (desktopPetModeActive && desktopPetWindow && !desktopPetWindow.isDestroyed()) {
+    desktopPetWindow.show()
+    desktopPetWindow.setAlwaysOnTop(true, 'screen-saver')
+    desktopPetWindow.focus()
+    return
+  }
   if (!mainWindow) {
     createWindow()
     return
@@ -403,6 +412,96 @@ function createWindow(forcedMode?: WindowMode): void {
   registerWindowStateTracking()
 }
 
+function restoreMainWindowAfterPet() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show()
+    mainWindow.focus()
+  } else {
+    createWindow()
+  }
+}
+
+function closeDesktopPetMode() {
+  const pet = desktopPetWindow
+  desktopPetWindow = null
+  desktopPetModeActive = false
+  if (pet && !pet.isDestroyed()) pet.close()
+  if (!applicationIsQuitting) restoreMainWindowAfterPet()
+}
+
+function openDesktopPetMode() {
+  if (desktopPetWindow && !desktopPetWindow.isDestroyed()) {
+    desktopPetWindow.show()
+    desktopPetWindow.setAlwaysOnTop(true, 'screen-saver')
+    desktopPetWindow.focus()
+    return
+  }
+
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow()
+
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()) || screen.getPrimaryDisplay()
+  const workArea = display.workArea
+  const width = Math.min(480, workArea.width)
+  const height = Math.min(900, workArea.height)
+  const x = Math.round(workArea.x + Math.max(0, workArea.width - width - 18))
+  const y = Math.round(workArea.y + Math.max(0, workArea.height - height - 18))
+  const pet = new BrowserWindow({
+    x,
+    y,
+    width,
+    height,
+    minWidth: Math.min(380, width),
+    minHeight: Math.min(640, height),
+    title: 'SyntaxSenpai Desktop Pet',
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
+    resizable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      webviewTag: false,
+    },
+  })
+  desktopPetWindow = pet
+  desktopPetModeActive = true
+  pet.setAlwaysOnTop(true, 'screen-saver')
+  pet.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+
+  pet.webContents.once('did-finish-load', () => {
+    if (desktopPetWindow !== pet || pet.isDestroyed()) return
+    pet.show()
+    pet.setAlwaysOnTop(true, 'screen-saver')
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      updateStoredBoundsFromWindow()
+      mainWindow.close()
+    }
+  })
+  pet.webContents.on('did-fail-load', (_event: any, _code: number, _description: string, _url: string, isMainFrame: boolean) => {
+    if (isMainFrame && desktopPetWindow === pet) closeDesktopPetMode()
+  })
+  pet.on('closed', () => {
+    if (desktopPetWindow !== pet) return
+    desktopPetWindow = null
+    if (desktopPetModeActive) {
+      desktopPetModeActive = false
+      if (!applicationIsQuitting) restoreMainWindowAfterPet()
+    }
+  })
+
+  if (isDev) void pet.loadURL('http://localhost:5173/?desktopPet=1')
+  else void pet.loadFile(join(__dirname, '../renderer/index.html'), { query: { desktopPet: '1' } })
+}
+
 function writeCrashLog(kind: string, err: any) {
   try {
     const line = `[${new Date().toISOString()}] ${kind}: ${err && err.stack ? err.stack : String(err)}\n`
@@ -432,6 +531,24 @@ ipcMain.handle('clipboard:read', () => {
 })
 ipcMain.handle('clipboard:write', (_e: any, text: string) => {
   try { clipboard.writeText(String(text ?? '')); return { success: true } } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+ipcMain.handle('desktop-pet:open', () => {
+  try {
+    openDesktopPetMode()
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) }
+  }
+})
+
+ipcMain.handle('desktop-pet:close', () => {
+  try {
+    closeDesktopPetMode()
+    return { success: true }
+  } catch (err: any) {
     return { success: false, error: err?.message || String(err) }
   }
 })
@@ -681,7 +798,12 @@ app.whenReady().then(() => {
   registerGlobalShortcuts()
 })
 
+app.on('before-quit', () => {
+  applicationIsQuitting = true
+})
+
 app.on('will-quit', () => {
+  applicationIsQuitting = true
   try { globalShortcut.unregisterAll() } catch { /* ignore */ }
 })
 
@@ -693,6 +815,12 @@ app.on('window-all-closed', () => {
 })
 
 app.on('activate', () => {
+  if (desktopPetModeActive && desktopPetWindow && !desktopPetWindow.isDestroyed()) {
+    desktopPetWindow.show()
+    desktopPetWindow.setAlwaysOnTop(true, 'screen-saver')
+    desktopPetWindow.focus()
+    return
+  }
   if (mainWindow === null) {
     createWindow()
   } else {

@@ -3,6 +3,8 @@ import { handleInputLine, runHumanMove, runTurn } from '../main'
 import { createHeadlessHost, isHeadlessToolAvailable } from '../host'
 
 describe('headless runtime', () => {
+  const testUsage = { promptTokens: 1, completionTokens: 1, totalTokens: 2 }
+
   it('runs a scripted JSONL-equivalent turn without a provider key', async () => {
     const events: any[] = []
     const result = await runTurn({
@@ -109,15 +111,15 @@ describe('headless runtime', () => {
     await runTurn({
       type: 'turn', conversationId, text: `Play ${kind}`, maxIterations: 2,
       responses: [
-        { id: 'start', content: '', toolCalls: [{ id: 'game', name: 'game_start', arguments: { kind, difficulty: 'strong' } }], finishReason: 'tool_calls' },
-        { id: 'ready', content: 'Board ready.', toolCalls: [], finishReason: 'stop' },
+        { id: 'start', content: '', toolCalls: [{ id: 'game', name: 'game_start', arguments: { kind, difficulty: 'strong' } }], usage: testUsage, finishReason: 'tool_calls' },
+        { id: 'ready', content: 'Board ready.', toolCalls: [], usage: testUsage, finishReason: 'stop' },
       ],
     }, () => {})
 
     const events: any[] = []
     const result = await runHumanMove({
       type: 'human_move', conversationId, move,
-      responses: [{ id: 'remark', content: 'Nice move.', toolCalls: [], finishReason: 'stop' }],
+      responses: [{ id: 'remark', content: 'Nice move.', toolCalls: [], usage: testUsage, finishReason: 'stop' }],
     }, (event) => events.push(event))
 
     expect(result.response).toBe('Nice move.')
@@ -141,7 +143,7 @@ describe('headless runtime', () => {
     }, () => {})).rejects.toThrow('Unsupported provider')
     const recovered = await runTurn({
       type: 'turn', conversationId: 'failed-provider-history', text: 'real message',
-      responses: [{ id: 'ok', content: 'Recovered.', toolCalls: [], finishReason: 'stop' }],
+      responses: [{ id: 'ok', content: 'Recovered.', toolCalls: [], usage: testUsage, finishReason: 'stop' }],
     }, () => {})
     expect(recovered.history.map((message: any) => message.content)).toEqual(['real message', 'Recovered.'])
   })
@@ -149,7 +151,7 @@ describe('headless runtime', () => {
   it('fails closed when a scripted provider runs out of replies', async () => {
     await expect(runTurn({
       type: 'turn', conversationId: 'exhausted-script', text: 'read metadata', maxIterations: 2,
-      responses: [{ id: 'read', content: '', toolCalls: [{ id: 'read-tool', name: 'read_file', arguments: { path: 'package.json', limit: 1 } }], finishReason: 'tool_calls' }],
+      responses: [{ id: 'read', content: '', toolCalls: [{ id: 'read-tool', name: 'read_file', arguments: { path: 'package.json', limit: 1 } }], usage: testUsage, finishReason: 'tool_calls' }],
     }, () => {})).rejects.toThrow('Scripted provider responses exhausted')
     await expect(runTurn({ type: 'turn', conversationId: 'empty-fixture', text: 'hello', responses: [] }, () => {}))
       .rejects.toThrow('responses must contain at least one')
@@ -164,8 +166,8 @@ describe('headless runtime', () => {
     const result = await runTurn({
       type: 'turn', conversationId: 'unavailable-tool', text: 'check missing.ts', maxIterations: 2,
       responses: [
-        { id: 'fake-tool', content: '', toolCalls: [{ id: 'lsp', name: 'lsp_diagnostics', arguments: { path: 'missing.ts' } }], finishReason: 'tool_calls' },
-        { id: 'done', content: 'Could not check it.', toolCalls: [], finishReason: 'stop' },
+        { id: 'fake-tool', content: '', toolCalls: [{ id: 'lsp', name: 'lsp_diagnostics', arguments: { path: 'missing.ts' } }], usage: testUsage, finishReason: 'tool_calls' },
+        { id: 'done', content: 'Could not check it.', toolCalls: [], usage: testUsage, finishReason: 'stop' },
       ],
     }, () => {})
     expect(String(result.history.find((message: any) => message.role === 'tool')?.content)).toContain('not available for this headless turn')
@@ -196,8 +198,8 @@ describe('headless runtime', () => {
     await handleInputLine(JSON.stringify({
       type: 'turn', conversationId, text: 'play tic tac toe',
       responses: [
-        { id: 'start', content: '', toolCalls: [{ id: 'start-tool', name: 'game_start', arguments: { kind: 'tictactoe' } }], finishReason: 'tool_calls' },
-        { id: 'ready', content: 'Ready.', toolCalls: [], finishReason: 'stop' },
+        { id: 'start', content: '', toolCalls: [{ id: 'start-tool', name: 'game_start', arguments: { kind: 'tictactoe' } }], usage: testUsage, finishReason: 'tool_calls' },
+        { id: 'ready', content: 'Ready.', toolCalls: [], usage: testUsage, finishReason: 'stop' },
       ],
     }), () => {})
     const output: any[] = []
@@ -215,8 +217,8 @@ describe('headless runtime', () => {
     await runTurn({
       type: 'turn', conversationId, text: 'Play tic tac toe',
       responses: [
-        { id: 'start', content: '', toolCalls: [{ id: 'start-tool', name: 'game_start', arguments: { kind: 'tictactoe' } }], finishReason: 'tool_calls' },
-        { id: 'ready', content: 'Ready.', toolCalls: [], finishReason: 'stop' },
+        { id: 'start', content: '', toolCalls: [{ id: 'start-tool', name: 'game_start', arguments: { kind: 'tictactoe' } }], usage: testUsage, finishReason: 'tool_calls' },
+        { id: 'ready', content: 'Ready.', toolCalls: [], usage: testUsage, finishReason: 'stop' },
       ],
     }, () => {})
     const events: any[] = []
@@ -226,7 +228,7 @@ describe('headless runtime', () => {
     expect(events.filter((event) => event.type === 'game_event')).toHaveLength(2)
     const next = await runHumanMove({
       type: 'human_move', conversationId, move: moved.gameSnapshot.legalMoves[0],
-      responses: [{ id: 'remark', content: 'Still playing.', toolCalls: [], finishReason: 'stop' }],
+      responses: [{ id: 'remark', content: 'Still playing.', toolCalls: [], usage: testUsage, finishReason: 'stop' }],
     }, () => {})
     expect(next.gameSnapshot.moveCount).toBe(4)
     expect(next.response).toBe('Still playing.')

@@ -1253,7 +1253,7 @@ async function syncWarThunderCopilot() {
   if (!warThunderPluginReady) return
   try {
     await invoke('plugins:execTool', 'warthunder_copilot_control', {
-      enabled: warThunderCopilotEnabled.value,
+      enabled: isDesktopPetMode && warThunderCopilotEnabled.value,
       provider: warThunderCopilotProvider.value,
       model: warThunderCopilotModel.value,
     })
@@ -1347,6 +1347,50 @@ async function toggleFullscreenWindowMode() {
   } else {
     showToast(result?.error || t('toast.fullscreenFailed'), 'error')
   }
+}
+
+async function openDesktopPetWindow() {
+  const result = await invoke('desktop-pet:open')
+  if (!result?.success) showToast(result?.error || '打开桌宠失败', 'error')
+}
+
+async function returnToNormalWindow() {
+  petContextMenuOpen.value = false
+  const result = await invoke('desktop-pet:close')
+  if (!result?.success) showToast(result?.error || '返回普通窗口失败', 'error')
+}
+
+function openPetContextMenu(event: MouseEvent) {
+  if (!isDesktopPetMode) return
+  event.preventDefault()
+  event.stopPropagation()
+  const menuWidth = 272
+  const menuHeight = 390
+  petContextMenuPosition.value = {
+    x: Math.min(Math.max(8, event.clientX), Math.max(8, window.innerWidth - menuWidth - 8)),
+    y: Math.min(Math.max(8, event.clientY), Math.max(8, window.innerHeight - menuHeight - 8)),
+  }
+  petGamesMenuOpen.value = false
+  petContextMenuOpen.value = true
+}
+
+function savePetBubbleOpacity(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value)
+  petBubbleOpacity.value = Math.min(0.95, Math.max(0.15, value))
+  localStorage.setItem(PET_BUBBLE_OPACITY_STORAGE_KEY, String(petBubbleOpacity.value))
+}
+
+function launchPetMiniGame(game: GameKind | 'gomoku' | 'fate-roulette') {
+  petGamesMenuOpen.value = false
+  petContextMenuOpen.value = false
+  void openMiniGame(game)
+}
+
+function handlePetOutsidePointer(event: PointerEvent) {
+  const target = event.target as Element | null
+  if (target?.closest('.desktop-pet-context-menu')) return
+  petContextMenuOpen.value = false
+  petGamesMenuOpen.value = false
 }
 
 async function applyWindowResolution(value: string) {
@@ -1864,6 +1908,7 @@ async function openImmersiveLive2D() {
 
 // ── Floating Live2D panel placement ─────────────────────────────────────────
 const LIVE2D_PANEL_STORAGE_KEY = 'syntax-senpai-live2d-panel'
+const PET_BUBBLE_OPACITY_STORAGE_KEY = 'syntax-senpai-pet-bubble-opacity'
 const LIVE2D_PANEL_BASE_WIDTH = 280
 const LIVE2D_PANEL_BASE_HEIGHT = 380
 const LIVE2D_PANEL_MIN_WIDTH = 180
@@ -1884,11 +1929,23 @@ const LIVE2D_RENDER_SCALE_DEFAULT = Math.min(
   ),
 )
 
+function readPetBubbleOpacity(): number {
+  const raw = localStorage.getItem(PET_BUBBLE_OPACITY_STORAGE_KEY)
+  if (raw === null) return 0.78
+  const stored = Number(raw)
+  return Number.isFinite(stored) ? Math.min(0.95, Math.max(0.15, stored)) : 0.78
+}
+
 const live2dPanelPosition = ref({ x: 0, y: 0 })
 const live2dPanelSize = ref({ width: LIVE2D_PANEL_BASE_WIDTH, height: LIVE2D_PANEL_BASE_HEIGHT })
 const live2dCharacterScale = ref(1)
 const live2dCharacterOffset = ref({ x: 0, y: 0 })
 const live2dRenderScale = ref(LIVE2D_RENDER_SCALE_DEFAULT)
+const petAvatarViewport = ref({ width: Math.max(240, window.innerWidth - 24), height: 220 })
+const petBubbleOpacity = ref(readPetBubbleOpacity())
+const petContextMenuOpen = ref(false)
+const petGamesMenuOpen = ref(false)
+const petContextMenuPosition = ref({ x: 12, y: 68 })
 const live2dPanelDragging = ref(false)
 const live2dPanelResizing = ref(false)
 const live2dCharacterDragging = ref(false)
@@ -2171,6 +2228,7 @@ function endLive2DPanelPointer(event: PointerEvent) {
 }
 
 function handleLive2DPanelViewportResize() {
+  petAvatarViewport.value = { width: Math.max(240, window.innerWidth - 24), height: 220 }
   clampLive2DPanelPosition()
 }
 
@@ -2529,7 +2587,9 @@ const affectionMeterClass = computed(() =>
   locale.value === 'en' ? 'w-70' : 'w-52',
 )
 
-const compactChatLayout = false
+const isDesktopPetMode = new URLSearchParams(window.location.search).get('desktopPet') === '1'
+const compactChatLayout = isDesktopPetMode
+const petBubbleStyle = computed(() => ({ '--pet-bubble-opacity': `${Math.round(petBubbleOpacity.value * 100)}%` }))
 const hasStatusStrip = computed(() =>
   store.usageTotals.turns > 0 || store.activeTodoList.length > 0,
 )
@@ -2547,7 +2607,9 @@ function openSettingsPanel() {
 }
 
 const appShellStyle = computed(() => ({
-  background: `linear-gradient(135deg, ${theme.value.colors.bg}, ${theme.value.colors.surface})`,
+  background: compactChatLayout
+    ? 'transparent'
+    : `linear-gradient(135deg, ${theme.value.colors.bg}, ${theme.value.colors.surface})`,
   color: theme.value.colors.fg,
 }))
 
@@ -2857,7 +2919,7 @@ onMounted(() => {
     await loadPluginTools()
     warThunderPluginReady = true
     await syncWarThunderCopilot()
-    startWarThunderEventPolling()
+    if (isDesktopPetMode) startWarThunderEventPolling()
     // Load waifu-authored skills so the first system prompt already
     // lists what's available.
     store.refreshAvailableSkills()
@@ -2923,6 +2985,12 @@ onMounted(() => {
     store.newChat()
   })
 
+  if (isDesktopPetMode) {
+    document.documentElement.classList.add('desktop-pet-mode')
+    petAvatarViewport.value = { width: Math.max(240, window.innerWidth - 24), height: 220 }
+    window.addEventListener('pointerdown', handlePetOutsidePointer)
+  }
+
   window.addEventListener('app:error', onAppError as EventListener)
   window.addEventListener('app:retry', onAppRetry as EventListener)
   window.addEventListener('app:milestone', onAppMilestone as EventListener)
@@ -2949,6 +3017,9 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener(VOICE_OVER_EVENT, handleVoiceOverRequest)
+  document.documentElement.classList.remove('desktop-pet-mode')
+  window.removeEventListener('pointerdown', handlePetOutsidePointer)
+  stopWarThunderEventPolling()
   clearLive2DSpeech()
   removeMobileChatListener?.()
   removeWechatInboundListener?.()
@@ -3982,7 +4053,7 @@ async function handleImportData() {
                 </label>
               </div>
               <p class="mt-3 text-[11px] text-neutral-500">
-                当前状态：{{ warThunderCopilotEnabled ? '监听中' : '未监听' }}
+                当前状态：{{ warThunderCopilotEnabled ? (isDesktopPetMode ? '监听中' : '等待桌宠开启') : '未监听' }}
               </p>
             </div>
 
@@ -6041,9 +6112,9 @@ async function handleImportData() {
     v-if="store.isSetup"
     :class="[
       'relative flex h-screen w-screen',
-      compactChatLayout ? 'desktop-pet-shell overflow-visible' : 'overflow-hidden',
+      compactChatLayout ? 'compact-chat-shell overlay-window-shell overflow-hidden' : 'overflow-hidden',
     ]"
-    :style="appShellStyle"
+    :style="[appShellStyle, petBubbleStyle]"
   >
     <!-- Ambient background -->
     <div v-if="!compactChatLayout" class="absolute inset-0 pointer-events-none -z-10 opacity-60">
@@ -6271,6 +6342,29 @@ async function handleImportData() {
         </div>
         <div class="flex items-center relative gap-1">
           <button
+            v-if="!compactChatLayout"
+            type="button"
+            class="btn-ghost p-2"
+            :style="ghostButtonStyle"
+            title="开启桌宠模式"
+            aria-label="开启桌宠模式"
+            @click="openDesktopPetWindow"
+          >
+            <span aria-hidden="true">🐾</span>
+          </button>
+          <button
+            v-if="compactChatLayout"
+            type="button"
+            class="btn-ghost p-2 compact-chat-icon-btn"
+            :style="ghostButtonStyle"
+            title="返回普通窗口"
+            aria-label="返回普通窗口"
+            @click="returnToNormalWindow"
+          >
+            <span aria-hidden="true">↗</span>
+          </button>
+          <button
+            v-if="!compactChatLayout"
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             :title="t('sidebar.agent')"
@@ -6280,6 +6374,7 @@ async function handleImportData() {
             <PhRobot :size="18" weight="regular" aria-hidden="true" />
           </button>
           <button
+            v-if="!compactChatLayout"
             :class="['btn-ghost p-2', browser.panelOpen ? 'bg-white/10' : '']"
             :style="ghostButtonStyle"
             :title="browser.panelOpen ? 'Close browser' : 'Open browser'"
@@ -6299,7 +6394,7 @@ async function handleImportData() {
             <PhGameController :size="18" weight="regular" aria-hidden="true" />
           </button>
           <button
-            v-if="currentWaifuLive2D?.modelJsonPath"
+            v-if="!compactChatLayout && currentWaifuLive2D?.modelJsonPath"
             :class="['btn-ghost p-2', showLive2DPanel ? 'bg-white/10' : '']"
             :style="ghostButtonStyle"
             :title="showLive2DPanel ? 'Hide Live2D avatar' : 'Show Live2D avatar'"
@@ -6310,6 +6405,7 @@ async function handleImportData() {
             <PhMaskHappy :size="18" weight="regular" aria-hidden="true" />
           </button>
           <button
+            v-if="!compactChatLayout"
             class="btn-ghost p-2"
             :style="ghostButtonStyle"
             title="AI Memory"
@@ -6329,6 +6425,39 @@ async function handleImportData() {
           </button>
         </div>
       </div>
+
+      <section
+        v-if="compactChatLayout"
+        class="pet-live2d-stage relative shrink-0"
+        aria-label="Desktop pet Live2D character"
+        @contextmenu="openPetContextMenu"
+      >
+        <Live2DAvatar
+          v-if="currentWaifuLive2D?.modelJsonPath"
+          class="pet-live2d-avatar"
+          :model-path="currentWaifuLive2D.modelJsonPath"
+          :expression="latestSentimentExpression"
+          :expression-revision="store.live2dExpressionRevision"
+          :motion-map="currentWaifuLive2D.expressionMotions || {}"
+          :width="petAvatarViewport.width"
+          :height="petAvatarViewport.height"
+          :model-scale="0.92"
+          :render-scale="live2dRenderScale"
+        />
+        <div v-else class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center text-white/70">
+          <PhMaskHappy :size="34" weight="regular" aria-hidden="true" />
+          <span class="text-xs">还没有给当前角色绑定 Live2D 模型</span>
+          <button type="button" class="text-xs text-primary-200 underline" @click="openSettingsPanel">去设置</button>
+        </div>
+        <div class="pet-live2d-name pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded-full bg-black/45 px-3 py-1 text-[10px] text-white/80 backdrop-blur-sm">
+          {{ store.selectedWaifu?.displayName || 'SyntaxSenpai' }} · 右键打开桌宠菜单
+        </div>
+        <Transition name="live2d-speech-bubble">
+          <div v-if="live2dSpeechBubble" class="pet-live2d-speech" aria-live="polite">
+            {{ live2dSpeechBubble }}
+          </div>
+        </Transition>
+      </section>
 
       <!-- Usage + todo status strip (only when there's something to show) -->
       <div v-if="hasStatusStrip" class="px-4 py-2 border-b border-white/5 flex items-center gap-4 text-[11px] text-neutral-400">
@@ -6925,7 +7054,7 @@ async function handleImportData() {
       </div>
     </div>
 
-    <WorkspacePanel />
+    <WorkspacePanel v-if="!compactChatLayout" />
 
     <!-- Embedded browser panel (shared between the user and the waifu agent) -->
     <BrowserPanel v-if="browser.panelOpen && !compactChatLayout" />
@@ -6939,7 +7068,7 @@ async function handleImportData() {
         leave-to-class="opacity-0 scale-90 translate-y-4"
       >
         <div
-          v-if="showLive2DPanel && currentWaifuLive2D?.modelJsonPath"
+          v-if="!compactChatLayout && showLive2DPanel && currentWaifuLive2D?.modelJsonPath"
           class="live2d-panel fixed z-[60] rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-black/30 backdrop-blur-sm select-none touch-none"
           :class="[
             live2dPanelDragging || live2dCharacterDragging ? 'cursor-grabbing' : '',
@@ -7022,6 +7151,74 @@ async function handleImportData() {
           <div class="absolute bottom-0 right-0 z-20 h-4 w-4 cursor-nwse-resize" data-live2d-panel-control @pointerdown="beginLive2DPanelResize($event, 'se')" />
         </div>
       </Transition>
+    </Teleport>
+
+    <Teleport to="body">
+      <div
+        v-if="compactChatLayout && petContextMenuOpen"
+        class="desktop-pet-context-menu fixed z-[220] w-[272px] rounded-2xl border border-white/15 bg-[#111521]/95 p-3 text-white shadow-2xl backdrop-blur-xl"
+        :style="{ left: `${petContextMenuPosition.x}px`, top: `${petContextMenuPosition.y}px` }"
+        role="menu"
+        aria-label="桌宠选项"
+        @contextmenu.prevent
+        @pointerdown.stop
+        @click.stop
+      >
+        <div class="mb-2 flex items-center justify-between border-b border-white/10 pb-2">
+          <span class="text-xs font-semibold tracking-wide">🐾 桌宠选项</span>
+          <button type="button" class="text-white/50 hover:text-white" aria-label="关闭菜单" @click="petContextMenuOpen = false">×</button>
+        </div>
+
+        <label class="block rounded-xl bg-white/5 px-3 py-2">
+          <span class="flex items-center justify-between text-[11px] text-white/80">
+            <span>聊天气泡透明度</span>
+            <span>{{ Math.round(petBubbleOpacity * 100) }}%</span>
+          </span>
+          <input
+            class="mt-2 w-full accent-violet-400"
+            type="range"
+            min="0.15"
+            max="0.95"
+            step="0.05"
+            :value="petBubbleOpacity"
+            aria-label="聊天气泡透明度"
+            @input="savePetBubbleOpacity"
+          >
+        </label>
+
+        <button
+          type="button"
+          class="desktop-pet-menu-item mt-2"
+          role="menuitemcheckbox"
+          :aria-checked="warThunderCopilotEnabled"
+          @click="setWarThunderCopilotEnabled(!warThunderCopilotEnabled)"
+        >
+          <span>War Thunder 副驾</span>
+          <span :class="warThunderCopilotEnabled ? 'text-amber-300' : 'text-white/45'">{{ warThunderCopilotEnabled ? '已开启' : '已关闭' }}</span>
+        </button>
+
+        <button
+          type="button"
+          class="desktop-pet-menu-item"
+          :aria-expanded="petGamesMenuOpen"
+          @click="petGamesMenuOpen = !petGamesMenuOpen"
+        >
+          <span class="inline-flex items-center gap-2"><PhGameController :size="16" aria-hidden="true" /> 小游戏</span>
+          <span aria-hidden="true">{{ petGamesMenuOpen ? '⌃' : '›' }}</span>
+        </button>
+        <div v-if="petGamesMenuOpen" class="mt-1 grid grid-cols-2 gap-1 pl-2">
+          <button type="button" class="desktop-pet-game-item" @click="launchPetMiniGame('tictactoe')">井字棋</button>
+          <button type="button" class="desktop-pet-game-item" @click="launchPetMiniGame('connect4')">四子棋</button>
+          <button type="button" class="desktop-pet-game-item" @click="launchPetMiniGame('chess')">国际象棋</button>
+          <button type="button" class="desktop-pet-game-item" @click="launchPetMiniGame('gomoku')">{{ t('games.gomoku') }}</button>
+          <button type="button" class="desktop-pet-game-item col-span-2" @click="launchPetMiniGame('fate-roulette')">{{ t('games.fate') }}</button>
+        </div>
+
+        <button type="button" class="desktop-pet-menu-item mt-2 border-t border-white/10 pt-2 text-rose-200 hover:bg-rose-400/10" @click="returnToNormalWindow">
+          <span>返回普通窗口</span>
+          <span aria-hidden="true">↗</span>
+        </button>
+      </div>
     </Teleport>
 
   </div>
@@ -7321,22 +7518,109 @@ async function handleImportData() {
   width: 14rem;
 }
 
-.desktop-pet-shell {
+.compact-chat-shell {
   box-sizing: border-box;
-  padding: 0;
-  overflow: visible;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
   background: transparent !important;
+}
+
+:global(html.desktop-pet-mode),
+:global(html.desktop-pet-mode body),
+:global(html.desktop-pet-mode #app) {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent !important;
+}
+
+.compact-chat-shell .pet-live2d-stage {
+  height: 220px;
+  overflow: hidden;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: radial-gradient(ellipse at 50% 75%, rgba(148, 119, 255, 0.16), transparent 64%);
+  -webkit-app-region: no-drag;
+}
+
+.compact-chat-shell .pet-live2d-avatar {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.compact-chat-shell .pet-live2d-speech {
+  position: absolute;
+  z-index: 5;
+  top: 12px;
+  left: 50%;
+  width: min(340px, calc(100% - 32px));
+  transform: translateX(-50%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 1rem;
+  padding: 0.55rem 0.8rem;
+  background: color-mix(in srgb, #111521 var(--pet-bubble-opacity, 78%), transparent);
+  color: white;
+  text-align: center;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(14px);
   pointer-events: none;
 }
 
-.desktop-pet-shell > * {
-  display: none !important;
+.desktop-pet-context-menu {
+  -webkit-app-region: no-drag;
+  user-select: none;
+}
+
+.desktop-pet-menu-item {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.65rem;
+  color: rgba(255, 255, 255, 0.88);
+  text-align: left;
+  font-size: 0.75rem;
+  transition: background 120ms ease;
+}
+
+.desktop-pet-menu-item:hover,
+.desktop-pet-game-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.desktop-pet-game-item {
+  min-height: 34px;
+  border-radius: 0.65rem;
+  padding: 0.45rem 0.5rem;
+  color: rgba(255, 255, 255, 0.78);
+  text-align: left;
+  font-size: 0.68rem;
+  transition: background 120ms ease;
 }
 
 .compact-chat-shell :deep(.chat-bubble-shell) {
   max-width: min(100%, var(--compact-bubble-max-width));
   padding: 0.7rem 0.8rem;
   border-radius: 1rem;
+  background: color-mix(in srgb, #111521 var(--pet-bubble-opacity, 78%), transparent) !important;
+  background-image: none !important;
+  border: 1px solid color-mix(in srgb, white 18%, transparent);
+  backdrop-filter: blur(16px);
+}
+
+.compact-chat-shell :deep(.themed-user-bubble) {
+  background: color-mix(in srgb, var(--primary-600, #6d5dfc) var(--pet-bubble-opacity, 78%), transparent) !important;
+  background-image: none !important;
+  border-color: color-mix(in srgb, var(--primary-300, #c4b5fd) 28%, transparent);
 }
 
 .compact-chat-shell :deep(.chat-bubble-content) {
@@ -7396,6 +7680,13 @@ async function handleImportData() {
 .compact-chat-shell .overlay-drag-region {
   -webkit-app-region: drag;
   user-select: none;
+}
+
+.compact-chat-shell .overlay-drag-region button,
+.compact-chat-shell .overlay-drag-region input,
+.compact-chat-shell .overlay-drag-region select,
+.compact-chat-shell .overlay-drag-region textarea {
+  -webkit-app-region: no-drag;
 }
 
 .compact-chat-shell .overlay-no-drag {
@@ -7465,6 +7756,21 @@ async function handleImportData() {
 .compact-chat-shell .compact-chat-pending-attachment {
   width: var(--compact-pending-attachment-size);
   height: var(--compact-pending-attachment-size);
+}
+
+.compact-chat-shell .game-chat-layout-compact {
+  flex-direction: column;
+}
+
+.compact-chat-shell .game-chat-layout-compact .game-chat-column {
+  flex: 1 1 100%;
+}
+
+.compact-chat-shell .game-chat-layout-compact .game-chat-aside {
+  flex: 1 1 auto;
+  max-height: 42%;
+  min-height: 230px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .compact-chat-shell :deep(.chat-bubble-meta) {

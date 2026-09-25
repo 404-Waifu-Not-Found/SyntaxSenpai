@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { ProcessSession } from '@syntax-senpai/ai-core'
@@ -75,7 +76,9 @@ export class ProcessManager extends EventEmitter {
         else process.kill(-s.child.pid, 'SIGTERM')
       } catch { /* already exited */ }
       const pid = s.child.pid
-      setTimeout(() => { try { if (process.platform !== 'win32') process.kill(-pid, 'SIGKILL') } catch {} }, 1500).unref()
+      void delay(1500, undefined, { ref: false }).then(() => {
+        try { if (process.platform !== 'win32') process.kill(-pid, 'SIGKILL') } catch {}
+      })
     }
     if (!s.child) this.finish(id, null)
   }

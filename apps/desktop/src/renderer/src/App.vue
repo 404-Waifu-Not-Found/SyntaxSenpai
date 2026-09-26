@@ -1361,7 +1361,7 @@ async function returnToNormalWindow() {
 }
 
 function openPetContextMenu(event: MouseEvent) {
-  if (!isDesktopPetMode) return
+  if (!isDesktopPetMode && !isDesktopPetChatMode) return
   event.preventDefault()
   event.stopPropagation()
   void showPetContextMenuAt(event.clientX, event.clientY)
@@ -1415,6 +1415,14 @@ function savePetBubbleOpacity(event: Event) {
 function setPetBubbleOpacity(value: number) {
   petBubbleOpacity.value = Math.min(0.95, Math.max(0.15, value))
   localStorage.setItem(PET_BUBBLE_OPACITY_STORAGE_KEY, String(petBubbleOpacity.value))
+}
+
+async function toggleDesktopPetLock() {
+  const result = await invoke('desktop-pet:command', {
+    type: 'set-locked',
+    locked: !desktopPetLocked.value,
+  })
+  if (result?.success) desktopPetLocked.value = !!result.locked
 }
 
 function launchPetMiniGame(game: GameKind | 'gomoku' | 'fate-roulette') {
@@ -1987,6 +1995,7 @@ function getPetAvatarViewport() {
 
 const petAvatarViewport = ref(getPetAvatarViewport())
 const petBubbleOpacity = ref(readPetBubbleOpacity())
+const desktopPetLocked = ref(false)
 const petContextMenuOpen = ref(false)
 const petGamesMenuOpen = ref(false)
 const petContextMenuPosition = ref({ x: 12, y: 68 })
@@ -2683,6 +2692,8 @@ async function handleDesktopPetCommand(command: any) {
   } else if (command.type === 'game') {
     const allowedGames: Array<GameKind | 'gomoku' | 'fate-roulette'> = ['tictactoe', 'connect4', 'chess', 'gomoku', 'fate-roulette']
     if (allowedGames.includes(command.game)) await openMiniGame(command.game)
+  } else if (command.type === 'set-locked') {
+    desktopPetLocked.value = !!command.locked
   }
 }
 const hasStatusStrip = computed(() =>
@@ -3044,7 +3055,8 @@ onMounted(() => {
           })
         })
       }
-      await invoke('desktop-pet:chat-ready')
+      const result = await invoke('desktop-pet:chat-ready')
+      desktopPetLocked.value = !!result?.locked
     }
   })()
 
@@ -3100,10 +3112,12 @@ onMounted(() => {
 
   removeDesktopPetCommandListener = on('desktop-pet:command', handleDesktopPetCommand)
 
+  if (isDesktopPetMode || isDesktopPetChatMode) {
+    window.addEventListener('pointerdown', handlePetOutsidePointer)
+  }
   if (isDesktopPetMode) {
     document.documentElement.classList.add('desktop-pet-mode')
     petAvatarViewport.value = getPetAvatarViewport()
-    window.addEventListener('pointerdown', handlePetOutsidePointer)
   }
   if (isDesktopPetChatMode) document.documentElement.classList.add('desktop-pet-chat-mode')
 
@@ -6232,8 +6246,10 @@ async function handleImportData() {
     :class="[
       'relative flex h-screen w-screen',
       compactChatLayout ? 'compact-chat-shell overlay-window-shell overflow-hidden' : 'overflow-hidden',
+      isDesktopPetChatMode ? (desktopPetLocked ? 'desktop-pet-chat-locked' : 'desktop-pet-chat-unlocked') : '',
     ]"
     :style="[appShellStyle, petBubbleStyle]"
+    @contextmenu="openPetContextMenu"
   >
     <!-- Ambient background -->
     <div v-if="!compactChatLayout" class="absolute inset-0 pointer-events-none -z-10 opacity-60">
@@ -7308,6 +7324,17 @@ async function handleImportData() {
           <button type="button" class="rounded px-1 text-white/60 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-300" :aria-label="t('pet.closeMenu')" @click="closePetContextMenu">×</button>
         </div>
 
+        <button
+          type="button"
+          class="desktop-pet-menu-item"
+          role="menuitemcheckbox"
+          :aria-checked="desktopPetLocked"
+          @click="toggleDesktopPetLock"
+        >
+          <span>{{ t('pet.lockPosition') }}</span>
+          <span :class="desktopPetLocked ? 'text-amber-300' : 'text-white/55'">{{ desktopPetLocked ? '✓' : '—' }}</span>
+        </button>
+
         <label class="block rounded-xl bg-white/5 px-3 py-2">
           <span class="flex items-center justify-between text-[11px] text-white/80">
             <span>{{ t('pet.chatBubbleOpacity') }}</span>
@@ -7713,6 +7740,25 @@ async function handleImportData() {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28) !important;
   backdrop-filter: blur(16px);
   padding: 0.5rem 0.8rem 0.55rem;
+}
+
+:global(html.desktop-pet-chat-mode .desktop-pet-chat-unlocked) {
+  -webkit-app-region: drag;
+}
+
+:global(html.desktop-pet-chat-mode .desktop-pet-chat-locked) {
+  -webkit-app-region: no-drag;
+}
+
+:global(html.desktop-pet-chat-mode button),
+:global(html.desktop-pet-chat-mode input),
+:global(html.desktop-pet-chat-mode textarea),
+:global(html.desktop-pet-chat-mode select),
+:global(html.desktop-pet-chat-mode [role="dialog"]),
+:global(html.desktop-pet-chat-mode .chat-bubble-shell),
+:global(html.desktop-pet-chat-mode .composer-shell),
+:global(html.desktop-pet-chat-mode .game-chat-aside) {
+  -webkit-app-region: no-drag;
 }
 
 .compact-chat-shell .pet-live2d-stage {

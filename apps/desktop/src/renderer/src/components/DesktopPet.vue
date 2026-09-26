@@ -22,6 +22,7 @@ const session = ref<PetSession | null>(null)
 const menuOpen = ref(false)
 const gamesOpen = ref(false)
 const chatVisible = ref(true)
+const isLocked = ref(false)
 const copilotEnabled = ref(localStorage.getItem('syntax-senpai-warthunder-copilot-enabled') === 'true')
 const opacity = ref(readOpacity())
 const menuElement = ref<HTMLElement | null>(null)
@@ -29,6 +30,7 @@ const menuAnchor = ref({ x: 8, y: 28 })
 const menuPosition = ref({ x: 8, y: 28 })
 let removeSessionListener: (() => void) | null = null
 let removeChatVisibilityListener: (() => void) | null = null
+let removeLockListener: (() => void) | null = null
 const modelWidth = Math.max(120, window.innerWidth - 12)
 const modelHeight = Math.max(200, window.innerHeight - 16)
 const petLabel = computed(() => session.value?.displayName || t('app.name'))
@@ -90,6 +92,11 @@ async function toggleChat() {
   closeMenu()
 }
 
+async function toggleLock() {
+  const result = await invoke('desktop-pet:command', { type: 'set-locked', locked: !isLocked.value })
+  if (result?.success) isLocked.value = !!result.locked
+}
+
 function toggleCopilot() {
   copilotEnabled.value = !copilotEnabled.value
   localStorage.setItem('syntax-senpai-warthunder-copilot-enabled', copilotEnabled.value ? 'true' : 'false')
@@ -121,9 +128,11 @@ onMounted(async () => {
   window.addEventListener('resize', clampMenu)
   removeSessionListener = on('desktop-pet:session', (value: PetSession | null) => { session.value = value })
   removeChatVisibilityListener = on('desktop-pet:chat-visibility', (visible: boolean) => { chatVisible.value = !!visible })
+  removeLockListener = on('desktop-pet:lock', (locked: boolean) => { isLocked.value = !!locked })
   const result = await invoke('desktop-pet:ready')
   session.value = result?.session || null
   chatVisible.value = result?.chatVisible !== false
+  isLocked.value = !!result?.locked
 })
 
 onUnmounted(() => {
@@ -133,12 +142,12 @@ onUnmounted(() => {
   window.removeEventListener('resize', clampMenu)
   removeSessionListener?.()
   removeChatVisibilityListener?.()
+  removeLockListener?.()
 })
 </script>
 
 <template>
-  <main class="desktop-pet-root" :aria-label="petLabel" @contextmenu="openMenu">
-    <div class="pet-drag-handle" aria-hidden="true" />
+  <main :class="['desktop-pet-root', isLocked ? 'pet-locked' : '']" :aria-label="petLabel" @contextmenu="openMenu">
     <Live2DAvatar
       v-if="session?.modelPath"
       class="pet-avatar"
@@ -174,6 +183,11 @@ onUnmounted(() => {
         <span>🐾 {{ t('pet.menu') }}</span>
         <button type="button" :aria-label="t('pet.closeMenu')" @click="closeMenu">×</button>
       </div>
+
+      <button type="button" class="menu-item" role="menuitemcheckbox" :aria-checked="isLocked" @click="toggleLock">
+        <span>{{ t('pet.lockPosition') }}</span>
+        <span :class="isLocked ? 'menu-on' : 'menu-muted'">{{ isLocked ? '✓' : '—' }}</span>
+      </button>
 
       <label class="menu-opacity">
         <span><span>{{ t('pet.chatBubbleOpacity') }}</span><span>{{ Math.round(opacity * 100) }}%</span></span>
@@ -233,12 +247,12 @@ html.desktop-pet-renderer #desktop-pet-app {
   -webkit-app-region: no-drag;
 }
 
-.pet-drag-handle {
-  position: absolute;
-  z-index: 10;
-  inset: 0 20% auto;
-  height: 20px;
+.desktop-pet-root:not(.pet-locked) {
   -webkit-app-region: drag;
+}
+
+.desktop-pet-root.pet-locked {
+  -webkit-app-region: no-drag;
 }
 
 .pet-avatar {
@@ -295,6 +309,8 @@ html.desktop-pet-renderer #desktop-pet-app {
   user-select: none;
   -webkit-app-region: no-drag;
 }
+
+.desktop-pet-menu * { -webkit-app-region: no-drag; }
 
 .menu-heading, .menu-opacity > span, .menu-item {
   display: flex;

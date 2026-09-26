@@ -80,6 +80,7 @@ let desktopPetWindow: any = null
 let desktopPetChatWindow: any = null
 let desktopPetModeActive = false
 let desktopPetChatReady = false
+let desktopPetLocked = false
 const pendingDesktopPetCommands: any[] = []
 let applicationIsQuitting = false
 let pendingLive2DSession: any = null
@@ -616,6 +617,7 @@ function openDesktopPetMode(session?: any) {
   pet.webContents.once('did-finish-load', () => {
     if (desktopPetWindow !== pet || pet.isDestroyed()) return
     pet.webContents.send('desktop-pet:session', pendingDesktopPetSession)
+    pet.webContents.send('desktop-pet:lock', desktopPetLocked)
     finishDesktopPetModeStartup()
   })
   pet.webContents.on('did-fail-load', (_event: any, _code: number, _description: string, _url: string, isMainFrame: boolean) => {
@@ -694,6 +696,7 @@ ipcMain.handle('desktop-pet:close', () => {
 ipcMain.handle('desktop-pet:ready', () => ({
   session: pendingDesktopPetSession,
   chatVisible: !!(desktopPetChatWindow && !desktopPetChatWindow.isDestroyed() && desktopPetChatWindow.isVisible()),
+  locked: desktopPetLocked,
 }))
 
 ipcMain.handle('desktop-pet:chat-ready', (event: any) => {
@@ -705,7 +708,7 @@ ipcMain.handle('desktop-pet:chat-ready', (event: any) => {
     desktopPetChatWindow.webContents.send('desktop-pet:command', pendingDesktopPetCommands.shift())
   }
   finishDesktopPetModeStartup()
-  return { success: true }
+  return { success: true, locked: desktopPetLocked }
 })
 
 ipcMain.handle('desktop-pet:update-session', (_event: any, session: any) => {
@@ -739,6 +742,16 @@ ipcMain.handle('desktop-pet:command', (_event: any, command: any) => {
     const nextChat = showDesktopPetChatWindow()
     if (!nextChat.webContents.isLoading()) nextChat.webContents.send('desktop-pet:chat-visibility', true)
     return { success: true, visible: true }
+  }
+  if (command.type === 'set-locked') {
+    desktopPetLocked = !!command.locked
+    if (desktopPetWindow && !desktopPetWindow.isDestroyed()) {
+      desktopPetWindow.webContents.send('desktop-pet:lock', desktopPetLocked)
+    }
+    if (desktopPetChatWindow && !desktopPetChatWindow.isDestroyed()) {
+      desktopPetChatWindow.webContents.send('desktop-pet:command', { type: 'set-locked', locked: desktopPetLocked })
+    }
+    return { success: true, locked: desktopPetLocked }
   }
   if (command.type === 'set-opacity') {
     command.value = Math.min(0.95, Math.max(0.15, Number(command.value) || 0.78))

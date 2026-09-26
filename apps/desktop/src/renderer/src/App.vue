@@ -1422,7 +1422,14 @@ async function toggleDesktopPetLock() {
     type: 'set-locked',
     locked: !desktopPetLocked.value,
   })
-  if (result?.success) desktopPetLocked.value = !!result.locked
+  if (result?.success) setDesktopPetLockState(!!result.locked)
+}
+
+function setDesktopPetLockState(locked: boolean) {
+  desktopPetLocked.value = locked
+  if (isDesktopPetChatMode) {
+    document.documentElement.classList.toggle('desktop-pet-chat-locked', locked)
+  }
 }
 
 function launchPetMiniGame(game: GameKind | 'gomoku' | 'fate-roulette') {
@@ -2693,7 +2700,7 @@ async function handleDesktopPetCommand(command: any) {
     const allowedGames: Array<GameKind | 'gomoku' | 'fate-roulette'> = ['tictactoe', 'connect4', 'chess', 'gomoku', 'fate-roulette']
     if (allowedGames.includes(command.game)) await openMiniGame(command.game)
   } else if (command.type === 'set-locked') {
-    desktopPetLocked.value = !!command.locked
+    setDesktopPetLockState(!!command.locked)
   }
 }
 const hasStatusStrip = computed(() =>
@@ -3056,7 +3063,7 @@ onMounted(() => {
         })
       }
       const result = await invoke('desktop-pet:chat-ready')
-      desktopPetLocked.value = !!result?.locked
+      setDesktopPetLockState(!!result?.locked)
     }
   })()
 
@@ -3119,7 +3126,10 @@ onMounted(() => {
     document.documentElement.classList.add('desktop-pet-mode')
     petAvatarViewport.value = getPetAvatarViewport()
   }
-  if (isDesktopPetChatMode) document.documentElement.classList.add('desktop-pet-chat-mode')
+  if (isDesktopPetChatMode) {
+    document.documentElement.classList.add('desktop-pet-chat-mode')
+    setDesktopPetLockState(desktopPetLocked.value)
+  }
 
   window.addEventListener('app:error', onAppError as EventListener)
   window.addEventListener('app:retry', onAppRetry as EventListener)
@@ -3149,6 +3159,7 @@ onUnmounted(() => {
   window.removeEventListener(VOICE_OVER_EVENT, handleVoiceOverRequest)
   document.documentElement.classList.remove('desktop-pet-mode')
   document.documentElement.classList.remove('desktop-pet-chat-mode')
+  document.documentElement.classList.remove('desktop-pet-chat-locked')
   window.removeEventListener('pointerdown', handlePetOutsidePointer)
   stopWarThunderEventPolling()
   clearLive2DSpeech()
@@ -6246,11 +6257,17 @@ async function handleImportData() {
     :class="[
       'relative flex h-screen w-screen',
       compactChatLayout ? 'compact-chat-shell overlay-window-shell overflow-hidden' : 'overflow-hidden',
-      isDesktopPetChatMode ? (desktopPetLocked ? 'desktop-pet-chat-locked' : 'desktop-pet-chat-unlocked') : '',
     ]"
     :style="[appShellStyle, petBubbleStyle]"
     @contextmenu="openPetContextMenu"
   >
+    <div
+      v-if="isDesktopPetChatMode && !desktopPetLocked"
+      class="desktop-pet-chat-drag-handle"
+      :title="t('pet.dragToMove')"
+      :aria-label="t('pet.dragToMove')"
+    />
+
     <!-- Ambient background -->
     <div v-if="!compactChatLayout" class="absolute inset-0 pointer-events-none -z-10 opacity-60">
       <div
@@ -7742,12 +7759,26 @@ async function handleImportData() {
   padding: 0.5rem 0.8rem 0.55rem;
 }
 
-:global(html.desktop-pet-chat-mode .desktop-pet-chat-unlocked) {
+:global(html.desktop-pet-chat-mode:not(.desktop-pet-chat-locked) body) {
   -webkit-app-region: drag;
 }
 
-:global(html.desktop-pet-chat-mode .desktop-pet-chat-locked) {
+:global(html.desktop-pet-chat-mode.desktop-pet-chat-locked body) {
   -webkit-app-region: no-drag;
+}
+
+:global(html.desktop-pet-chat-mode .desktop-pet-chat-drag-handle) {
+  position: absolute;
+  z-index: 210;
+  top: 0.35rem;
+  left: 50%;
+  width: 2rem;
+  height: 0.2rem;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.42);
+  cursor: move;
+  -webkit-app-region: drag;
 }
 
 :global(html.desktop-pet-chat-mode button),

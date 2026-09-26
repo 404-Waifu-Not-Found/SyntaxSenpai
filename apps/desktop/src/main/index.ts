@@ -77,10 +77,15 @@ const isDev = process.env.NODE_ENV === 'development'
 let mainWindow: any = null
 let live2dWindow: any = null
 let desktopPetWindow: any = null
+let desktopPetChatWindow: any = null
 let desktopPetModeActive = false
+let desktopPetChatReady = false
+let desktopPetLocked = false
+const pendingDesktopPetCommands: any[] = []
 let applicationIsQuitting = false
 let pendingLive2DSession: any = null
 let pendingLive2DSpeech: any = null
+let pendingDesktopPetSession: any = null
 let tray: any = null
 const NORMAL_WINDOW_MIN_WIDTH = 800
 const NORMAL_WINDOW_MIN_HEIGHT = 600
@@ -202,7 +207,13 @@ function toggleMainWindow() {
   if (desktopPetModeActive && desktopPetWindow && !desktopPetWindow.isDestroyed()) {
     desktopPetWindow.show()
     desktopPetWindow.setAlwaysOnTop(true, 'screen-saver')
-    desktopPetWindow.focus()
+    if (desktopPetChatWindow && !desktopPetChatWindow.isDestroyed() && desktopPetChatWindow.isVisible()) {
+      desktopPetChatWindow.show()
+      desktopPetChatWindow.setAlwaysOnTop(true, 'screen-saver')
+      desktopPetChatWindow.focus()
+    } else {
+      desktopPetWindow.focus()
+    }
     return
   }
   if (!mainWindow) {
@@ -423,41 +434,168 @@ function restoreMainWindowAfterPet() {
 
 function closeDesktopPetMode() {
   const pet = desktopPetWindow
+  const chat = desktopPetChatWindow
   desktopPetWindow = null
+  desktopPetChatWindow = null
   desktopPetModeActive = false
+  desktopPetChatReady = false
+  pendingDesktopPetCommands.length = 0
   if (pet && !pet.isDestroyed()) pet.close()
+  if (chat && !chat.isDestroyed()) chat.close()
   if (!applicationIsQuitting) restoreMainWindowAfterPet()
 }
 
-function openDesktopPetMode() {
+function applyDesktopPetWindowState(window: any) {
+  if (!window || window.isDestroyed()) return
+  window.setAlwaysOnTop(true, 'screen-saver')
+  window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+}
+
+function getDesktopPetWindowLayout(workArea: any) {
+  const margin = 16
+  const gap = 14
+  const usableWidth = Math.max(1, workArea.width - margin * 2 - gap)
+  const petWidth = Math.round(Math.min(250, Math.max(150, usableWidth * 0.34)))
+  const chatWidth = Math.round(Math.min(480, Math.max(240, usableWidth - petWidth)))
+  const chatHeight = Math.round(Math.min(450, Math.max(280, workArea.height - margin * 2)))
+  const petHeight = Math.round(Math.min(400, Math.max(220, workArea.height - margin * 2)))
+  const sideBySide = chatWidth + petWidth + gap + margin * 2 <= workArea.width
+  const petX = Math.round(workArea.x + workArea.width - petWidth - margin)
+  const chatX = sideBySide
+    ? Math.round(petX - chatWidth - gap)
+    : Math.round(workArea.x + margin)
+  return {
+    margin,
+    pet: {
+      x: petX,
+      y: Math.round(workArea.y + Math.max(margin, workArea.height - petHeight - margin)),
+      width: petWidth,
+      height: petHeight,
+    },
+    chat: {
+      x: chatX,
+      y: Math.round(workArea.y + Math.max(margin, workArea.height - chatHeight - margin)),
+      width: chatWidth,
+      height: chatHeight,
+    },
+  }
+}
+
+function showDesktopPetChatWindow() {
+  let chat = desktopPetChatWindow
+  if (!chat || chat.isDestroyed()) {
+    const display = desktopPetWindow && !desktopPetWindow.isDestroyed()
+      ? screen.getDisplayMatching(desktopPetWindow.getBounds())
+      : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()) || screen.getPrimaryDisplay()
+    const layout = getDesktopPetWindowLayout(display.workArea)
+    const bounds = layout.chat
+    chat = new BrowserWindow({
+      ...bounds,
+      minWidth: Math.min(320, bounds.width),
+      minHeight: Math.min(300, bounds.height),
+      title: 'SyntaxSenpai Pet Chat',
+      frame: false,
+      transparent: true,
+      backgroundColor: '#00000000',
+      hasShadow: false,
+      resizable: true,
+      minimizable: false,
+      maximizable: false,
+      fullscreenable: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      show: false,
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        sandbox: false,
+        nodeIntegration: false,
+        contextIsolation: true,
+        webviewTag: false,
+      },
+    })
+    desktopPetChatWindow = chat
+    desktopPetChatReady = false
+    applyDesktopPetWindowState(chat)
+    chat.webContents.once('did-finish-load', () => {
+      if (desktopPetChatWindow !== chat || chat.isDestroyed()) return
+      chat.show()
+      applyDesktopPetWindowState(chat)
+      if (desktopPetModeActive && desktopPetWindow && !desktopPetWindow.isDestroyed()) {
+        applyDesktopPetWindowState(desktopPetWindow)
+        desktopPetWindow.show()
+      }
+      finishDesktopPetModeStartup()
+    })
+    chat.webContents.on('did-fail-load', (_event: any, _code: number, _description: string, _url: string, isMainFrame: boolean) => {
+      if (isMainFrame && desktopPetChatWindow === chat) {
+        closeDesktopPetMode()
+      }
+    })
+    chat.on('closed', () => {
+      if (desktopPetChatWindow === chat) {
+        desktopPetChatWindow = null
+        desktopPetChatReady = false
+        pendingDesktopPetCommands.length = 0
+      }
+      if (desktopPetWindow && !desktopPetWindow.isDestroyed()) {
+        desktopPetWindow.webContents.send('desktop-pet:chat-visibility', false)
+      }
+    })
+    chat.on('show', () => {
+      if (desktopPetWindow && !desktopPetWindow.isDestroyed()) desktopPetWindow.webContents.send('desktop-pet:chat-visibility', true)
+    })
+    chat.on('hide', () => {
+      if (desktopPetWindow && !desktopPetWindow.isDestroyed()) desktopPetWindow.webContents.send('desktop-pet:chat-visibility', false)
+    })
+    if (isDev) void chat.loadURL('http://localhost:5173/?desktopPetChat=1')
+    else void chat.loadFile(join(__dirname, '../renderer/index.html'), { query: { desktopPetChat: '1' } })
+  } else {
+    chat.show()
+    applyDesktopPetWindowState(chat)
+  }
+  if (desktopPetWindow && !desktopPetWindow.isDestroyed()) applyDesktopPetWindowState(desktopPetWindow)
+  return chat
+}
+
+function finishDesktopPetModeStartup() {
+  const pet = desktopPetWindow
+  const chat = desktopPetChatWindow
+  if (!desktopPetModeActive || !desktopPetChatReady || !pet || pet.isDestroyed() || !chat || chat.isDestroyed()) return
+  if (!pet.webContents.isLoading() && !chat.webContents.isLoading()) {
+    pet.show()
+    applyDesktopPetWindowState(pet)
+    applyDesktopPetWindowState(chat)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      updateStoredBoundsFromWindow()
+      mainWindow.close()
+    }
+  }
+}
+
+function openDesktopPetMode(session?: any) {
+  if (session && typeof session === 'object') pendingDesktopPetSession = session
   if (desktopPetWindow && !desktopPetWindow.isDestroyed()) {
     desktopPetWindow.show()
-    desktopPetWindow.setAlwaysOnTop(true, 'screen-saver')
-    desktopPetWindow.focus()
+    applyDesktopPetWindowState(desktopPetWindow)
+    const chat = showDesktopPetChatWindow()
+    chat.focus()
     return
   }
 
   if (!mainWindow || mainWindow.isDestroyed()) createWindow()
 
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()) || screen.getPrimaryDisplay()
-  const workArea = display.workArea
-  const width = Math.min(480, workArea.width)
-  const height = Math.min(900, workArea.height)
-  const x = Math.round(workArea.x + Math.max(0, workArea.width - width - 18))
-  const y = Math.round(workArea.y + Math.max(0, workArea.height - height - 18))
+  const petBounds = getDesktopPetWindowLayout(display.workArea).pet
   const pet = new BrowserWindow({
-    x,
-    y,
-    width,
-    height,
-    minWidth: Math.min(380, width),
-    minHeight: Math.min(640, height),
+    ...petBounds,
+    minWidth: Math.min(200, petBounds.width),
+    minHeight: Math.min(220, petBounds.height),
     title: 'SyntaxSenpai Desktop Pet',
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
     hasShadow: false,
-    resizable: true,
+    resizable: false,
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
@@ -474,17 +612,13 @@ function openDesktopPetMode() {
   })
   desktopPetWindow = pet
   desktopPetModeActive = true
-  pet.setAlwaysOnTop(true, 'screen-saver')
-  pet.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  applyDesktopPetWindowState(pet)
 
   pet.webContents.once('did-finish-load', () => {
     if (desktopPetWindow !== pet || pet.isDestroyed()) return
-    pet.show()
-    pet.setAlwaysOnTop(true, 'screen-saver')
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      updateStoredBoundsFromWindow()
-      mainWindow.close()
-    }
+    pet.webContents.send('desktop-pet:session', pendingDesktopPetSession)
+    pet.webContents.send('desktop-pet:lock', desktopPetLocked)
+    finishDesktopPetModeStartup()
   })
   pet.webContents.on('did-fail-load', (_event: any, _code: number, _description: string, _url: string, isMainFrame: boolean) => {
     if (isMainFrame && desktopPetWindow === pet) closeDesktopPetMode()
@@ -494,12 +628,18 @@ function openDesktopPetMode() {
     desktopPetWindow = null
     if (desktopPetModeActive) {
       desktopPetModeActive = false
+      const chat = desktopPetChatWindow
+      desktopPetChatWindow = null
+      desktopPetChatReady = false
+      pendingDesktopPetCommands.length = 0
+      if (chat && !chat.isDestroyed()) chat.close()
       if (!applicationIsQuitting) restoreMainWindowAfterPet()
     }
   })
 
-  if (isDev) void pet.loadURL('http://localhost:5173/?desktopPet=1')
-  else void pet.loadFile(join(__dirname, '../renderer/index.html'), { query: { desktopPet: '1' } })
+  if (isDev) void pet.loadURL('http://localhost:5173/desktop-pet.html')
+  else void pet.loadFile(join(__dirname, '../renderer/desktop-pet.html'))
+  showDesktopPetChatWindow()
 }
 
 function writeCrashLog(kind: string, err: any) {
@@ -535,9 +675,9 @@ ipcMain.handle('clipboard:write', (_e: any, text: string) => {
   }
 })
 
-ipcMain.handle('desktop-pet:open', () => {
+ipcMain.handle('desktop-pet:open', (_event: any, session?: any) => {
   try {
-    openDesktopPetMode()
+    openDesktopPetMode(session)
     return { success: true }
   } catch (err: any) {
     return { success: false, error: err?.message || String(err) }
@@ -551,6 +691,87 @@ ipcMain.handle('desktop-pet:close', () => {
   } catch (err: any) {
     return { success: false, error: err?.message || String(err) }
   }
+})
+
+ipcMain.handle('desktop-pet:ready', () => ({
+  session: pendingDesktopPetSession,
+  chatVisible: !!(desktopPetChatWindow && !desktopPetChatWindow.isDestroyed() && desktopPetChatWindow.isVisible()),
+  locked: desktopPetLocked,
+}))
+
+ipcMain.handle('desktop-pet:chat-ready', (event: any) => {
+  if (!desktopPetChatWindow || desktopPetChatWindow.isDestroyed() || desktopPetChatWindow.webContents !== event.sender) {
+    return { success: false }
+  }
+  desktopPetChatReady = true
+  while (pendingDesktopPetCommands.length > 0) {
+    desktopPetChatWindow.webContents.send('desktop-pet:command', pendingDesktopPetCommands.shift())
+  }
+  finishDesktopPetModeStartup()
+  return { success: true, locked: desktopPetLocked }
+})
+
+ipcMain.handle('desktop-pet:update-session', (_event: any, session: any) => {
+  pendingDesktopPetSession = session && typeof session === 'object' ? session : null
+  if (desktopPetWindow && !desktopPetWindow.isDestroyed() && !desktopPetWindow.webContents.isLoading()) {
+    desktopPetWindow.webContents.send('desktop-pet:session', pendingDesktopPetSession)
+  }
+  return { success: true }
+})
+
+ipcMain.handle('desktop-pet:hide-chat', () => {
+  if (desktopPetChatWindow && !desktopPetChatWindow.isDestroyed()) desktopPetChatWindow.hide()
+  if (desktopPetWindow && !desktopPetWindow.isDestroyed()) desktopPetWindow.webContents.send('desktop-pet:chat-visibility', false)
+  return { success: true }
+})
+
+ipcMain.handle('desktop-pet:command', (_event: any, command: any) => {
+  if (!desktopPetModeActive || !command || typeof command !== 'object') return { success: false }
+  if (command.type === 'return-to-normal') {
+    closeDesktopPetMode()
+    return { success: true }
+  }
+  if (command.type === 'toggle-chat') {
+    const chat = desktopPetChatWindow
+    const visible = !!(chat && !chat.isDestroyed() && chat.isVisible())
+    if (visible) {
+      chat.hide()
+      if (desktopPetWindow && !desktopPetWindow.isDestroyed()) desktopPetWindow.webContents.send('desktop-pet:chat-visibility', false)
+      return { success: true, visible: false }
+    }
+    const nextChat = showDesktopPetChatWindow()
+    if (!nextChat.webContents.isLoading()) nextChat.webContents.send('desktop-pet:chat-visibility', true)
+    return { success: true, visible: true }
+  }
+  if (command.type === 'set-locked') {
+    desktopPetLocked = !!command.locked
+    if (desktopPetWindow && !desktopPetWindow.isDestroyed()) {
+      desktopPetWindow.webContents.send('desktop-pet:lock', desktopPetLocked)
+    }
+    if (desktopPetChatWindow && !desktopPetChatWindow.isDestroyed()) {
+      desktopPetChatWindow.webContents.send('desktop-pet:command', { type: 'set-locked', locked: desktopPetLocked })
+    }
+    return { success: true, locked: desktopPetLocked }
+  }
+  if (command.type === 'set-opacity') {
+    command.value = Math.min(0.95, Math.max(0.15, Number(command.value) || 0.78))
+  } else if (command.type === 'set-warthunder') {
+    command.enabled = !!command.enabled
+  } else if (command.type === 'game') {
+    if (!new Set(['tictactoe', 'connect4', 'chess', 'gomoku', 'fate-roulette']).has(command.game)) return { success: false }
+  } else {
+    return { success: false }
+  }
+  const chat = showDesktopPetChatWindow()
+  const sendCommand = () => {
+    if (!desktopPetModeActive || desktopPetChatWindow !== chat || chat.isDestroyed()) return
+    if (desktopPetChatReady) chat.webContents.send('desktop-pet:command', command)
+    else pendingDesktopPetCommands.push(command)
+    applyDesktopPetWindowState(chat)
+  }
+  if (chat.webContents.isLoading()) chat.webContents.once('did-finish-load', sendCommand)
+  else sendCommand()
+  return { success: true }
 })
 
 ipcMain.handle('window:getViewState', () => {

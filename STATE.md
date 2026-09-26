@@ -5,6 +5,7 @@ This is a code-oriented snapshot, not a claim that every integration has been ve
 ## Product surfaces
 
 - `apps/desktop`: Electron main/preload plus Vue 3 renderer. Chat, settings, skills, custom waifus, Live2D, browser control, WeChat pairing, mobile pairing, and agent tools live here.
+- Desktop-pet mode uses a transparent Live2D-only window beside a separate compact chat window. The main process keeps both windows topmost across workspaces and routes pet-menu actions to the chat renderer.
 - `apps/headless`: Node JSONL runner for the shared agent session. It preserves conversation history in memory, emits ordered events, and accepts human game moves with engine replies; see [its README](./apps/headless/README.md).
 - `apps/mobile`: Expo companion paired to the desktop over the shared WebSocket protocol.
 - `apps/runtime`: optional Node operations service for health, metrics, plugins, and runtime backups. Its backup API is separate from the desktop full-backup feature.

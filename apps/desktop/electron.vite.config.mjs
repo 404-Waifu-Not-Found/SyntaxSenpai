@@ -103,6 +103,7 @@ export default defineConfig({
         input: {
           index: path.resolve(__dirname, 'src/renderer/index.html'),
           live2d: path.resolve(__dirname, 'src/renderer/live2d.html'),
+          desktopPet: path.resolve(__dirname, 'src/renderer/desktop-pet.html'),
         },
         external: ['expo-secure-store', 'expo', 'keytar', 'better-sqlite3']
       },

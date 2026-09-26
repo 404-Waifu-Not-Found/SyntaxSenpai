@@ -6419,6 +6419,7 @@ async function handleImportData() {
     <div :class="['flex-1 flex flex-col min-w-0', compactChatLayout ? 'overlay-main-pane' : '']">
       <!-- Header -->
       <div
+        v-if="!isDesktopPetChatMode"
         :class="[
           compactChatLayout ? 'sticky top-0 z-20 px-3 py-2.5' : 'sticky top-0 z-20 px-6 py-3',
           'glass-surface border-b',
@@ -6648,7 +6649,7 @@ async function handleImportData() {
         !appReady ? 'opacity-0' : '',
       ]">
         <div
-          v-if="store.messages.length === 0"
+          v-if="store.messages.length === 0 && !isDesktopPetChatMode"
           :class="['flex flex-col items-center justify-center h-full text-center text-neutral-400', compactChatLayout ? 'px-4' : '']"
         >
           <div :class="[compactChatLayout ? 'text-3xl mb-3' : 'text-4xl mb-4']" :style="emptyStateGlowStyle">
@@ -7688,30 +7689,30 @@ async function handleImportData() {
 }
 
 :global(html.desktop-pet-chat-mode .compact-chat-shell .overlay-main-pane) {
-  border-color: rgba(255, 255, 255, 0.16);
-  border-radius: 1.2rem;
-  background: color-mix(in srgb, #10131c var(--pet-bubble-opacity, 78%), transparent) !important;
-  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.07);
-  backdrop-filter: blur(16px);
+  border: 0;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
-:global(html.desktop-pet-chat-mode .compact-chat-shell .overlay-drag-region) {
-  border-color: rgba(255, 255, 255, 0.1);
-  background: color-mix(in srgb, #10131c var(--pet-bubble-opacity, 78%), transparent) !important;
-  -webkit-app-region: drag;
+:global(html.desktop-pet-chat-mode .compact-chat-shell .overlay-main-pane::before) {
+  display: none;
 }
 
 :global(html.desktop-pet-chat-mode .compact-chat-shell .composer-footer) {
-  border-top: 1px solid rgba(255, 255, 255, 0.09);
-  background: color-mix(in srgb, #10131c var(--pet-bubble-opacity, 78%), transparent) !important;
+  border: 0;
+  background: transparent !important;
+  padding: 0 0.55rem 0.55rem;
 }
 
-:global(html.desktop-pet-chat-mode .compact-chat-shell .compact-chat-empty-title) {
-  font-size: 0.9rem;
-}
-
-:global(html.desktop-pet-chat-mode .compact-chat-shell .compact-chat-empty-subtitle) {
-  font-size: 0.7rem;
+:global(html.desktop-pet-chat-mode .compact-chat-shell .composer-shell) {
+  border-color: color-mix(in srgb, var(--primary) 46%, transparent) !important;
+  border-radius: 1.8rem;
+  background: color-mix(in srgb, var(--surface-2, #10131c) var(--pet-bubble-opacity, 78%), transparent) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28) !important;
+  backdrop-filter: blur(16px);
+  padding: 0.5rem 0.8rem 0.55rem;
 }
 
 .compact-chat-shell .pet-live2d-stage {

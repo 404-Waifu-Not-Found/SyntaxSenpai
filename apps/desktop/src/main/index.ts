@@ -455,8 +455,8 @@ function getDesktopPetWindowLayout(workArea: any) {
   const gap = 14
   const usableWidth = Math.max(1, workArea.width - margin * 2 - gap)
   const petWidth = Math.round(Math.min(250, Math.max(150, usableWidth * 0.34)))
-  const chatWidth = Math.round(Math.min(400, Math.max(240, usableWidth - petWidth)))
-  const chatHeight = Math.round(Math.min(560, Math.max(280, workArea.height - margin * 2)))
+  const chatWidth = Math.round(Math.min(480, Math.max(240, usableWidth - petWidth)))
+  const chatHeight = Math.round(Math.min(450, Math.max(280, workArea.height - margin * 2)))
   const petHeight = Math.round(Math.min(400, Math.max(220, workArea.height - margin * 2)))
   const sideBySide = chatWidth + petWidth + gap + margin * 2 <= workArea.width
   const petX = Math.round(workArea.x + workArea.width - petWidth - margin)
@@ -491,7 +491,7 @@ function showDesktopPetChatWindow() {
     chat = new BrowserWindow({
       ...bounds,
       minWidth: Math.min(320, bounds.width),
-      minHeight: Math.min(380, bounds.height),
+      minHeight: Math.min(300, bounds.height),
       title: 'SyntaxSenpai Pet Chat',
       frame: false,
       transparent: true,

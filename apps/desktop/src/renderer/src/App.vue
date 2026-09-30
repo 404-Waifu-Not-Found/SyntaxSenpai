@@ -1807,7 +1807,32 @@ function applyPreset(preset: typeof colorPresets[0]) {
   setRainbow({ enabled: !!preset.rainbow })
 }
 
-const sidebarOpen = ref(true)
+const SIDEBAR_AUTO_COLLAPSE_WIDTH = 1120
+const isNarrowViewport = ref(window.innerWidth < SIDEBAR_AUTO_COLLAPSE_WIDTH)
+let sidebarAutoCollapsed = isNarrowViewport.value
+const sidebarOpen = ref(!isNarrowViewport.value)
+
+function closeSidebar() {
+  sidebarAutoCollapsed = false
+  sidebarOpen.value = false
+}
+
+function openSidebar() {
+  sidebarAutoCollapsed = false
+  sidebarOpen.value = true
+}
+
+function handleResponsiveLayoutResize() {
+  const isNarrow = window.innerWidth < SIDEBAR_AUTO_COLLAPSE_WIDTH
+  if (isNarrow && !isNarrowViewport.value && sidebarOpen.value) {
+    sidebarAutoCollapsed = true
+    sidebarOpen.value = false
+  } else if (!isNarrow && isNarrowViewport.value && sidebarAutoCollapsed) {
+    sidebarAutoCollapsed = false
+    sidebarOpen.value = true
+  }
+  isNarrowViewport.value = isNarrow
+}
 const showSettings = ref(false)
 const showLive2DPanel = ref(false)
 const showGamePicker = ref(false)
@@ -2653,9 +2678,7 @@ const affectionAccentStyle = computed(() => {
   }
 })
 
-const affectionMeterClass = computed(() =>
-  locale.value === 'en' ? 'w-70' : 'w-52',
-)
+const affectionMeterClass = 'affection-meter'
 
 const isDesktopPetMode = new URLSearchParams(window.location.search).get('desktopPet') === '1'
 const isDesktopPetChatMode = new URLSearchParams(window.location.search).get('desktopPetChat') === '1'
@@ -3146,6 +3169,7 @@ onMounted(() => {
   window.addEventListener('pointerup', endLive2DPanelPointer)
   window.addEventListener('pointercancel', endLive2DPanelPointer)
   window.addEventListener('resize', handleLive2DPanelViewportResize)
+  window.addEventListener('resize', handleResponsiveLayoutResize)
 
   startupSplashTimer = window.setTimeout(() => {
     showStartupSplash.value = false
@@ -3180,6 +3204,7 @@ onUnmounted(() => {
   window.removeEventListener('pointerup', endLive2DPanelPointer)
   window.removeEventListener('pointercancel', endLive2DPanelPointer)
   window.removeEventListener('resize', handleLive2DPanelViewportResize)
+  window.removeEventListener('resize', handleResponsiveLayoutResize)
   if (startupSplashTimer !== null) {
     window.clearTimeout(startupSplashTimer)
   }
@@ -6277,17 +6302,27 @@ async function handleImportData() {
     </div>
 
     <!-- Sidebar -->
+    <button
+      v-if="!compactChatLayout && isNarrowViewport && sidebarOpen"
+      type="button"
+      class="sidebar-backdrop"
+      aria-label="Close sidebar"
+      @click="closeSidebar"
+    />
     <div
       v-if="!compactChatLayout"
+      id="conversation-sidebar"
       :class="[
         'sidebar-wrapper overflow-hidden shrink-0',
         sidebarOpen ? 'sidebar-open' : 'sidebar-closed',
+        isNarrowViewport && sidebarOpen ? 'sidebar-drawer-open' : '',
         !startupAnimDone && appReady ? 'app-slide-in-left' : '',
         !appReady ? 'opacity-0' : '',
       ]"
     >
       <div
-        class="w-72 h-full flex flex-col p-4 glass-surface border-r"
+        v-if="sidebarOpen"
+        class="sidebar-content w-72 h-full flex flex-col p-4 glass-surface border-r"
         :style="secondaryPanelStyle"
       >
         <h1 :class="['text-xl font-bold mb-3 themed-primary-text', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-1' : '', !appReady ? 'opacity-0' : '']">
@@ -6441,10 +6476,36 @@ async function handleImportData() {
         </div>
 
         <div :class="['mt-3', !startupAnimDone && appReady ? 'sidebar-item sidebar-item-7' : '', !appReady ? 'opacity-0' : '']">
-          <button class="btn-ghost w-full text-sm" :style="ghostButtonStyle" @click="sidebarOpen = false">
+          <button class="btn-ghost w-full text-sm" :style="ghostButtonStyle" @click="closeSidebar">
             {{ t('sidebar.collapse') }}
           </button>
         </div>
+      </div>
+      <div
+        v-else
+        class="sidebar-collapsed-rail h-full flex flex-col items-center gap-2 py-3 glass-surface border-r"
+        :style="secondaryPanelStyle"
+      >
+        <button
+          type="button"
+          class="sidebar-rail-button"
+          :title="t('sidebar.expand')"
+          :aria-label="t('sidebar.expand')"
+          :aria-expanded="sidebarOpen"
+          aria-controls="conversation-sidebar"
+          @click="openSidebar"
+        >
+          <span aria-hidden="true">☰</span>
+        </button>
+        <button
+          type="button"
+          class="sidebar-rail-button sidebar-rail-new-chat"
+          :title="t('sidebar.newChat')"
+          :aria-label="t('sidebar.newChat')"
+          @click="store.newChat()"
+        >
+          <PhPlus :size="18" weight="regular" aria-hidden="true" />
+        </button>
       </div>
     </div>
 
@@ -6456,24 +6517,15 @@ async function handleImportData() {
         :class="[
           compactChatLayout ? 'sticky top-0 z-20 px-3 py-2.5' : 'sticky top-0 z-20 px-6 py-3',
           'glass-surface border-b',
-          'flex items-center justify-between',
+          'flex items-center justify-between chat-header-toolbar',
           compactChatLayout ? 'overlay-drag-region' : '',
           !startupAnimDone && appReady ? 'app-slide-in-top' : '',
           !appReady ? 'opacity-0' : '',
         ]"
         :style="isDesktopPetChatMode ? undefined : secondaryPanelStyle"
       >
-        <div :class="['flex items-center min-w-0', compactChatLayout ? 'gap-2' : 'gap-3']">
-          <button
-            v-if="!compactChatLayout"
-            class="btn-ghost p-2"
-            :aria-label="sidebarOpen ? 'Close sidebar' : 'Open sidebar'"
-            :aria-expanded="sidebarOpen"
-            @click="sidebarOpen = !sidebarOpen"
-          >
-            {{ sidebarOpen ? '←' : '☰' }}
-          </button>
-          <div :class="['flex items-center min-w-0', compactChatLayout ? 'gap-2.5' : 'gap-4']">
+        <div :class="['chat-header-leading flex items-center min-w-0', compactChatLayout ? 'gap-2' : 'gap-3']">
+          <div :class="['chat-header-identity flex items-center min-w-0', compactChatLayout ? 'gap-2.5' : 'gap-4']">
             <div class="min-w-0">
               <div :class="[compactChatLayout ? 'compact-chat-title text-base font-semibold truncate' : 'text-lg font-semibold truncate']">
                 {{ store.isGroupChat ? store.activeWaifus.map(w => w.displayName).join(' & ') : store.selectedWaifu?.displayName }}
@@ -6482,10 +6534,10 @@ async function handleImportData() {
                 {{ store.isGroupChat ? t('sidebar.groupChat') : store.selectedWaifu?.backstory?.slice(0, 60) }}
               </div>
             </div>
-            <div v-if="!compactChatLayout" :class="[affectionMeterClass, 'shrink-0 rounded-xl border px-3 py-2']" :style="affectionBoxStyle">
-              <div :class="['flex items-center justify-between uppercase', compactChatLayout ? 'text-[10px] tracking-[0.14em]' : 'text-[11px] tracking-[0.18em]']">
-                <span>{{ t('header.affection') }}</span>
-                <span>{{ compactChatLayout ? `${store.affection}/100` : `${store.affection} / 100(${affectionTier})` }}</span>
+            <div v-if="!compactChatLayout" :class="[affectionMeterClass, 'rounded-xl border px-3 py-2']" :style="affectionBoxStyle">
+              <div class="affection-meter-summary flex items-center justify-between uppercase text-[11px] tracking-[0.18em]">
+                <span class="affection-meter-label">{{ t('header.affection') }}</span>
+                <span class="affection-meter-value">{{ store.affection }}/100<span class="affection-tier"> · {{ affectionTier }}</span></span>
               </div>
               <div :class="[compactChatLayout ? 'mt-1.5 h-1.5' : 'mt-2 h-2', 'overflow-hidden rounded-full bg-neutral-800/90']">
                 <div class="h-full rounded-full transition-all duration-500 ease-out" :style="affectionFillStyle" />
@@ -6493,7 +6545,7 @@ async function handleImportData() {
             </div>
           </div>
         </div>
-        <div class="flex items-center relative gap-1">
+        <div class="chat-header-actions flex items-center relative gap-1">
           <button
             v-if="!compactChatLayout"
             type="button"
@@ -7409,6 +7461,332 @@ async function handleImportData() {
 </template>
 
 <style scoped>
+.chat-header-toolbar {
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.chat-header-leading {
+  flex: 1 1 auto;
+}
+
+.chat-header-identity {
+  flex: 1 1 auto;
+  gap: clamp(0.5rem, 1vw, 1rem);
+}
+
+.affection-meter {
+  box-sizing: border-box;
+  flex: 0 1 clamp(8rem, 18vw, 17.5rem);
+  width: clamp(8rem, 18vw, 17.5rem);
+  min-width: 8rem;
+  max-width: 100%;
+}
+
+.affection-meter-summary {
+  gap: 0.5rem;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.affection-meter-label,
+.affection-meter-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.affection-meter-value {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.sidebar-open {
+  width: min(18rem, calc(100vw - 3.5rem));
+}
+
+.sidebar-closed {
+  width: 3.5rem;
+}
+
+.sidebar-content {
+  box-sizing: border-box;
+  width: 18rem;
+}
+
+.sidebar-collapsed-rail {
+  box-sizing: border-box;
+  width: 3.5rem;
+  border-color: color-mix(in srgb, var(--primary) 22%, transparent);
+  background-color: color-mix(in srgb, var(--surface) 84%, transparent);
+  backdrop-filter: blur(22px) saturate(150%);
+}
+
+.sidebar-rail-button {
+  display: flex;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--fg) 14%, transparent);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+  color: var(--fg);
+  font-size: 1rem;
+  transition: background-color 150ms ease, border-color 150ms ease, transform 150ms ease;
+  backdrop-filter: blur(12px);
+}
+
+.sidebar-rail-button:hover,
+.sidebar-rail-button:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 45%, transparent);
+  background: color-mix(in srgb, var(--primary) 22%, var(--surface-2));
+  outline: 2px solid color-mix(in srgb, var(--primary) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.sidebar-rail-new-chat {
+  color: color-mix(in srgb, var(--primary) 86%, white);
+}
+
+.sidebar-backdrop {
+  position: fixed;
+  z-index: 39;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: rgba(5, 8, 16, 0.48);
+  backdrop-filter: blur(3px);
+  cursor: pointer;
+}
+
+.sidebar-drawer-open {
+  position: fixed;
+  z-index: 40;
+  inset-block: 0;
+  left: 0;
+  width: min(18rem, calc(100vw - 3.5rem));
+  height: 100vh;
+  box-shadow: 16px 0 42px rgba(0, 0, 0, 0.4);
+}
+
+.sidebar-drawer-open .sidebar-content {
+  width: min(18rem, calc(100vw - 3.5rem));
+}
+
+.settings-modal {
+  box-sizing: border-box;
+  width: min(1100px, calc(100vw - 2rem));
+  height: min(700px, calc(100dvh - 2rem));
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100dvh - 2rem);
+  min-width: 0;
+  min-height: 0;
+}
+
+.settings-modal > aside,
+.settings-modal > main {
+  min-height: 0;
+}
+
+@media (max-width: 1100px) {
+  .affection-meter {
+    flex-basis: clamp(7rem, 17vw, 11rem);
+    width: clamp(7rem, 17vw, 11rem);
+    min-width: 7rem;
+    padding: 0.5rem 0.65rem;
+  }
+
+  .affection-tier {
+    display: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .settings-modal {
+    flex-direction: column;
+  }
+
+  .settings-modal > aside {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    flex: 0 0 auto;
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .settings-modal > aside > div {
+    padding: 0.65rem 1rem 0.45rem;
+  }
+
+  .settings-modal > aside > nav {
+    display: grid;
+    flex: none;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.25rem;
+    max-height: 10rem;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 0.45rem;
+  }
+
+  .settings-modal .settings-nav-indicator {
+    display: none;
+  }
+
+  .settings-modal .settings-nav-btn {
+    box-sizing: border-box;
+    min-width: 0;
+    height: auto;
+    min-height: 2rem;
+    gap: 0.35rem;
+    padding: 0.3rem 0.4rem;
+    font-size: 11px;
+  }
+
+  .settings-modal .settings-nav-btn-active {
+    background: rgba(var(--primary-rgb), 0.2) !important;
+  }
+
+  .settings-modal > main {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow-x: hidden;
+  }
+
+  .settings-modal > main > div {
+    padding: 1rem !important;
+  }
+
+  .settings-modal .tab-wrapper {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .settings-modal main :is(input, select, textarea) {
+    box-sizing: border-box;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .chat-header-toolbar {
+    flex-wrap: wrap;
+    row-gap: 0.45rem;
+    padding: 0.55rem 0.75rem !important;
+  }
+
+  .chat-header-leading {
+    flex: 1 1 100%;
+    gap: 0.5rem;
+  }
+
+  .chat-header-identity {
+    flex: 1 1 auto;
+    gap: 0.55rem;
+  }
+
+  .affection-meter {
+    flex: 0 1 clamp(5.5rem, 24vw, 8rem);
+    width: clamp(5.5rem, 24vw, 8rem);
+    min-width: 5.5rem;
+    padding: 0.4rem 0.5rem;
+  }
+
+  .affection-meter-summary {
+    gap: 0.25rem;
+    font-size: 9px;
+    letter-spacing: 0.04em;
+  }
+
+  .chat-header-actions {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+    gap: 0.125rem;
+  }
+
+  .chat-header-actions > button {
+    box-sizing: border-box;
+    width: 2.25rem;
+    height: 2.25rem;
+    min-width: 2.25rem;
+    padding: 0.35rem !important;
+  }
+
+  .settings-backdrop {
+    padding: 0.5rem !important;
+  }
+
+  .settings-modal {
+    width: calc(100vw - 1rem);
+    height: calc(100dvh - 1rem);
+    max-width: calc(100vw - 1rem);
+    max-height: calc(100dvh - 1rem);
+    border-radius: 1.25rem;
+  }
+}
+
+@media (max-width: 520px) {
+  .affection-meter-summary {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0;
+    line-height: 1.2;
+    white-space: normal;
+  }
+
+  .settings-modal > aside > nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    max-height: 10rem;
+  }
+
+  .settings-modal .settings-nav-btn {
+    min-height: 1.9rem;
+    gap: 0.25rem;
+    padding: 0.25rem 0.3rem;
+    font-size: 10px;
+  }
+
+  .settings-backdrop {
+    overflow-x: hidden;
+  }
+
+  .chat-composer-footer .composer-toolbar {
+    flex-wrap: wrap;
+    row-gap: 0.15rem;
+  }
+
+  .chat-composer-footer .composer-toolbar-start {
+    flex: 1 1 auto;
+  }
+
+  .chat-composer-footer .composer-toolbar-end {
+    flex: 1 1 100%;
+    justify-content: space-between;
+    margin-left: 0;
+  }
+
+  .chat-composer-footer .composer-access-button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .chat-composer-footer .composer-model-button {
+    max-width: min(42vw, 12rem);
+  }
+
+  .sidebar-open {
+    width: min(18rem, calc(100vw - 3.5rem));
+  }
+
+  .sidebar-content {
+    width: min(18rem, calc(100vw - 3.5rem));
+  }
+}
+
 .game-picker-strip {
   display: flex;
   flex: none;
@@ -7691,11 +8069,11 @@ async function handleImportData() {
 }
 
 .sidebar-open {
-  width: 18rem; /* w-72 */
+  width: min(18rem, calc(100vw - 3.5rem)); /* w-72 */
 }
 
 .sidebar-closed {
-  width: 0;
+  width: 3.5rem;
 }
 
 .compact-chat-shell .sidebar-open {

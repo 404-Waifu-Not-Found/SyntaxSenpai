@@ -28,6 +28,9 @@ describe("loadToolPlugins (integration against plugins/)", () => {
     expect(toolNames).toContain("gh_list_prs");
     expect(toolNames).toContain("warthunder_copilot_control");
     expect(toolNames).toContain("warthunder_copilot_status");
+    expect(toolNames).toContain("warthunder_copilot_rwr_sources");
+    expect(toolNames).toContain("warthunder_copilot_rwr_calibrate");
+    expect(toolNames).toContain("warthunder_copilot_rwr_sample");
   });
 
   it("normalizes legacy flat tool definitions from generated plugins", async () => {

@@ -90,6 +90,10 @@
       {
         "from": "resources/",
         "to": "."
+      },
+      {
+        "from": "../../plugins/warthunder-copilot/",
+        "to": "plugins/warthunder-copilot"
       }
     ],
     "mac": {

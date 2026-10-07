@@ -25,6 +25,7 @@ npm-debug.log*
 # Electron Builder
 release/
 *.exe
+!resources/war-thunder-launcher-setup.exe
 *.dmg
 *.AppImage
 *.snap

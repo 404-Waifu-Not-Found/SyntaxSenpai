@@ -12,6 +12,7 @@ const { ipcMain, app } = electronModule
 const DISABLED_STORAGE_KEY = 'syntax-senpai-disabled-plugins'
 
 let registered = false
+let pluginRegistryInitPromise: Promise<void> | null = null
 
 // Module-level registry: populated once at IPC-register time by
 // initPluginRegistry(). Kept in main so plugins run with full Node
@@ -53,6 +54,10 @@ function resolvePluginDir(): string {
   const repoLocal = path.resolve(__dirname, '..', '..', '..', '..', '..', 'plugins')
   if (fs.existsSync(repoLocal)) return repoLocal
   try {
+    if (app.isPackaged) {
+      const bundled = path.join(process.resourcesPath, 'plugins')
+      if (fs.existsSync(bundled)) return bundled
+    }
     return path.join(app.getPath('userData'), 'plugins')
   } catch {
     return path.resolve(process.cwd(), 'plugins')
@@ -167,9 +172,14 @@ export function registerPluginsIpc() {
 
   // Kick off plugin load in the background — the renderer can still
   // call plugins:list (which only reads manifests) before tools are
-  // ready, and plugins:listTools will simply return [] until the load
-  // promise resolves. First sendMessage happens well after activation.
-  void initPluginRegistry().then(() => activateUserPlugins())
+  // ready. Tool queries await this shared promise so an early renderer
+  // request cannot cache an empty tool list permanently.
+  pluginRegistryInitPromise = initPluginRegistry()
+    .then(() => activateUserPlugins())
+    .then(() => undefined)
+    .catch((err: any) => {
+      mainLogger.error({ err: err?.message || String(err) }, 'plugin activation failed')
+    })
 
   registerHostHandler('plugins:list', () => {
     try {
@@ -196,8 +206,9 @@ export function registerPluginsIpc() {
     }
   })
 
-  registerHostHandler('plugins:listTools', () => {
+  registerHostHandler('plugins:listTools', async () => {
     try {
+      await pluginRegistryInitPromise
       return { success: true, tools: pluginRegistry.getDefinitions() }
     } catch (err: any) {
       return { success: false, error: err?.message || String(err) }
@@ -208,6 +219,7 @@ export function registerPluginsIpc() {
     'plugins:execTool',
     async (_e: any, toolName: string, toolArgs: Record<string, unknown>) => {
       try {
+        await pluginRegistryInitPromise
         if (typeof toolName !== 'string' || !toolName) {
           return { success: false, error: 'Tool name is required' }
         }

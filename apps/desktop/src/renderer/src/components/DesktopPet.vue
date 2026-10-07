@@ -24,6 +24,7 @@ const gamesOpen = ref(false)
 const chatVisible = ref(true)
 const isLocked = ref(false)
 const copilotEnabled = ref(localStorage.getItem('syntax-senpai-warthunder-copilot-enabled') === 'true')
+const alertMessage = ref('')
 const opacity = ref(readOpacity())
 const menuElement = ref<HTMLElement | null>(null)
 const menuAnchor = ref({ x: 8, y: 28 })
@@ -31,6 +32,8 @@ const menuPosition = ref({ x: 8, y: 28 })
 let removeSessionListener: (() => void) | null = null
 let removeChatVisibilityListener: (() => void) | null = null
 let removeLockListener: (() => void) | null = null
+let removeAlertListener: (() => void) | null = null
+let alertTimer: ReturnType<typeof setTimeout> | null = null
 const modelWidth = Math.max(120, window.innerWidth - 12)
 const modelHeight = Math.max(200, window.innerHeight - 16)
 const petLabel = computed(() => session.value?.displayName || t('app.name'))
@@ -103,6 +106,11 @@ function toggleCopilot() {
   void invoke('desktop-pet:command', { type: 'set-warthunder', enabled: copilotEnabled.value })
 }
 
+function openTechTree() {
+  closeMenu()
+  void invoke('desktop-pet:command', { type: 'tech-tree' })
+}
+
 function launchGame(game: PetGame) {
   closeMenu()
   void invoke('desktop-pet:command', { type: 'game', game })
@@ -129,6 +137,11 @@ onMounted(async () => {
   removeSessionListener = on('desktop-pet:session', (value: PetSession | null) => { session.value = value })
   removeChatVisibilityListener = on('desktop-pet:chat-visibility', (visible: boolean) => { chatVisible.value = !!visible })
   removeLockListener = on('desktop-pet:lock', (locked: boolean) => { isLocked.value = !!locked })
+  removeAlertListener = on('desktop-pet:alert', (message: string) => {
+    alertMessage.value = message
+    if (alertTimer) clearTimeout(alertTimer)
+    alertTimer = setTimeout(() => { alertMessage.value = ''; alertTimer = null }, 8000)
+  })
   const result = await invoke('desktop-pet:ready')
   session.value = result?.session || null
   chatVisible.value = result?.chatVisible !== false
@@ -143,6 +156,8 @@ onUnmounted(() => {
   removeSessionListener?.()
   removeChatVisibilityListener?.()
   removeLockListener?.()
+  removeAlertListener?.()
+  if (alertTimer) clearTimeout(alertTimer)
 })
 </script>
 
@@ -165,6 +180,7 @@ onUnmounted(() => {
       <span>{{ t('pet.live2dNotBound') }}</span>
     </div>
     <div class="pet-name">{{ petLabel }}</div>
+    <div v-if="alertMessage" class="pet-alert" role="alert">{{ alertMessage }}</div>
 
     <div
       v-if="menuOpen"
@@ -202,6 +218,11 @@ onUnmounted(() => {
       <button type="button" class="menu-item" role="menuitemcheckbox" :aria-checked="copilotEnabled" @click="toggleCopilot">
         <span>{{ t('pet.warThunderCopilot') }}</span>
         <span :class="copilotEnabled ? 'menu-on' : 'menu-muted'">{{ copilotEnabled ? t('pet.copilotOn') : t('pet.copilotOff') }}</span>
+      </button>
+
+      <button type="button" class="menu-item" role="menuitem" @click="openTechTree">
+        <span>{{ t('pet.warThunderTechTree') }}</span>
+        <span aria-hidden="true">↗</span>
       </button>
 
       <button type="button" class="menu-item" :aria-expanded="gamesOpen" @click="toggleGames">
@@ -292,6 +313,24 @@ html.desktop-pet-renderer #desktop-pet-app {
 }
 
 .desktop-pet-root:hover .pet-name { opacity: 1; }
+
+.pet-alert {
+  position: absolute;
+  z-index: 50;
+  right: 8px;
+  bottom: 24px;
+  left: 8px;
+  border: 1px solid rgba(251, 191, 36, 0.65);
+  border-radius: 12px;
+  padding: 10px;
+  color: #fef3c7;
+  background: rgba(69, 26, 3, 0.95);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
 
 .desktop-pet-menu {
   position: fixed;

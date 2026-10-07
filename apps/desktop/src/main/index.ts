@@ -18,7 +18,7 @@ if (typeof electronModule === 'string') {
   process.exit(0)
 }
 
-const { app, BrowserWindow, ipcMain, clipboard, globalShortcut, Tray, Menu, nativeImage, screen, protocol: earlyProtocol } = electronModule
+const { app, BrowserWindow, ipcMain, clipboard, globalShortcut, Tray, Menu, nativeImage, screen, shell, protocol: earlyProtocol } = electronModule
 const { join, resolve, sep } = require('path')
 const fs = require('fs')
 if (process.env.SYNTAX_SENPAI_DATA_DIR) { fs.mkdirSync(process.env.SYNTAX_SENPAI_DATA_DIR, { recursive: true }); app.setPath('userData', process.env.SYNTAX_SENPAI_DATA_DIR) }
@@ -78,6 +78,7 @@ let mainWindow: any = null
 let live2dWindow: any = null
 let desktopPetWindow: any = null
 let desktopPetChatWindow: any = null
+let warThunderTechTreeWindow: any = null
 let desktopPetModeActive = false
 let desktopPetChatReady = false
 let desktopPetLocked = false
@@ -511,6 +512,7 @@ function showDesktopPetChatWindow() {
         nodeIntegration: false,
         contextIsolation: true,
         webviewTag: false,
+        backgroundThrottling: false,
       },
     })
     desktopPetChatWindow = chat
@@ -725,6 +727,95 @@ ipcMain.handle('desktop-pet:hide-chat', () => {
   return { success: true }
 })
 
+ipcMain.handle('desktop-pet:alert', (event: any, message: string) => {
+  if (!desktopPetModeActive || !desktopPetChatWindow || desktopPetChatWindow.isDestroyed()
+    || event.sender !== desktopPetChatWindow.webContents || !desktopPetWindow || desktopPetWindow.isDestroyed()) {
+    return { success: false }
+  }
+  const text = String(message || '').trim().slice(0, 300)
+  if (!text) return { success: false }
+  desktopPetWindow.webContents.send('desktop-pet:alert', text)
+  return { success: true }
+})
+
+ipcMain.handle('warthunder:open-installer', async () => {
+  const installerPath = app.isPackaged
+    ? join(process.resourcesPath, 'war-thunder-launcher-setup.exe')
+    : join(app.getAppPath(), 'resources', 'war-thunder-launcher-setup.exe')
+  if (!fs.existsSync(installerPath)) {
+    return { success: false, error: 'The bundled War Thunder installer could not be found.' }
+  }
+  const error = await shell.openPath(installerPath)
+  return error ? { success: false, error } : { success: true }
+})
+
+const warThunderTechTreePages: Record<string, { title: string; url: string }> = {
+  aviation: { title: 'Aviation', url: 'https://wiki.warthunder.com/aviation' },
+  helicopters: { title: 'Helicopters', url: 'https://wiki.warthunder.com/helicopters' },
+  ground: { title: 'Ground Vehicles', url: 'https://wiki.warthunder.com/ground' },
+  ships: { title: 'Bluewater Fleet', url: 'https://wiki.warthunder.com/ships' },
+  boats: { title: 'Coastal Fleet', url: 'https://wiki.warthunder.com/boats' },
+}
+
+ipcMain.handle('warthunder:open-tech-tree', async (_event: any, requestedCategory?: string) => {
+  const page = warThunderTechTreePages[requestedCategory || 'aviation'] || warThunderTechTreePages.aviation
+  if (warThunderTechTreeWindow && !warThunderTechTreeWindow.isDestroyed()) {
+    if (warThunderTechTreeWindow.webContents.getURL() !== page.url) {
+      await warThunderTechTreeWindow.loadURL(page.url)
+    }
+    warThunderTechTreeWindow.show()
+    warThunderTechTreeWindow.focus()
+    return { success: true }
+  }
+
+  const window = new BrowserWindow({
+    width: 1360,
+    height: 900,
+    minWidth: 880,
+    minHeight: 600,
+    title: `War Thunder — ${page.title}`,
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  })
+  warThunderTechTreeWindow = window
+  window.on('closed', () => {
+    if (warThunderTechTreeWindow === window) warThunderTechTreeWindow = null
+  })
+  window.webContents.setWindowOpenHandler(({ url }: { url: string }) => {
+    if (url.startsWith('https://')) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  window.webContents.on('will-navigate', (event: any, url: string) => {
+    try {
+      const target = new URL(url)
+      const officialHost = target.hostname === 'warthunder.com'
+        || target.hostname.endsWith('.warthunder.com')
+      if (target.protocol === 'https:' && officialHost) return
+    } catch {
+      // Invalid or non-web navigations are opened nowhere.
+    }
+    event.preventDefault()
+    try {
+      const target = new URL(url)
+      if (target.protocol === 'https:') void shell.openExternal(url)
+    } catch {
+      // Ignore invalid URLs.
+    }
+  })
+
+  try {
+    await window.loadURL(page.url)
+    return { success: true }
+  } catch (error) {
+    if (!window.isDestroyed()) window.close()
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
+})
+
 ipcMain.handle('desktop-pet:command', (_event: any, command: any) => {
   if (!desktopPetModeActive || !command || typeof command !== 'object') return { success: false }
   if (command.type === 'return-to-normal') {
@@ -757,6 +848,8 @@ ipcMain.handle('desktop-pet:command', (_event: any, command: any) => {
     command.value = Math.min(0.95, Math.max(0.15, Number(command.value) || 0.78))
   } else if (command.type === 'set-warthunder') {
     command.enabled = !!command.enabled
+  } else if (command.type === 'tech-tree') {
+    command = { type: 'tech-tree' }
   } else if (command.type === 'game') {
     if (!new Set(['tictactoe', 'connect4', 'chess', 'gomoku', 'fate-roulette']).has(command.game)) return { success: false }
   } else {

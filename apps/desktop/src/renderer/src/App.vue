@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick, type Component } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent, type Component } from 'vue'
 import {
   PhArrowUp,
   PhArrowUpRight,
@@ -38,6 +38,7 @@ import { useIpc } from './composables/use-ipc'
 import { useVoice } from './composables/use-voice'
 import { loadPluginTools, VOICE_OVER_EVENT } from './agent-tools'
 import ChatBubble from './components/ChatBubble.vue'
+import WarThunderRwrSettings from './components/WarThunderRwrSettings.vue'
 import SubagentPanel from './components/SubagentPanel.vue'
 import AppAvatar from './components/AppAvatar.vue'
 import Live2DAvatar from './components/Live2DAvatar.vue'
@@ -57,7 +58,9 @@ import { gameSession, applyBestAgentMove, applyGameSessionMove, closeGameSession
 import { gameMoveLabel, type GameKind, type GameOptions } from '@syntax-senpai/game-engine'
 import { getNewChatSuggestionKinds, type NewChatSuggestion, type NewChatSuggestionKind } from './composables/new-chat-suggestions'
 import { normalizeVoiceoverText } from './utils/assistant-output'
+import { isWarThunderRwrRegion, startWarThunderRwrCapture, stopWarThunderRwrCapture, type WarThunderRwrConfig } from './services/war-thunder-rwr-capture'
 
+const WarThunderOfflineTree = defineAsyncComponent(() => import('./components/WarThunderOfflineTree.vue'))
 const store = useChatStore()
 const workspace = useWorkspaceStore()
 watch(() => store.conversationId, id => { void workspace.bind(id) }, { immediate: true })
@@ -440,10 +443,11 @@ const rainbowToggleBg = computed(() => {
   const c3 = hslToHex((h + 120) % 360, s, l)
   return `linear-gradient(to right, ${c1}, ${c2}, ${c3})`
 })
-type SettingsTabId = 'general' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'plugins' | 'skills' | 'waifus' | 'live2d' | 'mobile' | 'wechat'
+type SettingsTabId = 'general' | 'warthunder' | 'ai' | 'data' | 'metrics' | 'theme' | 'interface' | 'plugins' | 'skills' | 'waifus' | 'live2d' | 'mobile' | 'wechat'
 const settingsTab = ref<SettingsTabId>('general')
 const settingsTabs: Array<{ id: SettingsTabId; label: string; icon: Component }> = [
   { id: 'general', label: 'General', icon: PhGear },
+  { id: 'warthunder', label: 'War Thunder', icon: PhGameController },
   { id: 'ai', label: 'AI', icon: PhRobot },
   { id: 'data', label: 'Data', icon: PhFloppyDisk },
   { id: 'metrics', label: 'Metrics', icon: PhChartBar },
@@ -1198,12 +1202,63 @@ async function deleteCustomWaifu(id: string) {
 const WARTHUNDER_ENABLED_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-enabled'
 const WARTHUNDER_PROVIDER_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-provider'
 const WARTHUNDER_MODEL_STORAGE_KEY = 'syntax-senpai-warthunder-copilot-model'
+const WARTHUNDER_RWR_CONFIG_STORAGE_KEY = 'syntax-senpai-warthunder-rwr-config'
+function loadWarThunderRwrConfig(): WarThunderRwrConfig {
+  const defaults: WarThunderRwrConfig = {
+    enabled: false,
+    sourceId: '',
+    sourceName: '',
+    region: null,
+    baselineSignalPixels: null,
+    thresholdDelta: 8,
+  }
+  try {
+    const parsed = JSON.parse(localStorage.getItem(WARTHUNDER_RWR_CONFIG_STORAGE_KEY) || '{}')
+    return {
+      enabled: parsed?.enabled === true,
+      sourceId: typeof parsed?.sourceId === 'string' ? parsed.sourceId : '',
+      sourceName: typeof parsed?.sourceName === 'string' ? parsed.sourceName : '',
+      region: isWarThunderRwrRegion(parsed?.region) ? { ...parsed.region } : null,
+      baselineSignalPixels: Number.isSafeInteger(parsed?.baselineSignalPixels) && parsed.baselineSignalPixels >= 0 ? parsed.baselineSignalPixels : null,
+      thresholdDelta: Number.isFinite(parsed?.thresholdDelta) ? Math.min(16384, Math.max(1, parsed.thresholdDelta)) : defaults.thresholdDelta,
+    }
+  } catch {
+    return defaults
+  }
+}
 const warThunderCopilotEnabled = ref(localStorage.getItem(WARTHUNDER_ENABLED_STORAGE_KEY) === 'true')
 const warThunderCopilotProvider = ref(localStorage.getItem(WARTHUNDER_PROVIDER_STORAGE_KEY) || store.selectedProvider)
 const warThunderCopilotModel = ref(localStorage.getItem(WARTHUNDER_MODEL_STORAGE_KEY) || store.selectedModel)
+const warThunderTechTreeCategory = ref('aviation')
+const warThunderResearchTarget = ref<{ id: string; name: string; category: string; nation: string; rank: string; researchRp?: number } | null>(null)
+const warThunderResearchCost = ref<number | null>(null)
+const warThunderResearchProgress = ref<number | null>(null)
+const warThunderAverageRpPerBattle = ref<number | null>(null)
+const warThunderAverageBattleMinutes = ref<number | null>(null)
+const warThunderResearchEstimate = computed(() => {
+  const cost = Number(warThunderResearchCost.value)
+  if (!Number.isFinite(cost) || cost <= 0) return null
+  const researched = Math.max(0, Number(warThunderResearchProgress.value) || 0)
+  const remaining = Math.max(0, cost - researched)
+  const averageRp = Number(warThunderAverageRpPerBattle.value)
+  const matches = Number.isFinite(averageRp) && averageRp > 0 ? Math.ceil(remaining / averageRp) : null
+  const battleMinutes = Number(warThunderAverageBattleMinutes.value)
+  const hours = matches !== null && Number.isFinite(battleMinutes) && battleMinutes > 0
+    ? matches * battleMinutes / 60
+    : null
+  return {
+    remaining,
+    progressPercent: Math.min(100, researched / cost * 100),
+    matches,
+    hours,
+  }
+})
+const warThunderRwrConfig = ref<WarThunderRwrConfig>(loadWarThunderRwrConfig())
 let warThunderPluginReady = false
 let warThunderEventTimer: ReturnType<typeof setInterval> | null = null
 let warThunderEventPollInFlight = false
+let warThunderCopilotSyncGeneration = 0
+let warThunderRwrSampleInFlight = false
 const handledWarThunderEvents = new Set<string>()
 const fullscreenWindow = ref<{ enabled: boolean }>({ enabled: false })
 const currentWindowBounds = ref<{ width: number; height: number } | null>(null)
@@ -1251,15 +1306,77 @@ async function refreshWindowPresentationState() {
 
 async function syncWarThunderCopilot() {
   if (!warThunderPluginReady) return
+  const generation = ++warThunderCopilotSyncGeneration
+  const listening = isDesktopPetSessionMode && warThunderCopilotEnabled.value
+  const rwr = { ...warThunderRwrConfig.value, region: warThunderRwrConfig.value.region ? { ...warThunderRwrConfig.value.region } : null }
   try {
-    await invoke('plugins:execTool', 'warthunder_copilot_control', {
-      enabled: isDesktopPetSessionMode && warThunderCopilotEnabled.value,
+    const result = await invoke('plugins:execTool', 'warthunder_copilot_control', {
+      enabled: listening,
       provider: warThunderCopilotProvider.value,
       model: warThunderCopilotModel.value,
+      rwr,
     })
+    if (generation !== warThunderCopilotSyncGeneration) return
+    if (!result?.success) throw new Error(result?.error || 'War Thunder copilot is unavailable.')
+    if (listening && rwr.enabled && rwr.sourceId && rwr.region && rwr.baselineSignalPixels !== null) {
+      const captureConfig = { sourceId: rwr.sourceId, region: rwr.region }
+      startWarThunderRwrCapture(captureConfig, (signalPixels) => {
+        if (warThunderRwrSampleInFlight) return
+        warThunderRwrSampleInFlight = true
+        void invoke('plugins:execTool', 'warthunder_copilot_rwr_sample', { ...captureConfig, signalPixels })
+          .then((sample) => {
+            if (generation !== warThunderCopilotSyncGeneration) return
+            if (sample?.data?.raised) showWarThunderRwrAlert(String(sample.data.alertMessage))
+          })
+          .catch(() => { /* optional plugin */ })
+          .finally(() => { warThunderRwrSampleInFlight = false })
+      }, (message) => {
+        showWarThunderRwrAlert(`${t('pet.rwrMonitor')}: ${message}`)
+        void invoke('plugins:execTool', 'warthunder_copilot_rwr_sample', { ...captureConfig, error: message }).catch(() => {})
+      })
+    } else {
+      stopWarThunderRwrCapture()
+    }
   } catch {
+    if (generation === warThunderCopilotSyncGeneration) stopWarThunderRwrCapture()
     // The optional plugin may be disabled or still loading.
   }
+}
+
+async function openWarThunderInstaller() {
+  try {
+    const result = await invoke('warthunder:open-installer')
+    if (!result?.success) showToast(result?.error || t('pet.warThunderInstallerNotFound'), 'error')
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error), 'error')
+  }
+}
+
+async function openWarThunderTechTree() {
+  closePetContextMenu()
+  try {
+    const result = await invoke('warthunder:open-tech-tree', warThunderTechTreeCategory.value)
+    if (!result?.success) showToast(result?.error || t('pet.warThunderTechTreeError'), 'error')
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error), 'error')
+  }
+}
+
+function openLocalWarThunderTechTree() {
+  closePetContextMenu()
+  settingsTab.value = 'warthunder'
+  showSettings.value = true
+}
+
+function selectWarThunderResearchTarget(vehicle: { id: string; name: string; category: string; nation: string; rank: string; researchRp?: number }) {
+  warThunderResearchTarget.value = vehicle
+  warThunderResearchCost.value = vehicle.researchRp ?? null
+  warThunderResearchProgress.value = null
+}
+
+function showWarThunderRwrAlert(message: string) {
+  showToast(message, 'warning')
+  void invoke('desktop-pet:alert', message).catch(() => {})
 }
 
 async function pollWarThunderEvents() {
@@ -1278,6 +1395,8 @@ async function pollWarThunderEvents() {
           ? `战斗嘉奖：${event.raw}`
           : event.type === 'proximity'
             ? `${event.raw}，距离约 ${event.distance}`
+            : event.type === 'rwr'
+              ? `${String(event.raw || 'RWR 画面告警：疑似出现新的雷达信号')}。这只是画面变化提示，尚未确认锁定、导弹发射、威胁方向或发射源；提醒时不要推断这些信息。`
             : `技术告警：${event.raw}`
       await store.sendWarThunderEvent(detail, warThunderCopilotProvider.value, warThunderCopilotModel.value)
       if (handledWarThunderEvents.size > 500) {
@@ -1337,6 +1456,11 @@ watch(
   () => [warThunderCopilotEnabled.value, warThunderCopilotProvider.value, warThunderCopilotModel.value],
   () => void syncWarThunderCopilot(),
 )
+
+watch(warThunderRwrConfig, (config) => {
+  localStorage.setItem(WARTHUNDER_RWR_CONFIG_STORAGE_KEY, JSON.stringify(config))
+  void syncWarThunderCopilot()
+}, { deep: true })
 
 async function toggleFullscreenWindowMode() {
   const next = !fullscreenWindow.value.enabled
@@ -2512,7 +2636,7 @@ const showMemory = ref(false)
 const newMemoryKey = ref('')
 const newMemoryValue = ref('')
 const newMemoryCategory = ref('general')
-const toast = ref<{ message: string; type: 'success' | 'error'; visible: boolean }>({ message: '', type: 'success', visible: false })
+const toast = ref<{ message: string; type: 'success' | 'error' | 'warning'; visible: boolean }>({ message: '', type: 'success', visible: false })
 const dataTransferBusy = ref(false)
 const showStartupSplash = ref(true)
 const appReady = ref(false)
@@ -2532,7 +2656,7 @@ function providerRequiresApiKey(provider: string) {
   return !KEYLESS_PROVIDERS.has(provider)
 }
 
-function showToast(message: string, type: 'success' | 'error') {
+function showToast(message: string, type: 'success' | 'error' | 'warning') {
   toast.value = { message, type, visible: true }
   setTimeout(() => { toast.value.visible = false }, 4000)
 }
@@ -2719,6 +2843,8 @@ async function handleDesktopPetCommand(command: any) {
     setPetBubbleOpacity(Number(command.value))
   } else if (command.type === 'set-warthunder') {
     setWarThunderCopilotEnabled(!!command.enabled)
+  } else if (command.type === 'tech-tree') {
+    openLocalWarThunderTechTree()
   } else if (command.type === 'game') {
     const allowedGames: Array<GameKind | 'gomoku' | 'fate-roulette'> = ['tictactoe', 'connect4', 'chess', 'gomoku', 'fate-roulette']
     if (allowedGames.includes(command.game)) await openMiniGame(command.game)
@@ -3186,6 +3312,8 @@ onUnmounted(() => {
   document.documentElement.classList.remove('desktop-pet-chat-locked')
   window.removeEventListener('pointerdown', handlePetOutsidePointer)
   stopWarThunderEventPolling()
+  warThunderCopilotSyncGeneration += 1
+  stopWarThunderRwrCapture()
   clearLive2DSpeech()
   removeMobileChatListener?.()
   removeWechatInboundListener?.()
@@ -3960,7 +4088,9 @@ async function handleImportData() {
           'text-sm font-semibold backdrop-blur-md',
           toast.type === 'success'
             ? 'bg-emerald-500/90 text-white'
-            : 'bg-red-500/90 text-white',
+            : toast.type === 'warning'
+              ? 'bg-amber-500/95 text-neutral-950'
+              : 'bg-red-500/90 text-white',
         ]"
       >
         {{ toast.type === 'success' ? '200 ' : '' }}{{ toast.message }}
@@ -4079,7 +4209,7 @@ async function handleImportData() {
                   <span class="text-base leading-none shrink-0">
                     <component :is="tab.icon" :size="20" weight="regular" aria-hidden="true" />
                   </span>
-                  <span class="truncate">{{ tab.label }}</span>
+                  <span class="truncate">{{ tab.id === 'warthunder' ? t('pet.warThunderCopilot') : tab.label }}</span>
                 </button>
               </nav>
             </aside>
@@ -4173,57 +4303,6 @@ async function handleImportData() {
                   </label>
                 </div>
               </div>
-            </div>
-
-            <div class="settings-card mt-4">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <div class="text-sm font-semibold text-neutral-200">{{ t('pet.warThunderCopilot') }}</div>
-                  <p class="mt-1 text-xs text-neutral-400">
-                    {{ t('pet.copilotSettingsDescription') }}
-                  </p>
-                </div>
-                <button
-                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
-                  :style="{ background: warThunderCopilotEnabled ? 'linear-gradient(90deg,#f59e0b,#ef4444)' : '#404040' }"
-                  :aria-label="warThunderCopilotEnabled ? t('pet.disableCopilot') : t('pet.enableCopilot')"
-                  @click="setWarThunderCopilotEnabled(!warThunderCopilotEnabled)"
-                >
-                  <span
-                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
-                    :style="{ transform: warThunderCopilotEnabled ? 'translateX(20px)' : 'translateX(0)' }"
-                  />
-                </button>
-              </div>
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
-                <label class="text-xs text-neutral-400">
-                  {{ t('settings.provider') }}
-                  <select
-                    :value="warThunderCopilotProvider"
-                    class="input-field mt-1"
-                    @change="setWarThunderCopilotProvider(($event.target as HTMLSelectElement).value)"
-                  >
-                    <option v-for="provider in providers" :key="`wt-provider-${provider.value}`" :value="provider.value">
-                      {{ provider.label }}
-                    </option>
-                  </select>
-                </label>
-                <label class="text-xs text-neutral-400">
-                  {{ t('model.label') }}
-                  <select
-                    :value="warThunderCopilotModel"
-                    class="input-field mt-1"
-                    @change="setWarThunderCopilotModel(($event.target as HTMLSelectElement).value)"
-                  >
-                    <option v-for="model in warThunderCopilotModels" :key="`wt-model-${model.id}`" :value="model.id">
-                      {{ model.displayName }}
-                    </option>
-                  </select>
-                </label>
-              </div>
-              <p class="mt-3 text-[11px] text-neutral-500">
-                {{ t('pet.copilotStatus') }}: {{ warThunderCopilotEnabled ? (isDesktopPetMode ? t('pet.copilotListening') : t('pet.copilotWaiting')) : t('pet.copilotNotListening') }}
-              </p>
             </div>
 
             <div class="settings-card mt-4">
@@ -4509,6 +4588,116 @@ async function handleImportData() {
             <span><strong>Auto decide</strong><span class="block text-xs text-neutral-400 mt-1">Off: execute directly. On: the agent reviews actions automatically.</span></span>
             <input type="checkbox" class="w-5 h-5" :checked="store.autoDecideActions" @change="store.setAutoDecideActions(($event.target as HTMLInputElement).checked)" />
           </label>
+            </div>
+          </div>
+
+          <!-- War Thunder Copilot Tab -->
+          <div v-if="settingsTab === 'warthunder'">
+            <div class="settings-card">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-sm font-semibold text-neutral-200">{{ t('pet.warThunderCopilot') }}</div>
+                  <p class="mt-1 text-xs text-neutral-400">
+                    {{ t('pet.copilotSettingsDescription') }}
+                  </p>
+                </div>
+                <button
+                  class="relative w-11 h-6 rounded-full transition-all duration-300 cursor-pointer shrink-0"
+                  :disabled="!isDesktopPetSessionMode"
+                  :class="!isDesktopPetSessionMode ? 'cursor-not-allowed opacity-50' : ''"
+                  :style="{ background: warThunderCopilotEnabled ? 'linear-gradient(90deg,#f59e0b,#ef4444)' : '#404040' }"
+                  :aria-label="!isDesktopPetSessionMode ? t('pet.copilotEnableInPet') : warThunderCopilotEnabled ? t('pet.disableCopilot') : t('pet.enableCopilot')"
+                  @click="setWarThunderCopilotEnabled(!warThunderCopilotEnabled)"
+                >
+                  <span
+                    class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-all duration-300 ease-in-out"
+                    :style="{ transform: warThunderCopilotEnabled ? 'translateX(20px)' : 'translateX(0)' }"
+                  />
+                </button>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+                <label class="text-xs text-neutral-400">
+                  {{ t('settings.provider') }}
+                  <select
+                    :value="warThunderCopilotProvider"
+                    class="input-field mt-1"
+                    @change="setWarThunderCopilotProvider(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option v-for="provider in providers" :key="`wt-provider-${provider.value}`" :value="provider.value">
+                      {{ provider.label }}
+                    </option>
+                  </select>
+                </label>
+                <label class="text-xs text-neutral-400">
+                  {{ t('model.label') }}
+                  <select
+                    :value="warThunderCopilotModel"
+                    class="input-field mt-1"
+                    @change="setWarThunderCopilotModel(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option v-for="model in warThunderCopilotModels" :key="`wt-model-${model.id}`" :value="model.id">
+                      {{ model.displayName }}
+                    </option>
+                  </select>
+                </label>
+              </div>
+              <WarThunderRwrSettings v-model="warThunderRwrConfig" />
+              <p class="mt-3 text-[11px] text-neutral-500">
+                {{ t('pet.copilotStatus') }}: {{ warThunderCopilotEnabled ? (isDesktopPetSessionMode ? t('pet.copilotListening') : t('pet.copilotWaiting')) : t('pet.copilotNotListening') }}
+              </p>
+            </div>
+            <WarThunderOfflineTree v-model:category="warThunderTechTreeCategory" @select-vehicle="selectWarThunderResearchTarget" />
+            <button type="button" class="mt-2 rounded-lg bg-white/10 px-3 py-2 text-xs text-neutral-200 hover:bg-white/15" @click="openWarThunderTechTree">
+              {{ t('pet.openOfficialWarThunderTechTree') }} ↗
+            </button>
+            <div id="war-thunder-research-calculator" class="settings-card mt-4">
+              <div class="text-sm font-semibold text-neutral-200">{{ t('pet.warThunderResearchCalculator') }}</div>
+              <p class="mt-1 text-xs text-neutral-400">{{ t('pet.warThunderResearchCalculatorDescription') }}</p>
+              <p v-if="warThunderResearchTarget" class="mt-2 text-xs text-amber-200">{{ t('pet.treeTarget') }}: {{ warThunderResearchTarget.name }} · {{ warThunderResearchTarget.nation }} · {{ warThunderResearchTarget.rank }}</p>
+              <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label class="text-xs text-neutral-400">
+                  {{ t('pet.warThunderResearchCost') }}
+                  <input v-model.number="warThunderResearchCost" type="number" min="0" step="1000" class="input-field mt-1" placeholder="390000">
+                </label>
+                <label class="text-xs text-neutral-400">
+                  {{ t('pet.warThunderResearchProgress') }}
+                  <input v-model.number="warThunderResearchProgress" type="number" min="0" step="1000" class="input-field mt-1" placeholder="0">
+                </label>
+                <label class="text-xs text-neutral-400">
+                  {{ t('pet.warThunderAverageRpPerBattle') }}
+                  <input v-model.number="warThunderAverageRpPerBattle" type="number" min="0" step="100" class="input-field mt-1" placeholder="1000">
+                </label>
+                <label class="text-xs text-neutral-400">
+                  {{ t('pet.warThunderAverageBattleMinutes') }}
+                  <input v-model.number="warThunderAverageBattleMinutes" type="number" min="0" step="1" class="input-field mt-1" placeholder="15">
+                </label>
+              </div>
+              <div class="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div class="rounded-xl bg-white/5 p-3">
+                  <div class="text-[11px] text-neutral-500">{{ t('pet.warThunderRemainingRp') }}</div>
+                  <div class="mt-1 text-sm font-semibold text-neutral-100">{{ warThunderResearchEstimate ? Math.ceil(warThunderResearchEstimate.remaining).toLocaleString() : '—' }}</div>
+                </div>
+                <div class="rounded-xl bg-white/5 p-3">
+                  <div class="text-[11px] text-neutral-500">{{ t('pet.warThunderResearchProgressLabel') }}</div>
+                  <div class="mt-1 text-sm font-semibold text-neutral-100">{{ warThunderResearchEstimate ? `${warThunderResearchEstimate.progressPercent.toFixed(1)}%` : '—' }}</div>
+                </div>
+                <div class="rounded-xl bg-white/5 p-3">
+                  <div class="text-[11px] text-neutral-500">{{ t('pet.warThunderEstimatedBattles') }}</div>
+                  <div class="mt-1 text-sm font-semibold text-neutral-100">{{ warThunderResearchEstimate?.matches?.toLocaleString() ?? '—' }}</div>
+                </div>
+                <div class="rounded-xl bg-white/5 p-3">
+                  <div class="text-[11px] text-neutral-500">{{ t('pet.warThunderEstimatedHours') }}</div>
+                  <div class="mt-1 text-sm font-semibold text-neutral-100">{{ warThunderResearchEstimate?.hours === null || warThunderResearchEstimate?.hours === undefined ? '—' : `${warThunderResearchEstimate.hours.toFixed(1)} h` }}</div>
+                </div>
+              </div>
+              <p class="mt-3 text-[11px] text-neutral-500">{{ t('pet.warThunderResearchCalculatorHint') }}</p>
+            </div>
+            <div class="settings-card mt-4">
+              <div class="text-sm font-semibold text-neutral-200">{{ t('pet.warThunderInstallerTitle') }}</div>
+              <p class="mt-1 text-xs text-neutral-400">{{ t('pet.warThunderInstallerDescription') }}</p>
+              <button type="button" class="mt-3 rounded-lg bg-white/10 px-3 py-2 text-xs text-neutral-200 hover:bg-white/15" @click="openWarThunderInstaller">
+                {{ t('pet.openWarThunderInstaller') }}
+              </button>
             </div>
           </div>
 
@@ -7430,6 +7619,11 @@ async function handleImportData() {
         >
           <span>{{ t('pet.warThunderCopilot') }}</span>
           <span :class="warThunderCopilotEnabled ? 'text-amber-300' : 'text-white/55'">{{ warThunderCopilotEnabled ? t('pet.copilotOn') : t('pet.copilotOff') }}</span>
+        </button>
+
+        <button type="button" class="desktop-pet-menu-item" @click="openLocalWarThunderTechTree">
+          <span>{{ t('pet.warThunderTechTree') }}</span>
+          <span aria-hidden="true">›</span>
         </button>
 
         <button

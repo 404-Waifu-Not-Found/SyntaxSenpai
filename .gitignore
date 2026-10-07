@@ -38,6 +38,10 @@ electron-builder-effective-config.yaml
 # TypeScript
 *.tsbuildinfo
 
+# Python scripts
+__pycache__/
+*.pyc
+
 # Test & coverage
 coverage/
 **/coverage/
